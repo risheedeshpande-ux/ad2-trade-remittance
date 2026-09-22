@@ -159,6 +159,30 @@ const acting    = () => !!(S && S.actingFor);
 /* Anyone operating as the SME — the SME's own user, or an AD2 user acting for
    them. Action gates use this; data-isolation guards still use isSME(). */
 const asSme     = () => isSME() || acting();
+
+/* Capability check. A role either holds a capability, withholds it
+   deliberately (segregation of duties), or simply never had it. */
+const roleDef = id => DB.roles.find(r => r.id === id);
+function can(capId) {
+  if (!S) return false;
+  const r = roleDef(S.role);
+  if (!r) return false;
+  if (r.can.includes(capId)) return true;
+  /* An AD2 user acting for an SME borrows the SME User capabilities it is
+     entitled to exercise, but only if its own role may transact at all. */
+  if (acting() && r.can.includes('assist.transact')) {
+    const smeRole = roleDef('SME User');
+    if (smeRole && smeRole.can.includes(capId)) return true;
+  }
+  return false;
+}
+const segregated = capId => {
+  const r = S && roleDef(S.role);
+  return !!(r && (r.segregated || []).includes(capId));
+};
+/* With AutoChecker on, a maker's own review commits without a second approver. */
+const canApproveOnboarding = () =>
+  can('onboard.approve') || (DB.settings.autoChecker && can('onboard.review'));
 const ctxSmeId  = () => (S && (S.actingFor || S.smeId)) || null;
 /* true when the current view should be scoped to one SME rather than the book */
 const scoped    = () => !isAD2() || acting();
@@ -760,8 +784,8 @@ function viewOutwardList() {
     <div class="page-head"><div><h1>Outward Remittance</h1>
       <p>${isAD2() ? 'Requests from all onboarded SMEs.' : 'Payments to your overseas suppliers and service providers.'}</p></div>
       <div class="acts">
-        ${asSme() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/outward/new">New request</button>` : ''}
-        ${isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="outward">New request for an SME</button>` : ''}
+        ${asSme() && can('outward.create') ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/outward/new">New request</button>` : ''}
+        ${isAD2() && !acting() && can('assist.transact') ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="outward">New request for an SME</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="export-csv" data-what="outward">Export CSV</button></div></div>
     <div class="card">
       <div class="tabs">${tabs}</div>
@@ -1051,11 +1075,14 @@ function viewOutwardDetail(id) {
   if (asSme() && o.status === 'Draft') actions.push(`<button class="btn btn-primary" type="button" data-act="or-submit-existing" data-id="${o.id}">Submit</button>`);
   if (asSme() && o.status === 'Clarification Required') actions.push(`<button class="btn btn-primary" type="button" data-act="or-respond" data-id="${o.id}">Respond to query</button>`);
   if (isAD2() && ['Submitted','Under Review'].includes(o.status)) {
-    actions.push(`<button class="btn btn-primary" type="button" data-act="or-approve" data-id="${o.id}">Approve for processing</button>`);
-    actions.push(`<button class="btn btn-plain" type="button" data-act="or-query" data-id="${o.id}">Raise query</button>`);
-    actions.push(`<button class="btn btn-danger" type="button" data-act="or-reject" data-id="${o.id}">Reject</button>`);
+    if (can('outward.approve')) actions.push(`<button class="btn btn-primary" type="button" data-act="or-approve" data-id="${o.id}">Approve for processing</button>`);
+    if (can('outward.query'))   actions.push(`<button class="btn btn-plain" type="button" data-act="or-query" data-id="${o.id}">Raise query</button>`);
+    if (can('outward.reject'))  actions.push(`<button class="btn btn-danger" type="button" data-act="or-reject" data-id="${o.id}">Reject</button>`);
+    if (segregated('outward.approve'))
+      actions.push(`<span class="badge b-amber" style="align-self:center">Approval is a checker action</span>`);
   }
-  if (isAD2() && o.status === 'Processing') actions.push(`<button class="btn btn-primary" type="button" data-act="or-complete" data-id="${o.id}">Mark completed</button>`);
+  if (isAD2() && o.status === 'Processing' && can('outward.complete'))
+    actions.push(`<button class="btn btn-primary" type="button" data-act="or-complete" data-id="${o.id}">Mark completed</button>`);
 
   return shell(crumb('Outward Remittance', o.id), `
     <div class="page-head"><div><h1>${esc(o.id)} ${badge(o.status)}</h1>
@@ -1152,7 +1179,7 @@ function viewInwardList() {
     <div class="page-head"><div><h1>Inward Remittance</h1>
       <p>Receipts recorded by AD2. Submit a disposal instruction to apply each receipt.</p></div>
       <div class="acts">
-        ${isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="inward">Disposal for an SME</button>` : ''}
+        ${isAD2() && !acting() && can('assist.transact') ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="inward">Disposal for an SME</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="export-csv" data-what="inward">Export CSV</button></div></div>
     <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
       <thead><tr><th>Reference</th>${isAD2() ? '<th>SME</th>' : ''}<th>Remitter</th><th>Value date</th>
@@ -1166,8 +1193,10 @@ function viewInwardList() {
           <td>${badge(i.status)}</td>
           <td style="white-space:nowrap">${
             i.available > 0 && asSme()
-              ? `<button class="btn btn-ghost btn-sm" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Dispose</button>`
-              : i.available > 0 && isAD2()
+              ? (can('inward.dispose')
+                  ? `<button class="btn btn-ghost btn-sm" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Dispose</button>`
+                  : `<button class="btn btn-link" type="button" data-act="go" data-href="#/${root}/inward/${i.id}">Open</button>`)
+              : i.available > 0 && isAD2() && can('assist.transact')
                 ? `<button class="btn btn-ghost btn-sm" type="button" data-act="assist-dispose" data-id="${i.id}">Dispose on behalf</button>`
                 : `<button class="btn btn-link" type="button" data-act="go" data-href="#/${root}/inward/${i.id}">Open</button>`}</td></tr>`).join('')
         : `<tr><td colspan="9">${empty('No inward remittance found','Receipts appear here once AD2 records them.')}</td></tr>`}</tbody>
@@ -1187,7 +1216,7 @@ function viewInwardDetail(id) {
       <p>${esc(i.remitter)} · ${money(i.amount, i.currency)} received ${dmy(i.valueDate)}</p></div>
       <div class="acts">
         ${i.available > 0 && asSme() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Submit disposal instruction</button>` : ''}
-        ${i.available > 0 && isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-dispose" data-id="${i.id}">Dispose on behalf</button>` : ''}
+        ${i.available > 0 && isAD2() && !acting() && can('assist.transact') ? `<button class="btn btn-primary" type="button" data-act="assist-dispose" data-id="${i.id}">Dispose on behalf</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="go" data-href="#/${root}/inward">Back to list</button></div></div>
     <div class="grid g2" style="align-items:start">
       <div class="card"><div class="card-head"><h2>Receipt</h2></div><div class="card-body"><div class="kv">
@@ -1505,7 +1534,9 @@ function billForm(type) {
         Maker-checker: AutoChecker ${DB.settings.autoChecker ? 'enabled — bills are accepted on submission' : 'disabled — a checker must approve'}</span>
       <div class="spacer"></div>
       <button class="btn btn-plain" type="button" data-act="bill-clear">Clear</button>
-      <button class="btn btn-primary" type="button" data-act="bill-save" data-type="${type}">Lodge bill</button>
+      ${can('bills.lodge')
+        ? `<button class="btn btn-primary" type="button" data-act="bill-save" data-type="${type}">Lodge bill</button>`
+        : `<span class="badge b-amber">Your role cannot lodge bills</span>`}
     </div></div>`;
 }
 
@@ -1868,7 +1899,8 @@ function viewApplications() {
   return shell(crumb('SME Applications'), `
     <div class="page-head"><div><h1>SME Applications</h1>
       <p>Digital and offline onboarding applications. Approval requires permissions, currencies, margins and charges.</p></div>
-      <div class="acts"><button class="btn btn-primary" type="button" data-act="offline-app">Create offline application</button></div></div>
+      <div class="acts">${can('onboard.createOffline')
+        ? `<button class="btn btn-primary" type="button" data-act="offline-app">Create offline application</button>` : ''}</div></div>
     <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
       <thead><tr><th>Application</th><th>Legal name</th><th>Constitution</th><th>Domain ID</th>
         <th>Service</th><th>Channel</th><th>Submitted</th><th>Status</th><th></th></tr></thead>
@@ -1998,11 +2030,15 @@ function viewApplicationReview(id) {
             : `${missing.length ? `<div class="note note-warn" style="margin-top:16px"><span>
                  Required before approval: ${esc(missing.join('; '))}</span></div>` : ''}
               <div style="display:grid;gap:8px;margin-top:18px">
-                <button class="btn btn-primary" type="button" data-act="rv-approve" data-id="${s.id}">
-                  ${DB.settings.autoChecker ? 'Approve' : 'Send to checker'}</button>
-                <button class="btn btn-plain" type="button" data-act="rv-save" data-id="${s.id}">Save review</button>
-                <button class="btn btn-plain" type="button" data-act="rv-clarify" data-id="${s.id}">Request clarification</button>
-                <button class="btn btn-danger" type="button" data-act="rv-reject" data-id="${s.id}">Reject</button>
+                ${canApproveOnboarding()
+                  ? `<button class="btn btn-primary" type="button" data-act="rv-approve" data-id="${s.id}">
+                      ${can('onboard.approve') ? 'Approve' : 'Approve (AutoChecker)'}</button>`
+                  : `<div class="note note-warn"><span>${segregated('onboard.approve')
+                      ? 'Approval is withheld from your role to keep maker and checker apart. Prepare the review and a checker commits it.'
+                      : 'Your role cannot approve applications.'}</span></div>`}
+                ${can('onboard.review') ? `<button class="btn btn-plain" type="button" data-act="rv-save" data-id="${s.id}">Save review</button>` : ''}
+                ${can('onboard.query') ? `<button class="btn btn-plain" type="button" data-act="rv-clarify" data-id="${s.id}">Request clarification</button>` : ''}
+                ${can('onboard.approve') ? `<button class="btn btn-danger" type="button" data-act="rv-reject" data-id="${s.id}">Reject</button>` : ''}
               </div>`}
         </div></div>
       </div>
@@ -2025,7 +2061,7 @@ function viewDirectory() {
           <td>${esc(s.config.permission)}</td><td>${s.config.currencies.join(' · ')}</td>
           <td class="num">${s.config.margins.USD ?? '—'}</td><td>${dmy(s.config.effectiveDate)}</td>
           <td style="white-space:nowrap">
-            <button class="btn btn-ghost btn-sm" type="button" data-act="assist-start" data-id="${s.id}">Transact on behalf</button>
+            ${can('assist.transact') ? `<button class="btn btn-ghost btn-sm" type="button" data-act="assist-start" data-id="${s.id}">Transact on behalf</button>` : ''}
             <button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/applications/${s.id}">Open</button></td></tr>`).join('')}</tbody>
     </table></div></div></div>`);
 }
@@ -2052,13 +2088,71 @@ function viewReconciliation() {
           <td class="num">${money(p.amount)}</td>
           <td><span class="badge ${p.status === 'Confirmed' ? 'b-green' : 'b-amber'}">${esc(p.status)}</span></td>
           <td>${p.status === 'Proposed'
-            ? `<button class="btn btn-ghost btn-sm" type="button" data-act="rec-confirm" data-rem="${esc(p.rem)}" data-bill="${esc(p.bill)}">Confirm</button>`
-            : `<button class="btn btn-link" type="button" data-act="rec-reverse" data-rem="${esc(p.rem)}" data-bill="${esc(p.bill)}">Reverse</button>`}</td></tr>`).join('')
+            ? (can('recon.confirm')
+                ? `<button class="btn btn-ghost btn-sm" type="button" data-act="rec-confirm" data-rem="${esc(p.rem)}" data-bill="${esc(p.bill)}">Confirm</button>`
+                : `<span class="badge b-grey">${segregated('recon.confirm') ? 'Checker action' : '—'}</span>`)
+            : (can('recon.reverse')
+                ? `<button class="btn btn-link" type="button" data-act="rec-reverse" data-rem="${esc(p.rem)}" data-bill="${esc(p.bill)}">Reverse</button>`
+                : '<span class="badge b-grey">—</span>')}</td></tr>`).join('')
         : `<tr><td colspan="8">${empty('No allocations','Nothing has been allocated yet.')}</td></tr>`}</tbody>
     </table></div></div></div>`);
 }
 
-let adminTab = 'purpose';
+let adminTab = 'roles';
+
+/* Roles and permissions — the TMP portal's ADM-02 matrix, one row per action
+   and one column per role, with segregated capabilities called out rather
+   than shown as a plain No. */
+function rolesPane() {
+  const roles = [...DB.roles].sort((a, b) => a.order - b.order);
+  const groups = [...new Set(DB.capabilities.map(c => c.group))];
+
+  const cell = (r, capId) => {
+    if (r.can.includes(capId)) return '<span class="badge b-green">Yes</span>';
+    if ((r.segregated || []).includes(capId)) return '<span class="badge b-amber">No — segregated</span>';
+    return '<span style="color:var(--muted)">No</span>';
+  };
+
+  const matrix = groups.map(g => `
+    <tr><td colspan="${roles.length + 1}" style="background:var(--surface-alt);font-weight:600;
+      font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--r4m-table-header)">${esc(g)}</td></tr>
+    ${DB.capabilities.filter(c => c.group === g).map(c => `
+      <tr><td>${esc(c.label)}<br><span style="color:var(--muted);font-size:var(--fs-xs);font-family:ui-monospace,Menlo,monospace">${esc(c.id)}</span></td>
+        ${roles.map(r => `<td>${cell(r, c.id)}</td>`).join('')}</tr>`).join('')}`).join('');
+
+  const defs = roles.map(r => `
+    <div class="card" style="box-shadow:none;margin-bottom:var(--s3)">
+      <div class="card-head"><h2>${esc(r.id)}</h2>
+        <div class="acts"><span class="badge ${r.portal === 'AD2' ? 'b-blue' : 'b-teal'}">${esc(r.portal)} portal</span>
+          <span style="color:var(--muted);font-size:var(--fs-sm)">${r.can.length} capabilities</span></div></div>
+      <div class="card-body">
+        <p style="margin:0 0 var(--s3);font-size:var(--fs-md)">${esc(r.summary)}</p>
+        ${(r.segregated || []).length ? `<div class="note note-warn" style="margin-bottom:var(--s3)"><span>
+          <b>Withheld by design:</b> ${r.segregated.map(id =>
+            esc(DB.capabilities.find(c => c.id === id)?.label || id)).join(' · ')}</span></div>` : ''}
+        ${r.note ? `<div class="note note-info"><span>${esc(r.note)}</span></div>` : ''}
+      </div></div>`).join('');
+
+  const mine = S ? roleDef(S.role) : null;
+
+  return `<div class="card-body">
+      ${mine ? `<div class="note note-ok" style="margin-bottom:var(--s5)"><span>
+        You are signed in as <b>${esc(mine.id)}</b> — ${mine.can.length} of ${DB.capabilities.length}
+        capabilities. Buttons you cannot use are hidden across the app rather than shown and refused.</span></div>` : ''}
+      <h3 style="font-size:var(--fs-md);margin:0 0 var(--s3)">What each role is for</h3>
+      ${defs}
+      <h3 style="font-size:var(--fs-md);margin:var(--s6) 0 var(--s3)">Permission matrix</h3>
+      <p style="color:var(--muted);font-size:var(--fs-sm);margin:0 0 var(--s3)">
+        <b>No — segregated</b> means the capability is withheld deliberately so that the role
+        preparing work is not the role approving it. A plain <b>No</b> simply means the role has no
+        business with that action.</p>
+      <div class="tablewrap"><table class="dt">
+        <thead><tr><th style="min-width:260px">Action</th>
+          ${roles.map(r => `<th>${esc(r.id).replace('AD2 ', 'AD2<br>').replace('SME ', 'SME<br>')}</th>`).join('')}</tr></thead>
+        <tbody>${matrix}</tbody>
+      </table></div>
+    </div>`;
+}
 function viewAdmin() {
   const panes = {
     purpose: `<div class="card-body tight">
@@ -2101,20 +2195,27 @@ function viewAdmin() {
     </table></div></div>`,
 
     users: `<div class="card-body tight"><div class="tablewrap"><table class="dt">
-      <thead><tr><th>Domain ID</th><th>Login ID</th><th>Role</th><th>Linked SME</th></tr></thead>
-      <tbody>${DB.logins.map(a => `<tr><td>${esc(a.domainId)}</td><td>${esc(a.loginId)}</td>
-        <td>${esc(a.role)}</td><td>${a.smeId ? esc(sme(a.smeId)?.tradingName || '') : '—'}</td></tr>`).join('')}</tbody>
+      <thead><tr><th>Domain ID</th><th>Login ID</th><th>Role</th><th>Portal</th><th>Linked SME</th><th class="num">Capabilities</th></tr></thead>
+      <tbody>${DB.logins.map(a => { const r = roleDef(a.role);
+        return `<tr><td>${esc(a.domainId)}</td><td>${esc(a.loginId)}</td>
+          <td><b>${esc(a.role)}</b></td><td>${esc(r?.portal || '—')}</td>
+          <td>${a.smeId ? esc(sme(a.smeId)?.tradingName || '') : '—'}</td>
+          <td class="num">${r ? r.can.length : 0}</td></tr>`; }).join('')}</tbody>
     </table></div></div>`,
 
+    roles: rolesPane(),
+
     settings: `<div class="card-body">
+      ${can('admin.settings') ? '' : `<div class="note note-warn" style="margin-bottom:var(--s4)"><span>
+        Your role can see these settings but not change them.</span></div>`}
       <div class="checks" style="gap:18px">
-        <label class="chk"><input type="checkbox" data-act="set-autochecker" ${DB.settings.autoChecker ? 'checked' : ''}>
+        <label class="chk"><input type="checkbox" data-act="set-autochecker" ${DB.settings.autoChecker ? 'checked' : ''} ${can('admin.settings') ? '' : 'disabled'}>
           <span>AutoChecker approval<small>Maker actions commit without a second approver. Switch off to route to a checker queue.</small></span></label>
-        <label class="chk"><input type="checkbox" data-act="set-unlinked" ${DB.settings.allowUnlinked ? 'checked' : ''}>
+        <label class="chk"><input type="checkbox" data-act="set-unlinked" ${DB.settings.allowUnlinked ? 'checked' : ''} ${can('admin.settings') ? '' : 'disabled'}>
           <span>Permit unlinked outward requests<small>Allows an outward request with no import bill allocated.</small></span></label>
       </div></div>`,
   };
-  const tabs = [['purpose','Purpose code mapping'],['rtypes','Remittance types'],['currencies','Currency master'],
+  const tabs = [['roles','Roles and permissions'],['purpose','Purpose code mapping'],['rtypes','Remittance types'],['currencies','Currency master'],
     ['checklists','Document checklists'],['users','Users and roles'],['settings','Settings']];
 
   return shell(crumb('Administration'), `

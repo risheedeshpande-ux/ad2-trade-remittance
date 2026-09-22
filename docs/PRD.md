@@ -55,6 +55,25 @@ Two further decisions carry into the build:
 
 An SME user may submit without a second SME approver. SME-side maker-checker is a later addition.
 
+### 3.1 Capabilities and segregation
+
+Each role holds a set of named capabilities, and the interface is built from them: an action a role cannot perform is not rendered, rather than shown and refused. A capability can also be **withheld by design** — marked *segregated* — meaning the role is deliberately kept from it so that whoever prepares work is not whoever approves it.
+
+| Role | Holds | Withheld by design |
+|---|---|---|
+| SME Applicant | Submit an application | — |
+| SME User | Create outward requests, dispose inward receipts, lodge bills, propose allocations, maintain its own masters, view reports | Approving its own requests; confirming its own allocations |
+| AD2 Maker | Capture offline applications, review and price them, raise queries, transact on behalf of an SME, propose allocations | Approving applications or outward requests; confirming allocations |
+| AD2 Checker | Approve or reject applications and outward requests, accept bills, confirm allocations | Creating or reviewing the work it approves |
+| AD2 Operations | Progress remittances and disposal instructions, query, approve, complete, accept bills, confirm and reverse allocations, transact on behalf | Approving onboarding applications |
+| AD2 Administrator | Masters, document checklists, purpose-code mapping, users, roles, settings | All transaction authority |
+
+The Administrator is deliberately outside the transaction path: whoever configures the controls should not also be able to transact through them.
+
+**AutoChecker.** While AutoChecker is enabled, a maker's review commits without a second approver, and the approve action is labelled as such. Switching it off in Settings routes those approvals to a checker. This is the mechanism behind the call's decision to provision maker-checker but run with AutoChecker for now.
+
+The full action-by-role matrix is maintained in Administration → Roles and permissions.
+
 ---
 
 ## 4. Navigation
@@ -364,6 +383,9 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC18 | The assisted journey covers outward and inward alike, is entered from within the relevant function, and lands on that function's screen rather than a dashboard |
 | AC19 | While acting, an AD2 user has the full set of SME actions — create, submit, respond and dispose — not a read-only view |
 | AC20 | The beneficiary master is available identically on the SME side and in the assisted journey, scoped to the SME being acted for, with assisted additions attributed to the AD2 user |
+| AC21 | Every role's capabilities are defined explicitly, and an action a role cannot perform is absent from the interface rather than shown and refused |
+| AC22 | Maker and checker are segregated: a maker cannot approve what it prepared, a checker cannot prepare what it approves, and the interface says which actions are withheld and why |
+| AC23 | The Administrator holds no transaction authority, and the roles and permissions matrix is viewable in Administration |
 
 ---
 

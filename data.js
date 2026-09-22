@@ -6,7 +6,7 @@
 /* Bump this whenever the shape of SEED changes. load() also back-fills any
    top-level key a stored state is missing, so an addition degrades instead of
    crashing, but the bump is what guarantees a clean slate. */
-const SEED_VERSION = 'ad2-trade-v3';
+const SEED_VERSION = 'ad2-trade-v4';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -175,6 +175,92 @@ const CHARGE_CATEGORIES = [
   { id:'swift',  name:'SWIFT charge' },
   { id:'nostro', name:'Correspondent bank charge' },
   { id:'doc',    name:'Document handling fee' },
+];
+
+
+/* --- capabilities and roles -----------------------------------------------
+   Pattern borrowed from the TMP portal's ADM-02 "Roles and permissions"
+   screen: one row per action, one column per role. Two differences — these
+   capabilities are enforced by the app rather than only described, and a role
+   can mark a capability as *segregated*, meaning it is withheld deliberately
+   to keep maker and checker apart rather than simply not granted.          */
+const CAPABILITIES = [
+  { id:'onboard.apply',       group:'Onboarding',     label:'Submit an onboarding application' },
+  { id:'onboard.createOffline',group:'Onboarding',    label:'Create an application for an SME (offline)' },
+  { id:'onboard.review',      group:'Onboarding',     label:'Review an application and prepare pricing' },
+  { id:'onboard.query',       group:'Onboarding',     label:'Raise a clarification on an application' },
+  { id:'onboard.approve',     group:'Onboarding',     label:'Approve or reject an application' },
+
+  { id:'outward.create',      group:'Outward',        label:'Create and submit an outward request' },
+  { id:'outward.viewOwn',     group:'Outward',        label:'View its own outward requests' },
+  { id:'outward.viewAll',     group:'Outward',        label:'View outward requests across all SMEs' },
+  { id:'outward.query',       group:'Outward',        label:'Raise a query on an outward request' },
+  { id:'outward.approve',     group:'Outward',        label:'Approve an outward request for processing' },
+  { id:'outward.complete',    group:'Outward',        label:'Mark an outward request completed' },
+  { id:'outward.reject',      group:'Outward',        label:'Reject an outward request' },
+
+  { id:'inward.viewOwn',      group:'Inward',         label:'View its own inward receipts' },
+  { id:'inward.viewAll',      group:'Inward',         label:'View inward receipts across all SMEs' },
+  { id:'inward.dispose',      group:'Inward',         label:'Submit a disposal instruction' },
+  { id:'inward.approveDisposal',group:'Inward',       label:'Approve a disposal instruction' },
+
+  { id:'bills.lodge',         group:'Bill lodgement', label:'Lodge an import or export bill' },
+  { id:'bills.viewAll',       group:'Bill lodgement', label:'View bills across all SMEs' },
+  { id:'bills.accept',        group:'Bill lodgement', label:'Accept or reject a lodged bill' },
+
+  { id:'recon.propose',       group:'Reconciliation', label:'Propose an allocation' },
+  { id:'recon.confirm',       group:'Reconciliation', label:'Confirm an allocation' },
+  { id:'recon.reverse',       group:'Reconciliation', label:'Reverse a confirmed allocation' },
+
+  { id:'masters.beneficiary', group:'Masters',        label:'Maintain the beneficiary and account masters' },
+  { id:'assist.transact',     group:'Assisted',       label:'Transact on behalf of an SME' },
+  { id:'reports.view',        group:'Reports',        label:'View and export reports' },
+
+  { id:'admin.masters',       group:'Administration', label:'Maintain purpose codes, types and currencies' },
+  { id:'admin.users',         group:'Administration', label:'Manage users and roles' },
+  { id:'admin.settings',      group:'Administration', label:'Change platform settings' },
+];
+
+const ROLES = [
+  { id:'SME Applicant', portal:'SME', order:1,
+    summary:'A business partway through onboarding. It can complete and submit its application and answer queries, and has no transaction access until AD2 approves it.',
+    can:['onboard.apply'] },
+
+  { id:'SME User', portal:'SME', order:2,
+    summary:'The day-to-day user at an approved SME. Raises outward requests, disposes of inward receipts, lodges bills and proposes knock-offs — all within the service permission and currencies AD2 approved, and only for its own SME.',
+    can:['outward.create','outward.viewOwn','inward.viewOwn','inward.dispose','bills.lodge',
+         'recon.propose','masters.beneficiary','reports.view'],
+    segregated:['outward.approve','recon.confirm'],
+    note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition.' },
+
+  { id:'AD2 Maker', portal:'AD2', order:3,
+    summary:'Prepares work for a checker. Captures offline applications, reviews business details and sets pricing, and can transact on behalf of an SME — but does not commit its own approvals.',
+    can:['onboard.createOffline','onboard.review','onboard.query','outward.viewAll','outward.query',
+         'inward.viewAll','bills.viewAll','bills.lodge','recon.propose','assist.transact',
+         'masters.beneficiary','reports.view'],
+    segregated:['onboard.approve','outward.approve','outward.reject','recon.confirm'],
+    note:'With AutoChecker enabled a maker\u2019s review commits without a second approver. Switch AutoChecker off in Settings to route these to a checker.' },
+
+  { id:'AD2 Checker', portal:'AD2', order:4,
+    summary:'The second pair of eyes. Approves or rejects what a maker prepared — applications, outward requests and allocations — and cannot originate the work it approves.',
+    can:['onboard.approve','onboard.query','outward.viewAll','outward.approve','outward.reject',
+         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept','recon.confirm',
+         'reports.view'],
+    segregated:['onboard.createOffline','onboard.review','outward.create','bills.lodge','recon.propose'] },
+
+  { id:'AD2 Operations', portal:'AD2', order:5,
+    summary:'Runs the transaction book day to day: reviews and progresses remittances and disposal instructions, manages queries and pendency, accepts bills and confirms reconciliation.',
+    can:['outward.viewAll','outward.query','outward.approve','outward.complete','outward.reject',
+         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept',
+         'recon.confirm','recon.reverse','assist.transact','reports.view'],
+    segregated:['onboard.approve'] },
+
+  { id:'AD2 Administrator', portal:'AD2', order:6,
+    summary:'Maintains the platform rather than the book: masters, document checklists, purpose-code mapping, users, roles and settings. Deliberately holds no transaction authority.',
+    can:['admin.masters','admin.users','admin.settings','outward.viewAll','inward.viewAll',
+         'bills.viewAll','reports.view'],
+    segregated:['onboard.approve','outward.approve','recon.confirm','inward.dispose'],
+    note:'Kept out of the transaction path on purpose: whoever configures the controls should not also be able to transact through them.' },
 ];
 
 /* --- SMEs ---------------------------------------------------------------- */
@@ -480,6 +566,7 @@ const ACCOUNTS = [
 const SEED = {
   version:SEED_VERSION,
   currencies:CURRENCIES, constitutions:CONSTITUTIONS, purposeCodes:PURPOSE_CODES,
+  capabilities:CAPABILITIES, roles:ROLES,
   remittanceTypes:REMITTANCE_TYPES,
   disposalOptions:DISPOSAL_OPTIONS, chargeCategories:CHARGE_CATEGORIES,
   smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,

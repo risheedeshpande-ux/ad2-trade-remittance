@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="styles.css?v=8">
 <style>
   .wrap{max-width:1320px;margin:0 auto;padding:var(--s6) var(--s5) 80px}
   .ctl{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s5)}
@@ -150,7 +150,7 @@ const SCREENS = [
  { g:'AD2 portal', id:'AD2-07', name:'Outward requests', route:'#/ad2/outward', as:'AD2:OPS',
    note:'The book across all SMEs. <b>New request for an SME</b> starts an assisted journey straight into that SME\u2019s outward form.' },
  { g:'AD2 portal', id:'AD2-08', name:'Outward detail — AD2 actions', route:'#/ad2/outward/OR-5106', as:'AD2:OPS',
-   note:'Adds Approve, Raise query, Reject and an internal notes panel the SME never sees.' },
+   note:'Actions follow the role. An AD2 Maker sees Raise query and \u201cApproval is a checker action\u201d; a Checker sees Approve and Reject.' },
  { g:'AD2 portal', id:'AD2-09', name:'Inward remittances', route:'#/ad2/inward', as:'AD2:OPS',
    note:'All receipts. <b>Disposal for an SME</b> in the header, and <b>Dispose on behalf</b> on any receipt with a balance, both start an assisted journey.' },
  { g:'AD2 portal', id:'AD2-10', name:'Inward detail', route:'#/ad2/inward/IR-3306', as:'AD2:OPS',
@@ -162,7 +162,7 @@ const SCREENS = [
  { g:'AD2 portal', id:'AD2-13', name:'Reports', route:'#/ad2/reports', as:'AD2:OPS',
    note:'The same eleven reports, unscoped across SMEs.' },
  { g:'AD2 portal', id:'AD2-14', name:'Administration', route:'#/ad2/admin', as:'AD2:ADMIN',
-   note:'Six tabs: purpose-code mapping, remittance types, currency master, document checklists, users, settings.' },
+   note:'Seven tabs, opening on <b>Roles and permissions</b> \u2014 what each role is for, plus an action-by-role matrix. Then purpose-code mapping, remittance types, currency master, document checklists, users and settings.' },
 
  { g:'Assisted journey', id:'AST-01', name:'Assisted outward request', route:'#/sme/outward/new', as:'AD2:MAKER', acting:'SME-1001',
    note:'Reached from AD2 \u2192 Outward Requests \u2192 New request for an SME. Lands on the form, not a dashboard. AD2 sees that SME\u2019s beneficiary master and can add to it, and every supported currency is on offer.' },
@@ -172,6 +172,12 @@ const SCREENS = [
    note:'Reached in one click from Dispose on behalf on the AD2 inward list. Submits stamped as assisted, with the audit naming both parties.' },
  { g:'Assisted journey', id:'AST-04', name:'Assisted bill lodgement', route:'#/sme/bills/export', as:'AD2:MAKER', acting:'SME-1001',
    note:'Bills lodged here are stamped as raised by AD2 on the SME\u2019s behalf.' },
+ { g:'Administration', id:'ADM-01', name:'Roles and permissions', route:'#/ad2/admin', as:'AD2:ADMIN',
+   note:'What each of the six roles is for, what is withheld from it by design, and an action-by-role matrix. Modelled on the TMP portal\u2019s ADM-02, but enforced rather than only described.' },
+ { g:'Administration', id:'ADM-02', name:'Maker view of an approval', route:'#/ad2/applications/SME-1006', as:'AD2:MAKER',
+   state:true, note:'Same screen as AD2-03 seen as a Maker \u2014 prepare and query, with approval marked as a checker action.' },
+ { g:'Administration', id:'ADM-03', name:'Checker view of an approval', route:'#/ad2/applications/SME-1006', as:'AD2:CHECKER',
+   state:true, note:'The same screen as a Checker \u2014 approve or reject, with Save review withheld so the approver did not prepare the work.' },
 ];
 
 const url = s => 'app.html' + (s.as ? '?as=' + encodeURIComponent(s.as) + (s.acting ? '&acting=' + encodeURIComponent(s.acting) : '') : '') + s.route;
