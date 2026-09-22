@@ -111,7 +111,7 @@ const SCREENS = [
  { g:'SME portal', id:'SME-02', name:'Outward remittance list', route:'#/sme/outward', as:'MERIDIANTEX:SMEUSER',
    note:'Eight stage tabs with counts, search and CSV export.' },
  { g:'SME portal', id:'SME-03', name:'New outward request', route:'#/sme/outward/new', as:'MERIDIANTEX:SMEUSER',
-   note:'The core screen. Remittance type narrows the purpose codes; the pair drives the document checklist. Book Rate locks 48 hours.' },
+   note:'The core screen. Beneficiary is picked from the master or added inline; remittance type narrows the purpose codes; the pair drives the document checklist. Book Rate locks 48 hours.' },
  { g:'SME portal', id:'SME-04', name:'Outward detail — under review', route:'#/sme/outward/OR-5103', as:'MERIDIANTEX:SMEUSER',
    note:'Full record with allocations, pricing breakdown and activity timeline.' },
  { g:'SME portal', id:'SME-05', name:'Outward detail — clarification raised', route:'#/sme/outward/OR-5104', as:'MERIDIANTEX:SMEUSER',
@@ -133,7 +133,7 @@ const SCREENS = [
  { g:'SME portal', id:'SME-13', name:'Integrations', route:'#/sme/integrations', as:'MERIDIANTEX:SMEUSER',
    note:'SFTP and SAP connection summaries plus job history with retry.' },
  { g:'SME portal', id:'SME-14', name:'Profile and account master', route:'#/sme/profile', as:'MERIDIANTEX:SMEUSER',
-   note:'Business details, bank account master with PennyDrop, and the pricing AD2 approved.' },
+   note:'Business details, the bank account master with PennyDrop, the <b>beneficiary master</b>, and the pricing AD2 approved.' },
 
  { g:'AD2 portal', id:'AD2-01', name:'Dashboard', route:'#/ad2/dashboard', as:'AD2:OPS',
    note:'Portfolio KPIs, completed volume by currency, applications by status, recent audit activity.' },
@@ -165,7 +165,7 @@ const SCREENS = [
    note:'Six tabs: purpose-code mapping, remittance types, currency master, document checklists, users, settings.' },
 
  { g:'Assisted journey', id:'AST-01', name:'Assisted outward request', route:'#/sme/outward/new', as:'AD2:MAKER', acting:'SME-1001',
-   note:'Reached from AD2 \u2192 Outward Requests \u2192 New request for an SME. Lands on the form, not a dashboard. Every supported currency is on offer, not just the SME\u2019s enabled three.' },
+   note:'Reached from AD2 \u2192 Outward Requests \u2192 New request for an SME. Lands on the form, not a dashboard. AD2 sees that SME\u2019s beneficiary master and can add to it, and every supported currency is on offer.' },
  { g:'Assisted journey', id:'AST-02', name:'Assisted inward remittances', route:'#/sme/inward', as:'AD2:OPS', acting:'SME-1001',
    note:'Reached from AD2 \u2192 Inward Remittances \u2192 Disposal for an SME. Receipts with a balance offer Dispose.' },
  { g:'Assisted journey', id:'AST-03', name:'Assisted disposal instruction', route:'#/sme/inward/IR-3303/dispose', as:'AD2:OPS', acting:'SME-1001',

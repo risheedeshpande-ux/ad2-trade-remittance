@@ -137,7 +137,11 @@ List columns: request ID, beneficiary, currency, amount, request date, status, p
 
 ### Create request
 
-**Beneficiary** — name, country, address, account number, bank name, bank country, SWIFT/IBAN as applicable.
+**Beneficiary** — selected from the SME's **beneficiary master**, not retyped per transaction. The picker lists saved payees with their bank and account currency; **Add new beneficiary** captures one inline and, unless the save is unticked, adds it to the master and selects it. A genuine one-off payee can be used without ever entering the master.
+
+The request **snapshots** the beneficiary details it was sent with, so later edits to or removal of a master record never rewrite a past payment. Where a beneficiary's account currency differs from the remittance currency, the screen warns but does not block — the payee may still be able to receive it.
+
+The master is per SME and is maintained on Profile → Beneficiary master. It records who added each payee and when it was last used. An AD2 user in the assisted journey sees and adds to that SME's master, and additions are stamped as made on the SME's behalf.
 
 **Remittance** — currency (enabled currencies only), amount, **remittance type**, **purpose of remittance**, requested execution date, **remitter account** (selected from the account master), and an optional free-text **Reference Number**.
 
@@ -320,6 +324,7 @@ Keyboard navigation and accessible labels throughout. Dates are formatted consis
 | SME | ID, business details, constitution, IEC, onboarding source, approval status |
 | SME Configuration | permissions, currencies, margins, charges, effective date |
 | Bank Account | SME, holder, bank, account number, IFSC, currency, verification state |
+| Beneficiary | SME, name, country, address, bank, bank country, account/IBAN, SWIFT, account currency, relationship, added by, last used |
 | User | ID, SME or AD2 association, role |
 | Bill | ID, SME, type, currency, original/adjusted/outstanding amount, due date, source, review status, settlement status |
 | Remittance | ID, SME, direction, currency, amount, purpose code, rate lock or deal reference, status |
@@ -344,6 +349,7 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC04 | Purpose code selection changes the document checklist; Business Travel does not request a Bill of Entry |
 | AC05 | Book Rate locks a rate for 48 hours; an FX Deal Reference is accepted as the alternative; submission is blocked without one of the two |
 | AC06 | Remitter and credit accounts are selected from the account master, and PennyDrop verification is demonstrable |
+| AC06a | Beneficiaries are selected from a per-SME master or added inline; a one-off payee can be used without saving; the request snapshots what it sent, and a currency mismatch warns without blocking |
 | AC07 | Partial and full disposal instructions submit without exceeding the available inward amount |
 | AC08 | Bills lodge manually, by CSV upload, and through simulated SFTP and SAP jobs, without creating duplicates |
 | AC09 | Document AI prefills bill fields from an uploaded invoice and the values remain editable |
@@ -357,6 +363,7 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC17 | AD2 can transact on behalf of an approved SME; the record and the audit trail name both parties, and the SME's controls still apply |
 | AC18 | The assisted journey covers outward and inward alike, is entered from within the relevant function, and lands on that function's screen rather than a dashboard |
 | AC19 | While acting, an AD2 user has the full set of SME actions — create, submit, respond and dispose — not a read-only view |
+| AC20 | The beneficiary master is available identically on the SME side and in the assisted journey, scoped to the SME being acted for, with assisted additions attributed to the AD2 user |
 
 ---
 

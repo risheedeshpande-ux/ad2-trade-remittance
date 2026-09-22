@@ -293,6 +293,42 @@ const BANK_ACCOUNTS = [
   { id:'BA-007', smeId:'SME-1003', holder:'Nilgiri Spice Exports', bank:'State Bank of India', accountNumber:'38812044886', ifsc:'SBIN0001440', branch:'Coonoor', currency:'USD', type:'EEFC', verified:true, verifiedOn:'2026-08-19', primary:false },
 ];
 
+
+/* --- beneficiary master ---------------------------------------------------
+   Overseas payees held per SME, so a remittance selects one rather than
+   retyping bank details each time. A transaction still snapshots the details
+   it used, so later edits to the master never rewrite history.             */
+const BENEFICIARIES = [
+  { id:'BEN-001', smeId:'SME-1001', name:'Filatura Ponti S.p.A.', country:'Italy',
+    address:'Via Industria 18, 21052 Busto Arsizio VA', accountNumber:'IT60X0542811101000000123456',
+    bank:'Intesa Sanpaolo', bankCountry:'Italy', swift:'BCITITMM', currency:'EUR',
+    relationship:'Supplier — yarn and greige fabric', addedBy:'SME User', addedOn:'2026-07-11', lastUsed:'2026-09-19' },
+  { id:'BEN-002', smeId:'SME-1001', name:'Northgate Advisory Ltd', country:'United Kingdom',
+    address:'4 Finsbury Square, London EC2A 1AB', accountNumber:'GB82WEST12345698765432',
+    bank:'Barclays', bankCountry:'United Kingdom', swift:'BARCGB22', currency:'GBP',
+    relationship:'Professional services', addedBy:'SME User', addedOn:'2026-08-02', lastUsed:'2026-09-21' },
+  { id:'BEN-003', smeId:'SME-1001', name:'Aegis Freight Services Ltd', country:'Singapore',
+    address:'12 Keppel Road, Singapore 089059', accountNumber:'0011-882-3390',
+    bank:'OCBC Bank', bankCountry:'Singapore', swift:'OCBCSGSG', currency:'USD',
+    relationship:'Freight forwarder', addedBy:'SME User', addedOn:'2026-08-14', lastUsed:'2026-09-09' },
+  { id:'BEN-004', smeId:'SME-1001', name:'Bergmann Textilhandel GmbH', country:'Germany',
+    address:'Hafenstrasse 22, 20359 Hamburg', accountNumber:'DE89370400440532013000',
+    bank:'Commerzbank', bankCountry:'Germany', swift:'COBADEFF', currency:'EUR',
+    relationship:'Buyer — also a payee for credit notes', addedBy:'AD2 Maker (R. Iyer)', addedOn:'2026-09-02', lastUsed:null },
+  { id:'BEN-005', smeId:'SME-1002', name:'Shenzhen Ruiyang Electronics', country:'China',
+    address:'Block C, Bao an District, Shenzhen 518101', accountNumber:'6222021001128845',
+    bank:'Bank of China', bankCountry:'China', swift:'BKCHCNBJ', currency:'USD',
+    relationship:'Supplier — passive components', addedBy:'SME User', addedOn:'2026-08-08', lastUsed:'2026-09-21' },
+  { id:'BEN-006', smeId:'SME-1002', name:'Ruiyang Precision Pte Ltd', country:'Singapore',
+    address:'8 Tuas Avenue 3, Singapore 639407', accountNumber:'0033-991-4471',
+    bank:'DBS Bank', bankCountry:'Singapore', swift:'DBSSSGSG', currency:'SGD',
+    relationship:'Supplier — connectors', addedBy:'SME User', addedOn:'2026-08-20', lastUsed:'2026-09-14' },
+  { id:'BEN-007', smeId:'SME-1003', name:'Cochin Port Logistics FZE', country:'United Arab Emirates',
+    address:'Jebel Ali Free Zone, Dubai', accountNumber:'AE070331234567890123456',
+    bank:'Emirates NBD', bankCountry:'United Arab Emirates', swift:'EBILAEAD', currency:'AED',
+    relationship:'Freight and handling', addedBy:'SME User', addedOn:'2026-09-01', lastUsed:null },
+];
+
 /* --- bills ---------------------------------------------------------------- */
 const BILLS = [
   { id:'BL-24001', smeId:'SME-1001', type:'Export', invoiceNumber:'MTX/EXP/2026/0141', invoiceDate:'2026-07-18', counterparty:'Halstead Retail Group', counterpartyCountry:'United Kingdom', currency:'GBP', amount:184500, adjusted:184500, outstanding:0,      dueDate:'2026-10-16', orderRef:'PO-HRG-88213', shipmentRef:'SB-2261194', source:'Form fill', review:'Accepted', settlement:'Settled' },
@@ -310,21 +346,21 @@ const BILLS = [
 
 /* --- outward remittances -------------------------------------------------- */
 const OUTWARD = [
-  { id:'OR-5101', smeId:'SME-1002', beneficiary:'Shenzhen Ruiyang Electronics', beneficiaryCountry:'China',
+  { id:'OR-5101', beneficiaryId:'BEN-005', smeId:'SME-1002', beneficiary:'Shenzhen Ruiyang Electronics', beneficiaryCountry:'China',
     beneficiaryAccount:'6222021001128845', beneficiaryBank:'Bank of China', beneficiaryBankCountry:'China', swift:'BKCHCNBJ',
     currency:'USD', amount:142300, purposeCode:'S0102', remittanceType:'OUT-DOC', executionDate:'2026-09-08', debitAccountId:'BA-004',
     referenceNumber:'ARC-REM-0921', status:'Completed', requestDate:'2026-09-05T10:12:00',
     rate:{ mode:'booked', refRate:88.18, margin:55, customerRate:88.73, bookedAt:'2026-09-05T10:30:00', expiresAt:'2026-09-07T10:30:00', dealRef:null },
     charges:[{name:'Transaction handling fee',amount:450},{name:'Document handling fee',amount:300}],
     allocations:[{billId:'BL-24006', amount:142300}], pendingWith:'—' },
-  { id:'OR-5102', smeId:'SME-1002', beneficiary:'Ruiyang Precision Pte Ltd', beneficiaryCountry:'Singapore',
+  { id:'OR-5102', beneficiaryId:'BEN-006', smeId:'SME-1002', beneficiary:'Ruiyang Precision Pte Ltd', beneficiaryCountry:'Singapore',
     beneficiaryAccount:'0033-991-4471', beneficiaryBank:'DBS Bank', beneficiaryBankCountry:'Singapore', swift:'DBSSSGSG',
     currency:'SGD', amount:40000, purposeCode:'S0102', remittanceType:'OUT-DOC', executionDate:'2026-09-16', debitAccountId:'BA-004',
     referenceNumber:'ARC-REM-0934', status:'Processing', requestDate:'2026-09-14T09:40:00',
     rate:{ mode:'deal', refRate:65.12, margin:61, customerRate:65.73, bookedAt:null, expiresAt:null, dealRef:'FXD-2026-77412' },
     charges:[{name:'Transaction handling fee',amount:450}],
     allocations:[{billId:'BL-24007', amount:40000}], pendingWith:'AD2 Operations' },
-  { id:'OR-5103', smeId:'SME-1001', beneficiary:'Filatura Ponti S.p.A.', beneficiaryCountry:'Italy',
+  { id:'OR-5103', beneficiaryId:'BEN-001', smeId:'SME-1001', beneficiary:'Filatura Ponti S.p.A.', beneficiaryCountry:'Italy',
     beneficiaryAccount:'IT60X0542811101000000123456', beneficiaryBank:'Intesa Sanpaolo', beneficiaryBankCountry:'Italy', swift:'BCITITMM',
     currency:'EUR', amount:88400, purposeCode:'S0102', remittanceType:'OUT-DOC', executionDate:'2026-09-25', debitAccountId:'BA-001',
     referenceNumber:'MTX-REM-1142', status:'Under Review', requestDate:'2026-09-19T15:05:00',
@@ -339,20 +375,20 @@ const OUTWARD = [
     charges:[{name:'Transaction handling fee',amount:500}],
     allocations:[], pendingWith:'SME',
     query:{ question:'Visa copy is expired. Please upload a current visa and confirm travel dates.', raisedBy:'AD2 Operations', raisedAt:'2026-09-21T09:15:00', response:null } },
-  { id:'OR-5105', smeId:'SME-1001', beneficiary:'Northgate Advisory Ltd', beneficiaryCountry:'United Kingdom',
+  { id:'OR-5105', beneficiaryId:'BEN-002', smeId:'SME-1001', beneficiary:'Northgate Advisory Ltd', beneficiaryCountry:'United Kingdom',
     beneficiaryAccount:'GB82WEST12345698765432', beneficiaryBank:'Barclays', beneficiaryBankCountry:'United Kingdom', swift:'BARCGB22',
     currency:'GBP', amount:15800, purposeCode:'S0501', remittanceType:'OUT-SVC', executionDate:'2026-10-02', debitAccountId:'BA-002',
     referenceNumber:'', status:'Draft', requestDate:'2026-09-21T16:45:00',
     rate:{ mode:'none', refRate:112.64, margin:68, customerRate:113.32, bookedAt:null, expiresAt:null, dealRef:null },
     charges:[{name:'Transaction handling fee',amount:500}], allocations:[], pendingWith:'SME' },
-  { id:'OR-5106', smeId:'SME-1002', beneficiary:'Shenzhen Ruiyang Electronics', beneficiaryCountry:'China',
+  { id:'OR-5106', beneficiaryId:'BEN-005', smeId:'SME-1002', beneficiary:'Shenzhen Ruiyang Electronics', beneficiaryCountry:'China',
     beneficiaryAccount:'6222021001128845', beneficiaryBank:'Bank of China', beneficiaryBankCountry:'China', swift:'BKCHCNBJ',
     currency:'USD', amount:76900, purposeCode:'S0101', remittanceType:'OUT-ADV', executionDate:'2026-09-30', debitAccountId:'BA-004',
     referenceNumber:'ARC-ADV-0012', status:'Submitted', requestDate:'2026-09-21T12:20:00',
     rate:{ mode:'booked', refRate:88.42, margin:55, customerRate:88.97, bookedAt:'2026-09-21T12:35:00', expiresAt:'2026-09-23T12:35:00', dealRef:null },
     charges:[{name:'Transaction handling fee',amount:450}],
     allocations:[{billId:'BL-24008', amount:76900}], pendingWith:'AD2 Maker' },
-  { id:'OR-5107', smeId:'SME-1001', beneficiary:'Aegis Freight Services Ltd', beneficiaryCountry:'Singapore',
+  { id:'OR-5107', beneficiaryId:'BEN-003', smeId:'SME-1001', beneficiary:'Aegis Freight Services Ltd', beneficiaryCountry:'Singapore',
     beneficiaryAccount:'0011-882-3390', beneficiaryBank:'OCBC Bank', beneficiaryBankCountry:'Singapore', swift:'OCBCSGSG',
     currency:'USD', amount:9400, purposeCode:'S0601', remittanceType:'OUT-SVC', executionDate:'2026-09-12', debitAccountId:'BA-001',
     referenceNumber:'MTX-FRT-0451', status:'Rejected', requestDate:'2026-09-09T13:00:00',
@@ -443,6 +479,6 @@ const SEED = {
   currencies:CURRENCIES, constitutions:CONSTITUTIONS, purposeCodes:PURPOSE_CODES,
   remittanceTypes:REMITTANCE_TYPES,
   disposalOptions:DISPOSAL_OPTIONS, chargeCategories:CHARGE_CATEGORIES,
-  smes:SMES, accounts:BANK_ACCOUNTS, bills:BILLS, outward:OUTWARD, inward:INWARD,
+  smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,
   disposals:DISPOSALS, jobs:JOBS, audit:AUDIT, logins:ACCOUNTS,
 };

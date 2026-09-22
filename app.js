@@ -73,6 +73,8 @@ const bill      = id => DB.bills.find(b => b.id === id);
 const purpose   = code => DB.purposeCodes.find(p => p.code === code);
 const currency  = code => DB.currencies.find(c => c.code === code);
 const smeAccounts = smeId => DB.accounts.filter(a => a.smeId === smeId);
+const bene        = id => DB.beneficiaries.find(x => x.id === id);
+const smeBenes    = smeId => DB.beneficiaries.filter(x => x.smeId === smeId);
 const rtype     = id => DB.remittanceTypes.find(t => t.id === id);
 
 /* Remittance types for a direction, and the purpose codes a chosen type allows.
@@ -772,7 +774,7 @@ function viewOutwardList() {
 let OR_DRAFT = null;
 function newOutwardDraft() {
   return {
-    id:null, smeId:ctxSmeId(), beneficiary:'', beneficiaryCountry:'', beneficiaryAccount:'',
+    id:null, smeId:ctxSmeId(), beneficiaryId:'', beneficiary:'', beneficiaryCountry:'', beneficiaryAccount:'',
     beneficiaryBank:'', beneficiaryBankCountry:'', swift:'',
     currency:'', amount:'', remittanceType:'', purposeCode:'', executionDate:'', debitAccountId:'',
     referenceNumber:'', allocations:[], docs:{},
@@ -796,6 +798,9 @@ function viewOutwardNew() {
   const accounts = smeAccounts(d.smeId);
   const curs = availableCurrencies(me);
   const checklist = checklistFor(d.purposeCode, d.remittanceType);
+  const benePool = smeBenes(d.smeId);
+  const selBene = bene(d.beneficiaryId);
+  const beneCurWarn = !!(selBene && d.currency && selBene.currency && selBene.currency !== d.currency);
 
   /* pricing */
   const margin = d.currency ? marginFor(me, d.currency) : 0;
@@ -871,15 +876,41 @@ function viewOutwardNew() {
     <div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start">
       <div class="grid" style="gap:20px">
 
-        <div class="card"><div class="card-head"><h2>Beneficiary</h2></div><div class="card-body">
-          <div class="grid g2 fields">
-            ${fldOR('beneficiary','Beneficiary name',d.beneficiary,{required:true})}
-            ${fldOR('beneficiaryCountry','Beneficiary country',d.beneficiaryCountry,{required:true})}
-            ${fldOR('beneficiaryAccount','Account number / IBAN',d.beneficiaryAccount,{required:true})}
-            ${fldOR('swift','SWIFT / BIC',d.swift,{required:true})}
-            ${fldOR('beneficiaryBank','Bank name',d.beneficiaryBank,{required:true})}
-            ${fldOR('beneficiaryBankCountry','Bank country',d.beneficiaryBankCountry,{required:true})}
-          </div></div></div>
+        <div class="card"><div class="card-head"><h2>Beneficiary</h2>
+          <div class="acts">
+            <button class="btn btn-ghost btn-sm" type="button" data-act="bene-new">Add new beneficiary</button>
+          </div></div><div class="card-body">
+          <div class="f" data-fld="beneficiary" style="margin-bottom:${d.beneficiary ? 'var(--s4)' : '0'}">
+            <label for="or-bene">Select a beneficiary<span class="req">*</span></label>
+            <select id="or-bene" data-act="bene-pick">
+              <option value="">Select from your beneficiary master…</option>
+              ${benePool.map(x => `<option value="${x.id}" ${d.beneficiaryId === x.id ? 'selected' : ''}>
+                ${esc(x.name)} · ${esc(x.bank)} · ${esc(x.currency)}${x.country ? ' · ' + esc(x.country) : ''}</option>`).join('')}
+              ${d.beneficiary && !d.beneficiaryId ? `<option value="__oneoff" selected>${esc(d.beneficiary)} (one-off, not saved)</option>` : ''}
+            </select>
+            <div class="hint">${benePool.length
+              ? benePool.length + ' saved beneficiar' + (benePool.length === 1 ? 'y' : 'ies') + '. Add a new one if the payee is not listed.'
+              : 'No beneficiaries saved yet — add the first one.'}</div>
+            <div class="err">Select a beneficiary, or add a new one.</div></div>
+
+          ${d.beneficiary ? `
+            <div class="note ${beneCurWarn ? 'note-warn' : 'note-ok'}" style="margin-bottom:var(--s4)"><span>
+              ${beneCurWarn
+                ? `This beneficiary's account is held in <b>${esc(selBene.currency)}</b> but you are remitting <b>${esc(d.currency)}</b>. Confirm the payee can receive ${esc(d.currency)}.`
+                : 'Details below are what will be sent. They are snapshotted onto the request, so later edits to the master will not change this payment.'}</span></div>
+            <div class="kv">
+              <div><div class="k">Name</div><div class="v">${esc(d.beneficiary)}</div></div>
+              <div><div class="k">Country</div><div class="v">${esc(d.beneficiaryCountry || '—')}</div></div>
+              <div><div class="k">Account / IBAN</div><div class="v">${esc(d.beneficiaryAccount || '—')}</div></div>
+              <div><div class="k">SWIFT / BIC</div><div class="v">${esc(d.swift || '—')}</div></div>
+              <div><div class="k">Bank</div><div class="v">${esc(d.beneficiaryBank || '—')}</div></div>
+              <div><div class="k">Bank country</div><div class="v">${esc(d.beneficiaryBankCountry || '—')}</div></div>
+            </div>
+            <div style="display:flex;gap:var(--s2);margin-top:var(--s4)">
+              <button class="btn btn-plain btn-sm" type="button" data-act="bene-edit">Edit these details</button>
+              <button class="btn btn-link" type="button" data-act="bene-clear">Clear</button>
+            </div>` : ''}
+        </div></div>
 
         <div class="card"><div class="card-head"><h2>Remittance</h2></div><div class="card-body">
           <div class="grid g2 fields">
@@ -971,9 +1002,9 @@ const fldOR = (id, label, val, opts = {}) => `
   </div>`;
 
 const OR_LABELS = {
-  beneficiary:'Beneficiary name', beneficiaryCountry:'Beneficiary country',
-  beneficiaryAccount:'Account number / IBAN', swift:'SWIFT / BIC',
-  beneficiaryBank:'Bank name', beneficiaryBankCountry:'Bank country',
+  beneficiary:'Beneficiary (select one or add a new one)',
+  beneficiaryCountry:'Beneficiary country', beneficiaryAccount:'Account number / IBAN',
+  swift:'SWIFT / BIC', beneficiaryBank:'Bank name', beneficiaryBankCountry:'Bank country',
   currency:'Currency', remittanceType:'Remittance type', purposeCode:'Purpose of remittance',
   executionDate:'Requested execution date',
   debitAccountId:'Remitter account', amount:'Amount',
@@ -1033,7 +1064,9 @@ function viewOutwardDetail(id) {
     <div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start">
       <div class="grid" style="gap:20px">
         <div class="card"><div class="card-head"><h2>Beneficiary</h2></div><div class="card-body"><div class="kv">
-          <div><div class="k">Name</div><div class="v">${esc(o.beneficiary)}</div></div>
+          <div><div class="k">Name</div><div class="v">${esc(o.beneficiary)}
+            ${o.beneficiaryId && bene(o.beneficiaryId) ? '<br><span class="badge b-teal" style="margin-top:4px">From beneficiary master</span>'
+              : '<br><span class="badge b-grey" style="margin-top:4px">One-off payee</span>'}</div></div>
           <div><div class="k">Country</div><div class="v">${esc(o.beneficiaryCountry)}</div></div>
           <div><div class="k">Account / IBAN</div><div class="v">${esc(o.beneficiaryAccount)}</div></div>
           <div><div class="k">SWIFT</div><div class="v">${esc(o.swift)}</div></div>
@@ -1722,6 +1755,26 @@ function viewProfile() {
           These accounts populate the remitter and credit selectors on transactions. PennyDrop verification is simulated.</p>
       </div></div>
 
+    <div class="card" style="margin-bottom:20px"><div class="card-head"><h2>Beneficiary master</h2>
+      <div class="acts"><button class="btn btn-ghost btn-sm" type="button" data-act="bene-add-profile">Add beneficiary</button></div></div>
+      <div class="card-body tight">${smeBenes(me.id).length ? `<div class="tablewrap"><table class="dt">
+        <thead><tr><th>Beneficiary</th><th>Bank</th><th>Account / IBAN</th><th>SWIFT</th>
+          <th>Currency</th><th>Added by</th><th>Last used</th><th></th></tr></thead>
+        <tbody>${smeBenes(me.id).map(x => `
+          <tr><td><b>${esc(x.name)}</b><br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(x.country)}${x.relationship ? ' · ' + esc(x.relationship) : ''}</span></td>
+            <td>${esc(x.bank)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(x.bankCountry)}</span></td>
+            <td style="word-break:break-all">${esc(x.accountNumber)}</td><td>${esc(x.swift)}</td>
+            <td>${esc(x.currency || '—')}</td>
+            <td style="font-size:var(--fs-xs)">${esc(x.addedBy || '—')}<br><span style="color:var(--muted)">${dmy(x.addedOn)}</span></td>
+            <td style="font-size:var(--fs-xs)">${x.lastUsed ? dmy(x.lastUsed) : '<span style="color:var(--muted)">never</span>'}</td>
+            <td><button class="btn btn-link" type="button" data-act="bene-del-profile" data-id="${x.id}">Remove</button></td></tr>`).join('')}
+        </tbody></table></div>
+        <p style="padding:12px 20px;color:var(--muted);font-size:var(--fs-xs)">
+          Outward requests select from this list. A request snapshots the details it was sent with, so
+          removing or editing a beneficiary never rewrites past payments.</p>`
+        : empty('No beneficiaries yet','Add the overseas payees you remit to, so a request can select one rather than retyping bank details.')}
+      </div></div>
+
     <div class="card"><div class="card-head"><h2>Approved configuration</h2>
       <div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">Effective ${dmy(c.effectiveDate)}</span></div></div>
       <div class="card-body">
@@ -2170,6 +2223,52 @@ function startAssist(smeId, dest) {
   toast('Acting for ' + target.tradingName + '.', 'ok');
 }
 
+/* A beneficiary form used by both the transaction screen and the profile.
+   `save` decides whether it lands in the master or stays a one-off. */
+function beneFormHTML(v = {}, opts = {}) {
+  const f = (k, label, req) => `
+    <div class="f"><label for="bn-${k}">${esc(label)}${req ? '<span class="req">*</span>' : ''}</label>
+      <input id="bn-${k}" type="text" value="${esc(v[k] || '')}"></div>`;
+  return `<div class="grid g2 fields">
+      ${f('name','Beneficiary name',true)}
+      ${f('country','Beneficiary country',true)}
+      ${f('bank','Bank name',true)}
+      ${f('bankCountry','Bank country',true)}
+      ${f('accountNumber','Account number / IBAN',true)}
+      ${f('swift','SWIFT / BIC',true)}
+      <div class="f"><label for="bn-currency">Account currency</label>
+        <select id="bn-currency"><option value="">Not specified</option>
+          ${DB.currencies.map(c => `<option ${v.currency === c.code ? 'selected' : ''}>${c.code}</option>`).join('')}</select>
+        <div class="hint">Used to warn if a remittance currency does not match.</div></div>
+      ${f('relationship','Relationship or note', false)}
+      <div class="f span2"><label for="bn-address">Address</label>
+        <input id="bn-address" type="text" value="${esc(v.address || '')}"></div>
+    </div>
+    ${opts.offerSave ? `<label class="chk" style="margin-top:var(--s4)">
+        <input type="checkbox" id="bn-save" checked>
+        <span>Save to the beneficiary master<small>Leave unticked for a genuine one-off payee.</small></span></label>` : ''}`;
+}
+
+function readBeneForm() {
+  const g = k => (document.querySelector('#bn-' + k)?.value || '').trim();
+  return { name:g('name'), country:g('country'), bank:g('bank'), bankCountry:g('bankCountry'),
+           accountNumber:g('accountNumber'), swift:g('swift'), currency:g('currency'),
+           relationship:g('relationship'), address:g('address') };
+}
+const beneMissing = v => ['name','country','bank','bankCountry','accountNumber','swift']
+  .filter(k => !v[k]).length > 0;
+
+/* Copy a beneficiary onto the outward draft as the payment snapshot. */
+function applyBeneToDraft(v, id) {
+  OR_DRAFT.beneficiaryId = id || '';
+  OR_DRAFT.beneficiary = v.name;
+  OR_DRAFT.beneficiaryCountry = v.country;
+  OR_DRAFT.beneficiaryAccount = v.accountNumber;
+  OR_DRAFT.swift = v.swift;
+  OR_DRAFT.beneficiaryBank = v.bank;
+  OR_DRAFT.beneficiaryBankCountry = v.bankCountry;
+}
+
 /* ---------- 25. event delegation ------------------------------------------ */
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act]');
@@ -2260,6 +2359,75 @@ document.addEventListener('click', e => {
     return;
   }
 
+  /* --- beneficiary master --- */
+  if (act === 'bene-new' || act === 'bene-edit') {
+    const editing = act === 'bene-edit';
+    const existing = editing
+      ? (bene(OR_DRAFT.beneficiaryId) || { name:OR_DRAFT.beneficiary, country:OR_DRAFT.beneficiaryCountry,
+          bank:OR_DRAFT.beneficiaryBank, bankCountry:OR_DRAFT.beneficiaryBankCountry,
+          accountNumber:OR_DRAFT.beneficiaryAccount, swift:OR_DRAFT.swift })
+      : {};
+    modal({ title: editing ? 'Beneficiary details' : 'Add a beneficiary', wide:true,
+      okLabel: editing ? 'Use these details' : 'Add beneficiary',
+      body: beneFormHTML(existing, { offerSave: !editing }) +
+        (editing ? `<div class="note note-info" style="margin-top:var(--s4)"><span>
+            Editing here changes only this request. Use Profile → Beneficiary master to change the
+            saved record.</span></div>` : ''),
+      onOk: () => {
+        const v = readBeneForm();
+        if (beneMissing(v)) { toast('Name, country, bank, bank country, account and SWIFT are required.', 'err'); return; }
+        if (editing) { applyBeneToDraft(v, ''); closeModal(); render(); toast('Details applied to this request only.'); return; }
+        const keep = document.querySelector('#bn-save')?.checked;
+        let id = '';
+        if (keep) {
+          id = nextId(DB.beneficiaries, 'BEN', 3);
+          DB.beneficiaries.push({ id, smeId:ctxSmeId(), ...v,
+            addedBy: acting() ? `${S.name || S.role} (assisted)` : (S.name || S.role),
+            addedOn: nowISO(), lastUsed: null });
+          logAudit(ctxSmeId(), `Beneficiary ${v.name} added to the master${acting() ? ' by AD2 on the SME\u2019s behalf' : ''}`);
+          save();
+        }
+        applyBeneToDraft(v, id);
+        closeModal(); render();
+        toast(keep ? 'Beneficiary added and selected.' : 'One-off beneficiary applied, not saved.', 'ok');
+      }});
+    return;
+  }
+  if (act === 'bene-clear') {
+    applyBeneToDraft({ name:'', country:'', accountNumber:'', swift:'', bank:'', bankCountry:'' }, '');
+    render(); return;
+  }
+  if (act === 'bene-add-profile') {
+    modal({ title:'Add a beneficiary', wide:true, okLabel:'Add beneficiary', body: beneFormHTML({}, {}),
+      onOk: () => {
+        const v = readBeneForm();
+        if (beneMissing(v)) { toast('Name, country, bank, bank country, account and SWIFT are required.', 'err'); return; }
+        const id = nextId(DB.beneficiaries, 'BEN', 3);
+        DB.beneficiaries.push({ id, smeId:ctxSmeId(), ...v,
+          addedBy: acting() ? `${S.name || S.role} (assisted)` : (S.name || S.role),
+          addedOn: nowISO(), lastUsed: null });
+        logAudit(ctxSmeId(), `Beneficiary ${v.name} added to the master${acting() ? ' by AD2 on the SME\u2019s behalf' : ''}`);
+        save(); closeModal(); render(); toast('Beneficiary added.', 'ok');
+      }});
+    return;
+  }
+  if (act === 'bene-del-profile') {
+    const b = bene(t.dataset.id);
+    if (!b) return;
+    const used = DB.outward.some(o => o.beneficiaryId === b.id);
+    modal({ title:'Remove beneficiary', okLabel:'Remove', okClass:'btn-danger', body:
+      `<p style="font-size:var(--fs-md)">Remove <b>${esc(b.name)}</b> from the beneficiary master?</p>
+       ${used ? `<div class="note note-info" style="margin-top:var(--s3)"><span>
+         Past remittances to this beneficiary keep the details they were sent with, so nothing in the
+         history changes.</span></div>` : ''}`,
+      onOk: () => {
+        DB.beneficiaries = DB.beneficiaries.filter(x => x.id !== b.id);
+        logAudit(ctxSmeId(), `Beneficiary ${b.name} removed from the master`);
+        save(); closeModal(); render(); toast('Beneficiary removed.');
+      }});
+    return;
+  }
+
   /* --- outward create --- */
   if (act === 'or-book-rate') {
     const d = OR_DRAFT, me = sme(d.smeId);
@@ -2316,6 +2484,8 @@ document.addEventListener('click', e => {
     DB.outward.unshift({ ...d, id, amount:Number(d.amount), charges,
       status:'Submitted', requestDate:nowISO(), pendingWith:'AD2 Maker',
       source: acting() ? 'AD2 Assisted' : 'SME', createdBy: S.name || S.role });
+    const usedBene = bene(d.beneficiaryId);
+    if (usedBene) usedBene.lastUsed = nowISO();
     logAudit(id, `Outward request submitted — ${money(d.amount, d.currency)}, ${rtype(d.remittanceType)?.label || ''} under ${d.purposeCode}${acting() ? ' (assisted, on behalf of ' + (sme(d.smeId)?.tradingName || '') + ')' : ''}`);
     if (d.rate.mode === 'booked') logAudit(id, `Rate booked at ${d.rate.customerRate.toFixed(4)}, locked 48 hours`);
     if (d.rate.mode === 'deal')   logAudit(id, `FX deal reference ${d.rate.dealRef} applied`);
@@ -2968,6 +3138,15 @@ document.addEventListener('change', e => {
       DRAFT.requestedCurrencies = [...set];
     } else if (t.type === 'radio') { DRAFT[k] = t.value; }
     else { DRAFT[k] = t.value; if (k === 'legalName' && !DRAFT.domainId) DRAFT.domainId = slugDomain(t.value); }
+    return;
+  }
+
+  if (t.dataset.act === 'bene-pick') {
+    const v = t.value;
+    if (!v) { applyBeneToDraft({ name:'', country:'', accountNumber:'', swift:'', bank:'', bankCountry:'' }, ''); render(); return; }
+    if (v === '__oneoff') return;
+    const b = bene(v);
+    if (b) { applyBeneToDraft(b, b.id); render(); toast('Beneficiary ' + b.name + ' selected.'); }
     return;
   }
 
