@@ -145,6 +145,9 @@ const isSME = () => !!S && S.role.startsWith('SME');
    works inside the SME portal on its behalf. Every screen is reused as-is;
    only the SME the data resolves to changes. */
 const acting    = () => !!(S && S.actingFor);
+/* Anyone operating as the SME — the SME's own user, or an AD2 user acting for
+   them. Action gates use this; data-isolation guards still use isSME(). */
+const asSme     = () => isSME() || acting();
 const ctxSmeId  = () => (S && (S.actingFor || S.smeId)) || null;
 /* true when the current view should be scoped to one SME rather than the book */
 const scoped    = () => !isAD2() || acting();
@@ -305,9 +308,11 @@ function shell(crumb, body) {
   ${simBanner}
   ${acting() ? `<div class="sim-bar" style="background:#e0f4f4;border-color:#9ad4d5;color:#0b5f61">
       <b>Assisted journey</b>
-      <span>You are acting for <b>${esc(sme(S.actingFor)?.tradingName || '')}</b> (${esc(S.actingFor)}).
+      <span style="flex:1">You are acting for <b>${esc(sme(S.actingFor)?.tradingName || '')}</b>.
         Anything you submit is recorded as raised by ${esc(S.name || S.role)} on their behalf.</span>
-      <button type="button" data-act="assist-exit" style="border-color:#6fbfc0;color:#0b5f61">Exit assisted journey</button>
+      <a href="#/sme/outward" style="color:#0b5f61;font-size:var(--fs-xs);margin-left:var(--s3)">Outward</a>
+      <a href="#/sme/inward" style="color:#0b5f61;font-size:var(--fs-xs);margin-left:var(--s3)">Inward</a>
+      <button type="button" data-act="assist-exit" style="border-color:#6fbfc0;color:#0b5f61;margin-left:var(--s3)">Exit assisted journey</button>
     </div>` : ''}
   <div class="app">
     ${navHTML()}
@@ -743,7 +748,9 @@ function viewOutwardList() {
   return shell(crumb('Outward Remittance'), `
     <div class="page-head"><div><h1>Outward Remittance</h1>
       <p>${isAD2() ? 'Requests from all onboarded SMEs.' : 'Payments to your overseas suppliers and service providers.'}</p></div>
-      <div class="acts">${isSME() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/outward/new">New request</button>` : ''}
+      <div class="acts">
+        ${asSme() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/outward/new">New request</button>` : ''}
+        ${isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="outward">New request for an SME</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="export-csv" data-what="outward">Export CSV</button></div></div>
     <div class="card">
       <div class="tabs">${tabs}</div>
@@ -1001,8 +1008,8 @@ function viewOutwardDetail(id) {
   const root = isAD2() ? 'ad2' : 'sme';
 
   const actions = [];
-  if (isSME() && o.status === 'Draft') actions.push(`<button class="btn btn-primary" type="button" data-act="or-submit-existing" data-id="${o.id}">Submit</button>`);
-  if (isSME() && o.status === 'Clarification Required') actions.push(`<button class="btn btn-primary" type="button" data-act="or-respond" data-id="${o.id}">Respond to query</button>`);
+  if (asSme() && o.status === 'Draft') actions.push(`<button class="btn btn-primary" type="button" data-act="or-submit-existing" data-id="${o.id}">Submit</button>`);
+  if (asSme() && o.status === 'Clarification Required') actions.push(`<button class="btn btn-primary" type="button" data-act="or-respond" data-id="${o.id}">Respond to query</button>`);
   if (isAD2() && ['Submitted','Under Review'].includes(o.status)) {
     actions.push(`<button class="btn btn-primary" type="button" data-act="or-approve" data-id="${o.id}">Approve for processing</button>`);
     actions.push(`<button class="btn btn-plain" type="button" data-act="or-query" data-id="${o.id}">Raise query</button>`);
@@ -1102,7 +1109,9 @@ function viewInwardList() {
   return shell(crumb('Inward Remittance'), `
     <div class="page-head"><div><h1>Inward Remittance</h1>
       <p>Receipts recorded by AD2. Submit a disposal instruction to apply each receipt.</p></div>
-      <div class="acts"><button class="btn btn-plain" type="button" data-act="export-csv" data-what="inward">Export CSV</button></div></div>
+      <div class="acts">
+        ${isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="inward">Disposal for an SME</button>` : ''}
+        <button class="btn btn-plain" type="button" data-act="export-csv" data-what="inward">Export CSV</button></div></div>
     <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
       <thead><tr><th>Reference</th>${isAD2() ? '<th>SME</th>' : ''}<th>Remitter</th><th>Value date</th>
         <th>Currency</th><th class="num">Received</th><th class="num">Available</th><th>Status</th><th></th></tr></thead>
@@ -1113,9 +1122,12 @@ function viewInwardList() {
           <td>${dmy(i.valueDate)}</td><td>${esc(i.currency)}</td>
           <td class="num">${money(i.amount)}</td><td class="num">${money(i.available)}</td>
           <td>${badge(i.status)}</td>
-          <td>${i.available > 0 && isSME()
-            ? `<button class="btn btn-ghost btn-sm" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Dispose</button>`
-            : `<button class="btn btn-link" type="button" data-act="go" data-href="#/${root}/inward/${i.id}">Open</button>`}</td></tr>`).join('')
+          <td style="white-space:nowrap">${
+            i.available > 0 && asSme()
+              ? `<button class="btn btn-ghost btn-sm" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Dispose</button>`
+              : i.available > 0 && isAD2()
+                ? `<button class="btn btn-ghost btn-sm" type="button" data-act="assist-dispose" data-id="${i.id}">Dispose on behalf</button>`
+                : `<button class="btn btn-link" type="button" data-act="go" data-href="#/${root}/inward/${i.id}">Open</button>`}</td></tr>`).join('')
         : `<tr><td colspan="9">${empty('No inward remittance found','Receipts appear here once AD2 records them.')}</td></tr>`}</tbody>
     </table></div></div></div>`);
 }
@@ -1132,7 +1144,8 @@ function viewInwardDetail(id) {
     <div class="page-head"><div><h1>${esc(i.reference)} ${badge(i.status)}</h1>
       <p>${esc(i.remitter)} · ${money(i.amount, i.currency)} received ${dmy(i.valueDate)}</p></div>
       <div class="acts">
-        ${i.available > 0 && isSME() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Submit disposal instruction</button>` : ''}
+        ${i.available > 0 && asSme() ? `<button class="btn btn-primary" type="button" data-act="go" data-href="#/sme/inward/${i.id}/dispose">Submit disposal instruction</button>` : ''}
+        ${i.available > 0 && isAD2() && !acting() ? `<button class="btn btn-primary" type="button" data-act="assist-dispose" data-id="${i.id}">Dispose on behalf</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="go" data-href="#/${root}/inward">Back to list</button></div></div>
     <div class="grid g2" style="align-items:start">
       <div class="card"><div class="card-head"><h2>Receipt</h2></div><div class="card-body"><div class="kv">
@@ -2144,6 +2157,19 @@ function simulateFile(name) {
   return { filename: name, at: nowISO(), size: Math.floor(40 + Math.random() * 600) + ' KB' };
 }
 
+/* Enter the assisted context and go straight to a function, not a dashboard. */
+function startAssist(smeId, dest) {
+  const target = sme(smeId);
+  if (!target || target.status !== 'Approved') { toast('Only an approved SME can be transacted for.', 'err'); return; }
+  setSession({ ...S, actingFor: target.id });
+  OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null;
+  logAudit(target.id, `Assisted journey opened by ${S.name || S.role}`);
+  save(); closeModal();
+  location.hash = dest || '#/sme/dashboard';
+  render();
+  toast('Acting for ' + target.tradingName + '.', 'ok');
+}
+
 /* ---------- 25. event delegation ------------------------------------------ */
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act]');
@@ -2702,29 +2728,78 @@ BAD-ROW,2026-09-21,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X`;
       }});
     return;
   }
+  /* Start an assisted journey and land on the function the user came from,
+     never a dashboard. dest is a hash route; smeId is the SME picked up. */
+  if (act === 'assist-pick') {
+    const dir = t.dataset.dir;                       /* 'outward' | 'inward' */
+    const pool = DB.smes.filter(x => x.status === 'Approved' &&
+      (dir === 'outward' ? perm(x).importSide : perm(x).exportSide));
+    if (!pool.length) {
+      modal({ title:'No eligible SME', body:
+        `<div class="note note-warn"><span>No approved SME currently has
+         ${dir === 'outward' ? 'Import or Both' : 'Export or Both'} permission, so there is nobody to
+         raise ${dir === 'outward' ? 'an outward request' : 'a disposal instruction'} for.</span></div>` });
+      return;
+    }
+    modal({ title: dir === 'outward' ? 'New outward request for an SME' : 'Disposal instruction for an SME',
+      wide:true, body:
+      `<p style="font-size:var(--fs-md);margin:0 0 16px">Pick the SME you are acting for. You will go
+        straight to ${dir === 'outward' ? 'their outward request form' : 'their inward remittances'},
+        and what you submit is recorded as raised by you on their behalf.</p>
+       <div class="tablewrap"><table class="dt">
+         <thead><tr><th>SME</th><th>Permission</th><th>Currencies</th>
+           <th class="num">${dir === 'outward' ? 'Open import bills' : 'Receipts to dispose'}</th><th></th></tr></thead>
+         <tbody>${pool.map(x => {
+           const n = dir === 'outward'
+             ? DB.bills.filter(b => b.smeId === x.id && b.type === 'Import' && b.outstanding > 0 && b.review === 'Accepted').length
+             : DB.inward.filter(i => i.smeId === x.id && i.available > 0).length;
+           return `<tr><td><b>${esc(x.tradingName)}</b><br>
+               <span style="color:var(--muted);font-size:var(--fs-xs)">${esc(x.id)} · ${esc(x.constitution)}</span></td>
+             <td>${esc(x.config.permission)}</td><td>${x.config.currencies.join(' · ')}</td>
+             <td class="num">${n}</td>
+             <td><button class="btn btn-ghost btn-sm" type="button" data-act="assist-go"
+                   data-id="${x.id}" data-dest="${dir === 'outward' ? '#/sme/outward/new' : '#/sme/inward'}">Act for them</button></td></tr>`;
+         }).join('')}</tbody></table></div>` });
+    return;
+  }
+
+  if (act === 'assist-dispose') {
+    const rec = DB.inward.find(x => x.id === t.dataset.id);
+    if (!rec) return;
+    startAssist(rec.smeId, '#/sme/inward/' + rec.id + '/dispose');
+    return;
+  }
+
+  if (act === 'assist-go') { startAssist(t.dataset.id, t.dataset.dest); return; }
+
   if (act === 'assist-start') {
     const target = sme(t.dataset.id);
     if (!target || target.status !== 'Approved') { toast('Only an approved SME can be transacted for.', 'err'); return; }
-    modal({ title:'Act on behalf of ' + target.tradingName, okLabel:'Start assisted journey', body:
-      `<p style="font-size:var(--fs-md)">You will work inside <b>${esc(target.tradingName)}</b>'s portal.
-        Requests and instructions you submit are recorded as raised by you on their behalf, and the
-        audit trail names both parties.</p>
-       <div class="kv" style="margin-top:16px">
+    const pm = perm(target);
+    modal({ title:'Act on behalf of ' + target.tradingName, okLabel:null, body:
+      `<p style="font-size:var(--fs-md)">Choose what you are raising for
+        <b>${esc(target.tradingName)}</b>. What you submit is recorded as raised by you on their
+        behalf, and the audit trail names both parties.</p>
+       <div class="kv" style="margin:16px 0">
          <div><div class="k">Service permission</div><div class="v">${esc(target.config.permission)}</div></div>
          <div><div class="k">Enabled currencies</div><div class="v">${target.config.currencies.join(' · ')}</div></div>
        </div>
+       <div style="display:grid;gap:8px">
+         ${pm.importSide ? `<button class="btn btn-primary" type="button" data-act="assist-go"
+            data-id="${target.id}" data-dest="#/sme/outward/new">New outward request</button>` : ''}
+         ${pm.exportSide ? `<button class="btn btn-primary" type="button" data-act="assist-go"
+            data-id="${target.id}" data-dest="#/sme/inward">Inward remittances and disposal</button>` : ''}
+         <button class="btn btn-ghost" type="button" data-act="assist-go"
+            data-id="${target.id}" data-dest="#/sme/bills/${pm.exportSide ? 'export' : 'import'}">Bill lodgement</button>
+         <button class="btn btn-plain" type="button" data-act="assist-go"
+            data-id="${target.id}" data-dest="#/sme/dashboard">Open their whole portal</button>
+       </div>
        <div class="note note-info" style="margin-top:16px"><span>
-         As an AD2 maker you may transact in any supported currency, not only the SME's enabled list.</span></div>`,
-      onOk: () => {
-        setSession({ ...S, actingFor: target.id });
-        OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null;
-        logAudit(target.id, `Assisted journey opened by ${S.name || S.role}`);
-        save(); closeModal();
-        location.hash = '#/sme/dashboard'; render();
-        toast('Acting for ' + target.tradingName + '.', 'ok');
-      }});
+         As an AD2 maker you may transact in any supported currency, not only the SME's enabled
+         list. Their permissions, allocation limits and document rules still apply.</span></div>` });
     return;
   }
+
   if (act === 'assist-exit') {
     const was = sme(S.actingFor)?.tradingName || '';
     setSession({ ...S, actingFor: null });

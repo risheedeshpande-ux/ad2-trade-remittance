@@ -178,6 +178,29 @@ Provisional mapping, pending the full purpose-code workbook:
 
 ---
 
+## 7A. Assisted journey — AD2 transacting for an SME
+
+AD2 works inside an approved SME's portal on its behalf. There are no separate screens: the SME portal is reused with the acting context swapped, so anything the SME can do, AD2 can do for them.
+
+**Entry is from inside the function, never from a dashboard.** The journey starts where the work is:
+
+| Where | Action | Lands on |
+|---|---|---|
+| AD2 → Outward Requests | **New request for an SME** | That SME's outward request form |
+| AD2 → Inward Remittances | **Disposal for an SME** | That SME's inward remittance list |
+| AD2 → Inward Remittances, any receipt with a balance | **Dispose on behalf** | That receipt's disposal instruction, in one click |
+| AD2 → SME Directory | **Transact on behalf** | A choice of outward, inward, bill lodgement, or the whole portal |
+
+The SME picker lists only approved SMEs whose service permission allows the direction — Import or Both for outward, Export or Both for inward — alongside their enabled currencies and how much open work each has.
+
+**While acting.** A banner names the SME and the acting user on every screen, with direct links to Outward and Inward. Navigation becomes the SME menu, and every action the SME's own user has is available: create, submit, respond to a query, dispose, lodge and allocate. An assisted session is not a read-only view.
+
+**What changes.** An AD2 maker may transact in **any supported currency**, not only the SME's enabled list, per §6. Records created while acting are stamped `source = AD2 Assisted` with the AD2 user named, and the audit entry names both parties.
+
+**What does not change.** Service permissions, allocation limits, document requirements and the rate gate all still apply. Assisting is not a route past a control.
+
+**Exit.** Leaving returns to the directory. Navigating to any AD2 route drops the acting context automatically, so it cannot be left on by accident.
+
 ## 8. Inward remittance and disposal
 
 AD2 records the inward receipt. The SME views it and disposes of it.
@@ -331,7 +354,9 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC14 | Empty, error and validation states are demonstrable |
 | AC15 | Remittance type is captured on outward requests and disposal instructions, narrows the purpose codes on offer, and clears a purpose that the pair no longer allows |
 | AC16 | The document checklist reflects the purpose code and the remittance type together, without listing a duplicate document |
-| AC17 | AD2 can transact on behalf of an approved SME from the directory; the record and the audit trail name both parties, and the SME's controls still apply |
+| AC17 | AD2 can transact on behalf of an approved SME; the record and the audit trail name both parties, and the SME's controls still apply |
+| AC18 | The assisted journey covers outward and inward alike, is entered from within the relevant function, and lands on that function's screen rather than a dashboard |
+| AC19 | While acting, an AD2 user has the full set of SME actions — create, submit, respond and dispose — not a read-only view |
 
 ---
 

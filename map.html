@@ -702,14 +702,20 @@
   <h2>8 · Assisted journey</h2>
   <p class="lede">AD2 picks an SME up from the directory and works inside that SME's portal on its
      behalf. No separate screens: the same SME portal is reused with the acting context swapped, which
-     is why anything the SME can do, AD2 can do for them.</p>
+     is why anything the SME can do, AD2 can do for them. It is entered from inside the function being
+     performed — Outward Requests or Inward Remittances — and lands on that function's screen rather
+     than on a dashboard.</p>
 
   <div class="figure">
   <svg viewBox="0 0 1000 300" role="img" aria-label="Assisted journey: AD2 acts on behalf of an SME from the directory">
-    <rect class="box" x="30" y="50" width="180" height="60"/>
-    <text x="42" y="74" class="t-lbl">SME Directory</text>
-    <text x="42" y="90" class="t-sm">approved SMEs only</text>
-    <text x="42" y="104" class="t-sm">Transact on behalf</text>
+    <rect class="box" x="30" y="34" width="180" height="46"/>
+    <text x="42" y="54" class="t-lbl">AD2 Outward Requests</text>
+    <text x="42" y="70" class="t-sm">New request for an SME</text>
+    <rect class="box" x="30" y="88" width="180" height="46"/>
+    <text x="42" y="108" class="t-lbl">AD2 Inward Remittances</text>
+    <text x="42" y="124" class="t-sm">Dispose on behalf</text>
+    <rect class="box-grey" x="30" y="142" width="180" height="36"/>
+    <text x="42" y="164" class="t-lbl">SME Directory</text>
 
     <rect class="box-amber" x="250" y="50" width="190" height="60"/>
     <text x="262" y="74" class="t-lbl">Confirm intent</text>
@@ -722,12 +728,15 @@
     <text x="492" y="94" class="t-sm">banner names the SME</text>
     <text x="492" y="108" class="t-sm">every screen resolves to them</text>
 
-    <rect class="box-teal" x="750" y="50" width="220" height="60"/>
-    <text x="762" y="74" class="t-lbl">Transact as the SME</text>
-    <text x="762" y="90" class="t-sm">outward · disposal · lodgement</text>
-    <text x="762" y="104" class="t-sm">knock-off · reports</text>
+    <rect class="box-teal" x="750" y="40" width="220" height="80"/>
+    <text x="762" y="62" class="t-lbl">Lands in the function</text>
+    <text x="762" y="78" class="t-sm">outward form, or the inward</text>
+    <text x="762" y="92" class="t-sm">disposal — never a dashboard</text>
+    <text x="762" y="108" class="t-sm">full SME actions available</text>
 
-    <path class="ln" d="M210,80 L250,80"/>
+    <path class="ln" d="M210,57 L230,57 L230,80 L250,80"/>
+    <path class="ln" d="M210,111 L230,111 L230,80"/>
+    <path class="ln-dash" d="M210,160 L230,160 L230,110"/>
     <path class="ln-teal" d="M440,80 L480,80"/>
     <path class="ln-teal" d="M710,80 L750,80"/>
 
