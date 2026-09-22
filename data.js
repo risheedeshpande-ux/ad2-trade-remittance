@@ -3,7 +3,10 @@
    Every record here is invented. No real customer, bank or transaction data.
    ========================================================================== */
 
-const SEED_VERSION = 'ad2-trade-v1';
+/* Bump this whenever the shape of SEED changes. load() also back-fills any
+   top-level key a stored state is missing, so an addition degrades instead of
+   crashing, but the bump is what guarantees a clean slate. */
+const SEED_VERSION = 'ad2-trade-v3';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the

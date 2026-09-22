@@ -49,7 +49,16 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.version === SEED.version) return parsed;
+      if (parsed.version === SEED.version) {
+        /* Back-fill any top-level key the stored state predates. Without this a
+           new master added after someone's last visit reads as undefined and
+           takes the screen down, because their version still matches. */
+        const base = freshState();
+        Object.keys(base).forEach(k => {
+          if (parsed[k] === undefined) parsed[k] = base[k];
+        });
+        return parsed;
+      }
     }
   } catch (e) { /* fall through to a fresh seed */ }
   return freshState();
