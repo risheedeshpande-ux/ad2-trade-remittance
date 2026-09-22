@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>AD2 Trade Remittance — Prototype Packet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=6">
+<style>
+  .wrap{max-width:1080px;margin:0 auto;padding:var(--s7) var(--s5) 80px}
+  .hero{display:grid;gap:var(--s4);margin-bottom:var(--s8)}
+  .hero h1{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1.12}
+  .hero p{font-size:var(--fs-lg);color:var(--ink-soft);max-width:60ch;margin:0}
+  .cards{display:grid;gap:var(--s4);grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-bottom:var(--s8)}
+  .nav-card{background:var(--surface);border:1px solid var(--r4m-border);border-radius:var(--radius);
+    padding:var(--s5);box-shadow:var(--shadow);text-decoration:none;display:flex;flex-direction:column;gap:6px;color:inherit}
+  .nav-card:hover{border-color:var(--r4m-primary-400);text-decoration:none;transform:translateY(-1px)}
+  .nav-card .ic{width:36px;height:36px;border-radius:10px;background:var(--r4m-primary-50);
+    color:var(--r4m-primary-600);display:grid;place-items:center;font-size:18px;margin-bottom:var(--s2)}
+  .nav-card h2{font-size:var(--fs-lg)}
+  .nav-card p{font-size:var(--fs-sm);color:var(--muted);margin:0;flex:1}
+  .nav-card .go{font-size:var(--fs-sm);color:var(--r4m-primary-600);font-weight:500;margin-top:var(--s2)}
+  section{margin-bottom:var(--s7)}
+  section h2{font-size:var(--fs-xl);margin-bottom:var(--s3)}
+  section p{color:var(--ink-soft);max-width:72ch}
+  .acct{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-sm)}
+  @media (max-width:760px){ .wrap{padding:var(--s5) var(--s4)} .hero h1{font-size:26px} }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="wordmark">Remit<i>4</i>Me</span>
+  <div class="spacer"></div>
+  <a class="btn btn-sm" href="app.html" style="background:#fff;color:var(--r4m-primary-600)">Open prototype</a>
+</div>
+
+<div class="sim-bar">
+  <b>Prototype</b>
+  <span>Every record is fictional. Authentication, FX rates, payments, SFTP, SAP and document AI are simulated. Nothing here touches a real system.</span>
+</div>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>AD2 Trade Remittance</h1>
+    <p>An interactive prototype of the SME trade-remittance portal and the AD2 operations portal that
+       approves and processes it — onboarding, outward remittance, inward disposal, bill lodgement
+       and knock-off.</p>
+  </div>
+
+  <div class="cards">
+    <a class="nav-card" href="app.html">
+      <span class="ic">▶</span>
+      <h2>Working prototype</h2>
+      <p>The full application, both portals, with a role switcher. Start here.</p>
+      <span class="go">Open →</span>
+    </a>
+    <a class="nav-card" href="screens.html">
+      <span class="ic">▤</span>
+      <h2>All screens</h2>
+      <p>Every screen with a live preview and a direct link that opens it already signed in.</p>
+      <span class="go">Browse 34 →</span>
+    </a>
+    <a class="nav-card" href="map.html">
+      <span class="ic">◈</span>
+      <h2>Screen map</h2>
+      <p>Architecture, end-to-end journey, flow diagrams, status machines and the data model.</p>
+      <span class="go">View diagrams →</span>
+    </a>
+    <a class="nav-card" href="docs/">
+      <span class="ic">▤</span>
+      <h2>Documents</h2>
+      <p>The source BRD and the PRD that reconciles it with the requirements call.</p>
+      <span class="go">Read →</span>
+    </a>
+  </div>
+
+  <section>
+    <h2>Signing in</h2>
+    <p>Any password is accepted — the field is simulated, so never enter a real one. Click a demo
+       account on the sign-in card to fill the Domain ID and Login ID, or use the <b>Demo role</b>
+       switcher in the top bar to move between roles without signing out.</p>
+    <div class="card" style="margin-top:var(--s4)"><div class="card-body tight"><div class="tablewrap">
+      <table class="dt">
+        <thead><tr><th>Domain ID</th><th>Login ID</th><th>Role</th><th>What they see</th></tr></thead>
+        <tbody>
+          <tr><td class="acct">MERIDIANTEX</td><td class="acct">SMEUSER</td><td>SME User</td><td>Meridian Textiles — Import and Export, USD/EUR/GBP</td></tr>
+          <tr><td class="acct">ARCADIACOMP</td><td class="acct">SMEUSER</td><td>SME User</td><td>Arcadia Components — Import only, so no inward screens</td></tr>
+          <tr><td class="acct">NILGIRISPICE</td><td class="acct">SMEUSER</td><td>SME User</td><td>Nilgiri Spice — Export only, so no outward screens</td></tr>
+          <tr><td class="acct">HKTRADING</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application still in clarification — no transaction access</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">MAKER</td><td>AD2 Maker</td><td>Applications, pricing, and the assisted journey</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">CHECKER</td><td>AD2 Checker</td><td>Approvals and allocations</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">OPS</td><td>AD2 Operations</td><td>Transactions, bills, reconciliation</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">ADMIN</td><td>AD2 Administrator</td><td>Masters and settings</td></tr>
+        </tbody>
+      </table>
+    </div></div></div>
+  </section>
+
+  <section>
+    <h2>Worth trying</h2>
+    <p style="margin-bottom:var(--s3)">Five things that show what this build is actually for.</p>
+    <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <thead><tr><th style="width:230px">Where</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td><b>Outward → New request</b></td>
+          <td>Pick a <b>remittance type</b> and watch the purpose codes narrow. Switch the purpose between
+            <i>Business travel</i> and <i>Payment towards imports</i> — the document checklist swaps, so travel
+            never asks for a Bill of Entry. That was the defect raised on the requirements call.</td></tr>
+        <tr><td><b>Outward → New request</b></td>
+          <td><b>Book rate</b> locks the customer rate for 48 hours and notifies treasury with no bank approval
+            step. <b>Enter FX deal reference</b> is the alternative for a rate negotiated by phone. Submission
+            is blocked until one of the two exists.</td></tr>
+        <tr><td><b>Inward → Dispose</b></td>
+          <td>Two decisions only: the export bill to knock off and the account to credit. Apply part of the
+            receipt and the balance stays available for a later instruction.</td></tr>
+        <tr><td><b>AD2 → SME Directory</b></td>
+          <td><b>Transact on behalf</b> puts an AD2 user inside that SME's portal. Anything submitted is
+            stamped as assisted and the audit names both parties — but the SME's own controls still apply.</td></tr>
+        <tr><td><b>AD2 → Applications</b></td>
+          <td>Approve an application: set permission, currencies, margins and charges. Enter a USD margin and
+            leave the rest blank to see them derive from the currency multiplier. Then switch to that SME and
+            the pricing is live.</td></tr>
+      </tbody>
+    </table></div></div></div>
+  </section>
+
+  <section>
+    <h2>Resetting</h2>
+    <p>State is held in your browser's <code>localStorage</code>, so anything you do persists between
+       visits and is yours alone — nothing is sent anywhere. <b>Reset demo data</b> in the yellow banner
+       restores the original seed at any time.</p>
+  </section>
+
+  <section>
+    <h2>Scope</h2>
+    <p>This is a frontend prototype for review, not a system. A production build still needs the full
+       purpose-code workbook, the FX quotation direction and pricing formula, transaction limits, the
+       SFTP and SAP integration contracts, and backend enforcement of authentication, authorisation and
+       validation. Those open items are listed in the PRD.</p>
+  </section>
+
+</div>
+</body>
+</html>

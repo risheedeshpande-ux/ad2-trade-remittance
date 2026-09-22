@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>AD2 Trade Remittance — All screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=6">
+<style>
+  .wrap{max-width:1320px;margin:0 auto;padding:var(--s6) var(--s5) 80px}
+  .ctl{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s5)}
+  .ctl input[type=search]{min-width:260px;border:1px solid var(--r4m-input-border);border-radius:var(--radius-pill);
+    padding:9px var(--s4);font-family:inherit;font-size:var(--fs-base)}
+  .seg2{display:flex;background:#eef1f3;border-radius:var(--radius-pill);padding:3px}
+  .seg2 button{border:0;background:transparent;padding:7px 16px;border-radius:var(--radius-pill);
+    font-family:inherit;font-size:var(--fs-sm);color:var(--ink-soft);cursor:pointer}
+  .seg2 button[aria-pressed=true]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+  .grp{margin:var(--s7) 0 var(--s4);display:flex;align-items:baseline;gap:var(--s3)}
+  .grp h2{font-size:var(--fs-lg)}
+  .grp span{font-size:var(--fs-sm);color:var(--muted)}
+
+  /* grid view */
+  .tiles{display:grid;gap:var(--s5);grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+  .tile{background:var(--surface);border:1px solid var(--r4m-border);border-radius:var(--radius);
+    box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .tile:hover{border-color:var(--r4m-primary-300)}
+  .shot{position:relative;height:210px;background:var(--surface-alt);border-bottom:1px solid var(--r4m-border);overflow:hidden}
+  .shot iframe{position:absolute;top:0;left:0;width:1280px;height:840px;border:0;
+    transform:scale(.258);transform-origin:top left;pointer-events:none;background:#fff}
+  .shot .veil{position:absolute;inset:0;cursor:pointer}
+  .shot .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:var(--fs-sm)}
+  .meta{padding:var(--s4);display:flex;flex-direction:column;gap:6px;flex:1}
+  .meta .top{display:flex;align-items:center;gap:var(--s2)}
+  .sid{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-xs);font-weight:600;
+    color:var(--r4m-primary-600);background:var(--r4m-primary-50);border-radius:4px;padding:2px 7px}
+  .meta h3{font-size:var(--fs-md);font-weight:600}
+  .meta p{font-size:var(--fs-sm);color:var(--muted);margin:0;flex:1}
+  .rt{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-xs);color:var(--ink-soft);
+    background:var(--surface-alt);border:1px solid var(--r4m-border);border-radius:4px;padding:2px 6px;
+    display:inline-block;word-break:break-all}
+  .meta .foot{display:flex;align-items:center;gap:var(--s2);margin-top:var(--s2)}
+
+  /* list view */
+  .listview{display:none}
+  body.list .tiles{display:none}
+  body.list .listview{display:block}
+  table.dt td .sid{white-space:nowrap}
+  .hidden{display:none !important}
+  .count{color:var(--muted);font-size:var(--fs-sm)}
+  @media (max-width:760px){ .wrap{padding:var(--s4)} .tiles{grid-template-columns:1fr} }
+  @media print{ .appbar,.ctl{display:none} }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="wordmark">Remit<i>4</i>Me</span>
+  <div class="spacer"></div>
+  <div class="icons" style="gap:8px">
+    <a class="btn btn-sm" href="index.html" style="background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff">Home</a>
+    <a class="btn btn-sm" href="map.html" style="background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff">Screen map</a>
+    <a class="btn btn-sm" href="app.html" style="background:#fff;color:var(--r4m-primary-600)">Open prototype</a>
+  </div>
+</div>
+
+<div class="sim-bar">
+  <b>All screens</b>
+  <span>Every screen in the prototype, each opening directly and already signed in as the right role. Fictional data throughout.</span>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <h1>Screen index</h1>
+      <p>Click any tile to open that screen in the working prototype. Previews are live — each one is
+         the real app, not an image.</p>
+    </div>
+  </div>
+
+  <div class="ctl">
+    <input type="search" id="q" placeholder="Filter by name, ID or route" aria-label="Filter screens">
+    <div class="seg2" role="group" aria-label="View">
+      <button id="v-grid" aria-pressed="true">Grid</button>
+      <button id="v-list" aria-pressed="false">List</button>
+    </div>
+    <label class="chk" style="font-size:var(--fs-sm)"><input type="checkbox" id="previews" checked> <span>Live previews</span></label>
+    <div style="flex:1"></div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div id="out"></div>
+  <div class="listview" id="outlist"></div>
+</div>
+
+<script>
+/* Every route in the build, with the demo account that makes it meaningful.
+   `as` is DOMAIN:LOGIN; `acting` starts the assisted journey for that SME. */
+const SCREENS = [
+ { g:'Public', id:'SYS-01', name:'Sign in', route:'#/login',
+   note:'Domain ID, Login ID and password, matching the live platform. Demo accounts fill the form on click.' },
+ { g:'Public', id:'SYS-02', name:'Register SME', route:'#/register',
+   note:'Eight-step onboarding wizard. Step 2 is the renamed Domain step; step 3 makes IEC mandatory.' },
+ { g:'Public', id:'SYS-03', name:'Application status', route:'#/status',
+   note:'Track a submitted application through its status flow.' },
+
+ { g:'SME portal', id:'SME-01', name:'Dashboard', route:'#/sme/dashboard', as:'MERIDIANTEX:SMEUSER',
+   note:'Eight KPI tiles, outstanding value by currency, aging buckets and recent requests.' },
+ { g:'SME portal', id:'SME-02', name:'Outward remittance list', route:'#/sme/outward', as:'MERIDIANTEX:SMEUSER',
+   note:'Eight stage tabs with counts, search and CSV export.' },
+ { g:'SME portal', id:'SME-03', name:'New outward request', route:'#/sme/outward/new', as:'MERIDIANTEX:SMEUSER',
+   note:'The core screen. Remittance type narrows the purpose codes; the pair drives the document checklist. Book Rate locks 48 hours.' },
+ { g:'SME portal', id:'SME-04', name:'Outward detail — under review', route:'#/sme/outward/OR-5103', as:'MERIDIANTEX:SMEUSER',
+   note:'Full record with allocations, pricing breakdown and activity timeline.' },
+ { g:'SME portal', id:'SME-05', name:'Outward detail — clarification raised', route:'#/sme/outward/OR-5104', as:'MERIDIANTEX:SMEUSER',
+   state:true, note:'A query from AD2 returns the request to the SME. Business travel, so no Bill of Entry on the checklist.' },
+ { g:'SME portal', id:'SME-06', name:'Inward remittances', route:'#/sme/inward', as:'MERIDIANTEX:SMEUSER',
+   note:'Receipts recorded by AD2, with the amount still available for disposal.' },
+ { g:'SME portal', id:'SME-07', name:'Inward receipt detail', route:'#/sme/inward/IR-3303', as:'MERIDIANTEX:SMEUSER',
+   note:'Receipt, FIRC once issued, and the instruction history against it.' },
+ { g:'SME portal', id:'SME-08', name:'Disposal instruction', route:'#/sme/inward/IR-3303/dispose', as:'MERIDIANTEX:SMEUSER',
+   note:'Two decisions — export bill to knock off, account to credit — plus purpose and remittance type, pre-filled from the receipt.' },
+ { g:'SME portal', id:'SME-09', name:'Export bill lodgement', route:'#/sme/bills/export', as:'MERIDIANTEX:SMEUSER',
+   note:'Five tabs: register, new bill, file upload, SFTP, SAP API.' },
+ { g:'SME portal', id:'SME-10', name:'Import bill lodgement', route:'#/sme/bills/import', as:'MERIDIANTEX:SMEUSER',
+   note:'Same five tabs on the import side. Document AI prefills from an uploaded invoice.' },
+ { g:'SME portal', id:'SME-11', name:'Bill knock-off', route:'#/sme/knockoff', as:'MERIDIANTEX:SMEUSER',
+   note:'Outstanding bills left, eligible remittances right, proposed allocations below.' },
+ { g:'SME portal', id:'SME-12', name:'Reports', route:'#/sme/reports', as:'MERIDIANTEX:SMEUSER',
+   note:'Eleven reports behind one picker, each with a currency filter and CSV export.' },
+ { g:'SME portal', id:'SME-13', name:'Integrations', route:'#/sme/integrations', as:'MERIDIANTEX:SMEUSER',
+   note:'SFTP and SAP connection summaries plus job history with retry.' },
+ { g:'SME portal', id:'SME-14', name:'Profile and account master', route:'#/sme/profile', as:'MERIDIANTEX:SMEUSER',
+   note:'Business details, bank account master with PennyDrop, and the pricing AD2 approved.' },
+
+ { g:'AD2 portal', id:'AD2-01', name:'Dashboard', route:'#/ad2/dashboard', as:'AD2:OPS',
+   note:'Portfolio KPIs, completed volume by currency, applications by status, recent audit activity.' },
+ { g:'AD2 portal', id:'AD2-02', name:'SME applications', route:'#/ad2/applications', as:'AD2:MAKER',
+   note:'Every application, digital and offline, with Create offline application.' },
+ { g:'AD2 portal', id:'AD2-03', name:'Application review — pending', route:'#/ad2/applications/SME-1006', as:'AD2:MAKER',
+   note:'The approval screen: permission, currencies and margins, charges, effective date. Approval is gated on all four.' },
+ { g:'AD2 portal', id:'AD2-04', name:'Application review — IEC missing', route:'#/ad2/applications/SME-1004', as:'AD2:MAKER',
+   state:true, note:'IEC is flagged as missing and blocks approval, per the requirements call.' },
+ { g:'AD2 portal', id:'AD2-05', name:'Application review — approved', route:'#/ad2/applications/SME-1001', as:'AD2:MAKER',
+   state:true, note:'A committed configuration, read-only, with its audit history.' },
+ { g:'AD2 portal', id:'AD2-06', name:'SME directory', route:'#/ad2/directory', as:'AD2:MAKER',
+   note:'Approved SMEs with live permission and pricing. Transact on behalf starts the assisted journey.' },
+ { g:'AD2 portal', id:'AD2-07', name:'Outward requests', route:'#/ad2/outward', as:'AD2:OPS',
+   note:'The book across all SMEs, with an SME column.' },
+ { g:'AD2 portal', id:'AD2-08', name:'Outward detail — AD2 actions', route:'#/ad2/outward/OR-5106', as:'AD2:OPS',
+   note:'Adds Approve, Raise query, Reject and an internal notes panel the SME never sees.' },
+ { g:'AD2 portal', id:'AD2-09', name:'Inward remittances', route:'#/ad2/inward', as:'AD2:OPS',
+   note:'All receipts and their disposal state.' },
+ { g:'AD2 portal', id:'AD2-10', name:'Inward detail', route:'#/ad2/inward/IR-3306', as:'AD2:OPS',
+   note:'Receipt with instruction history and FIRC.' },
+ { g:'AD2 portal', id:'AD2-11', name:'Bills', route:'#/ad2/bills', as:'AD2:OPS',
+   note:'Bill register across all SMEs, with the integration job tabs.' },
+ { g:'AD2 portal', id:'AD2-12', name:'Reconciliation', route:'#/ad2/reconciliation', as:'AD2:OPS',
+   note:'Every allocation, proposed and confirmed. Confirming is what moves a bill balance.' },
+ { g:'AD2 portal', id:'AD2-13', name:'Reports', route:'#/ad2/reports', as:'AD2:OPS',
+   note:'The same eleven reports, unscoped across SMEs.' },
+ { g:'AD2 portal', id:'AD2-14', name:'Administration', route:'#/ad2/admin', as:'AD2:ADMIN',
+   note:'Six tabs: purpose-code mapping, remittance types, currency master, document checklists, users, settings.' },
+
+ { g:'Assisted journey', id:'AST-01', name:'Assisted dashboard', route:'#/sme/dashboard', as:'AD2:MAKER', acting:'SME-1001',
+   note:'AD2 acting for Meridian Textiles. The banner names both parties and the nav becomes the SME menu.' },
+ { g:'Assisted journey', id:'AST-02', name:'Assisted outward request', route:'#/sme/outward/new', as:'AD2:MAKER', acting:'SME-1001',
+   note:'Same screen as SME-03, but every supported currency is on offer rather than the SME’s enabled three.' },
+ { g:'Assisted journey', id:'AST-03', name:'Assisted bill lodgement', route:'#/sme/bills/export', as:'AD2:MAKER', acting:'SME-1001',
+   note:'Bills lodged here are stamped as raised by AD2 on the SME’s behalf.' },
+];
+
+const url = s => 'app.html' + (s.as ? '?as=' + encodeURIComponent(s.as) + (s.acting ? '&acting=' + encodeURIComponent(s.acting) : '') : '') + s.route;
+
+const out = document.getElementById('out');
+const outlist = document.getElementById('outlist');
+
+function build() {
+  const groups = [...new Set(SCREENS.map(s => s.g))];
+  out.innerHTML = groups.map(g => `
+    <div class="grp"><h2>${g}</h2><span>${SCREENS.filter(s => s.g === g).length} screens</span></div>
+    <div class="tiles">${SCREENS.filter(s => s.g === g).map(card).join('')}</div>`).join('');
+
+  outlist.innerHTML = groups.map(g => `
+    <div class="grp"><h2>${g}</h2><span>${SCREENS.filter(s => s.g === g).length} screens</span></div>
+    <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <thead><tr><th style="width:90px">ID</th><th>Screen</th><th>Route</th><th>Opens as</th><th style="width:80px"></th></tr></thead>
+      <tbody>${SCREENS.filter(s => s.g === g).map(s => `
+        <tr data-k="${key(s)}">
+          <td><span class="sid">${s.id}</span></td>
+          <td><a href="${url(s)}">${s.name}</a>${s.state ? ' <span class="badge b-grey">state</span>' : ''}
+            <small style="display:block;color:var(--muted);font-size:var(--fs-xs);margin-top:2px">${s.note}</small></td>
+          <td><span class="rt">${s.route}</span></td>
+          <td style="font-size:var(--fs-xs);color:var(--muted)">${s.as || 'no session'}${s.acting ? '<br>acting for ' + s.acting : ''}</td>
+          <td><a class="btn btn-ghost btn-sm" href="${url(s)}">Open</a></td>
+        </tr>`).join('')}</tbody>
+    </table></div></div></div>`).join('');
+  filter();
+}
+
+const key = s => (s.id + ' ' + s.name + ' ' + s.route + ' ' + s.g + ' ' + (s.as || '')).toLowerCase();
+
+function card(s) {
+  return `<div class="tile" data-k="${key(s)}">
+    <div class="shot">
+      <div class="ph">Preview off</div>
+      <iframe data-src="${url(s)}" title="${s.name} preview" loading="lazy" tabindex="-1" aria-hidden="true"></iframe>
+      <a class="veil" href="${url(s)}" aria-label="Open ${s.name}"></a>
+    </div>
+    <div class="meta">
+      <div class="top"><span class="sid">${s.id}</span>${s.state ? '<span class="badge b-grey">state</span>' : ''}</div>
+      <h3>${s.name}</h3>
+      <p>${s.note}</p>
+      <span class="rt">${s.route}</span>
+      <div class="foot">
+        <a class="btn btn-primary btn-sm" href="${url(s)}">Open screen</a>
+        <span style="font-size:var(--fs-xs);color:var(--muted)">${s.as || 'no session'}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+function setPreviews(on) {
+  document.querySelectorAll('.shot iframe').forEach(f => {
+    if (on) { if (!f.src) f.src = f.dataset.src; f.style.display = ''; }
+    else { f.style.display = 'none'; }
+  });
+}
+
+function filter() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  let n = 0;
+  document.querySelectorAll('[data-k]').forEach(el => {
+    const hit = !q || el.dataset.k.includes(q);
+    el.classList.toggle('hidden', !hit);
+    if (hit && el.classList.contains('tile')) n++;
+  });
+  document.getElementById('count').textContent =
+    (q ? n : SCREENS.length) + ' of ' + SCREENS.length + ' screens';
+}
+
+document.getElementById('q').addEventListener('input', filter);
+document.getElementById('previews').addEventListener('change', e => setPreviews(e.target.checked));
+document.getElementById('v-grid').addEventListener('click', () => {
+  document.body.classList.remove('list');
+  document.getElementById('v-grid').setAttribute('aria-pressed', 'true');
+  document.getElementById('v-list').setAttribute('aria-pressed', 'false');
+});
+document.getElementById('v-list').addEventListener('click', () => {
+  document.body.classList.add('list');
+  document.getElementById('v-list').setAttribute('aria-pressed', 'true');
+  document.getElementById('v-grid').setAttribute('aria-pressed', 'false');
+});
+
+build();
+setPreviews(true);
+</script>
+</body>
+</html>
