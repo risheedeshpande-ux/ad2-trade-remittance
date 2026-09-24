@@ -41,7 +41,8 @@ const json = (status, body, extra) => ({ status, body, headers: extra || {} });
 const errorOut = e => {
   if (e instanceof Engine.EngineError) return json(e.status, { error: e.message, code: e.code, details: e.details || [] });
   console.error(e);
-  return json(500, { error: 'Something went wrong on the server. Try again.', code: 'server' });
+  const msg = String(e && e.message || e).slice(0, 200);
+  return json(500, { error: 'The server could not complete this (' + msg + '). Try again, or check the Blob store connection.', code: 'server' });
 };
 
 function who(headers) {
@@ -63,7 +64,9 @@ async function handle({ method, route, query, headers, body, ip }) {
   try {
     if (route === 'health' && method === 'GET') {
       const s = getStore();
-      return json(200, { ok: true, mode: 'server', store: s.kind, persistent: s.persistent,
+      let storeOk = true, storeError = null;
+      try { await readState(); } catch (e) { storeOk = false; storeError = String(e && e.message || e).slice(0, 300); }
+      return json(200, { ok: true, mode: 'server', store: s.kind, access: s.access || null, persistent: s.persistent, storeOk, storeError,
                          passcodeRequired: auth.passcodeRequired(), seedVersion: SEED.version, time: new Date().toISOString() });
     }
 

@@ -49,40 +49,67 @@ function fileStore(file) {
   };
 }
 
+/* The Blob token may be under the default name or a custom prefix chosen
+   when the store was connected (e.g. STORAGE_BLOB_READ_WRITE_TOKEN). */
+function blobToken() {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
+  const k = Object.keys(process.env).find(k => /BLOB_READ_WRITE_TOKEN$/.test(k) && process.env[k]);
+  return k ? process.env[k] : null;
+}
+
+/* Works with a private or a public Blob store: tries private first and
+   switches to public if the store refuses private access. In public mode
+   the path carries a hash of the token so it cannot be guessed. */
 function blobStore(token) {
   const blob = require('@vercel/blob');
-  const pathname = (process.env.STATE_PREFIX || 'ad2-trade') + '/state.json';
-  return {
-    kind: 'blob', persistent: true,
+  const base = process.env.STATE_PREFIX || 'ad2-trade';
+  const secretPath = base + '-' + crypto.createHash('sha256').update('path:' + token).digest('hex').slice(0, 24);
+  let access = process.env.BLOB_ACCESS === 'public' ? 'public' : 'private';
+  const pathname = () => (access === 'public' ? secretPath : base) + '/state.json';
+  const accessProblem = e => /access|public|private/i.test(String(e && e.message)) && !(e instanceof blob.BlobPreconditionFailedError);
+  const store = {
+    kind: 'blob', persistent: true, lastError: null,
+    get access() { return access; },
     async read() {
-      let r;
-      try { r = await blob.get(pathname, { access: 'private', useCache: false, token }); }
-      catch (e) { if (e instanceof blob.BlobNotFoundError) return { state: null, etag: null }; throw e; }
-      if (!r || r.statusCode !== 200) return { state: null, etag: null };
-      const text = await new Response(r.stream).text();
-      return { state: JSON.parse(text), etag: r.blob.etag };
+      try {
+        let r;
+        try { r = await blob.get(pathname(), { access, useCache: false, token }); }
+        catch (e) {
+          if (e instanceof blob.BlobNotFoundError) return { state: null, etag: null };
+          if (access === 'private' && accessProblem(e)) { access = 'public'; return store.read(); }
+          throw e;
+        }
+        if (!r || r.statusCode !== 200) return { state: null, etag: null };
+        const text = await new Response(r.stream).text();
+        store.lastError = null;
+        return { state: JSON.parse(text), etag: r.blob.etag };
+      } catch (e) { store.lastError = String(e && e.message || e); throw e; }
     },
     async write(state, etag) {
-      const opts = { access: 'private', contentType: 'application/json', addRandomSuffix: false,
-                     cacheControlMaxAge: 60, token };
+      const opts = { access, contentType: 'application/json', addRandomSuffix: false, cacheControlMaxAge: 60, token };
       if (etag) { opts.ifMatch = etag; opts.allowOverwrite = true; } else { opts.allowOverwrite = false; }
       try {
-        const res = await blob.put(pathname, JSON.stringify(state), opts);
+        const res = await blob.put(pathname(), JSON.stringify(state), opts);
+        store.lastError = null;
         return res.etag;
       } catch (e) {
         if (e instanceof blob.BlobPreconditionFailedError || /already exists|precondition/i.test(String(e && e.message))) throw new Conflict();
+        if (access === 'private' && accessProblem(e)) { access = 'public'; return store.write(state, null); }
+        store.lastError = String(e && e.message || e);
         throw e;
       }
     },
   };
+  return store;
 }
 
 function makeStore() {
-  if (process.env.BLOB_READ_WRITE_TOKEN) return blobStore(process.env.BLOB_READ_WRITE_TOKEN);
+  const token = blobToken();
+  if (token) return blobStore(token);
   if (process.env.STATE_FILE || !process.env.VERCEL) {
     return fileStore(process.env.STATE_FILE || path.join(__dirname, '..', '.data', 'state.json'));
   }
   return memoryStore();
 }
 
-module.exports = { makeStore, memoryStore, fileStore, Conflict };
+module.exports = { makeStore, memoryStore, fileStore, blobToken, Conflict };

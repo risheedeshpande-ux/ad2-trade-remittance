@@ -14,9 +14,12 @@ function secret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   /* Stable across instances without extra configuration: derived from the
      Blob credential, which is itself secret. */
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    return crypto.createHash('sha256').update('ad2-session:' + process.env.BLOB_READ_WRITE_TOKEN).digest('hex');
-  }
+  const blob = require('./store').blobToken();
+  if (blob) return crypto.createHash('sha256').update('ad2-session:' + blob).digest('hex');
+  /* On Vercel with nothing configured, every instance must still agree on
+     the key or sign-ins bounce between instances. This fallback is stable
+     but not secret — configure a Blob store or SESSION_SECRET. */
+  if (process.env.VERCEL) return crypto.createHash('sha256').update('ad2-fallback:' + (process.env.VERCEL_PROJECT_ID || 'ad2')).digest('hex');
   if (!devSecret) devSecret = crypto.randomBytes(32).toString('hex');
   return devSecret;
 }

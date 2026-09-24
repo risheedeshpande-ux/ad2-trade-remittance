@@ -416,7 +416,8 @@ const denied = (title, msg) => `<div class="card"><div class="denied"><div class
 
 function simBanner() {
   const mode = API.mode === 'server'
-    ? (API.persistent ? 'Live demo — shared state on the server' : 'Live demo — server storage is not configured, so state may reset')
+    ? (API.storeError ? 'Live demo — storage problem: ' + API.storeError
+      : API.persistent ? 'Live demo — shared state on the server' : 'Live demo — server storage is not configured, so state may reset')
     : (EMBEDDED ? 'Preview — local demo data' : 'Offline demo — state is kept in this browser only');
   return `
   <div class="sim-bar">

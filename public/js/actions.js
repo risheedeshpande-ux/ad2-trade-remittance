@@ -992,6 +992,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
       const h = await http('/api/health', { timeout:5000 });
       if (h.ok && h.mode === 'server') {
         API.mode = 'server'; API.store = h.store; API.persistent = h.persistent; API.passcodeRequired = h.passcodeRequired;
+        API.storeError = h.storeOk === false ? (h.storeError || 'unknown error') : null;
       }
     } catch (e) { /* no API — run locally */ }
   }
