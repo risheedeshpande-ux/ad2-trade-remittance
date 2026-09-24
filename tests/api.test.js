@@ -72,7 +72,7 @@ test('register, approve, sign in with own password; scoping holds', async () => 
   assert.equal((await call('GET', 'status', { query: { app: smeId, domain: 'WRONG' } })).status, 404);
 
   const maker = await signIn('AD2', 'MAKER');
-  const checker = await signIn('AD2', 'CHECKER');
+  const checker = await signIn('AD2', 'COMPLIANCE');
   const cfg = { permission: 'Import', currencies: ['USD'], margins: { USD: 40 },
     charges: [{ name: 'SWIFT charge', basis: 'Fixed', value: 750 }], effectiveDate: '2026-09-24' };
   assert.equal((await call('POST', 'command', { token: maker, body: { cmd: 'onboarding.review', payload: { smeId, config: cfg, submit: true } } })).status, 200);
@@ -106,4 +106,31 @@ test('reset needs the passcode', async () => {
   assert.equal((await call('POST', 'reset', { body: { passcode: 'demo' }, ip: '10.3.3.4' })).status, 200);
   const st = await call('GET', 'state', { token: await signIn('AD2', 'MAKER') });
   assert.ok(!st.body.state.smes.some(s => s.domainId === 'TAPIRIVER'));
+});
+
+test('never back in time: a caller holding a newer state is told to keep it', async () => {
+  const token = await signIn('AD2', 'MAKER');
+  const st = await call('GET', 'state', { token });
+  const { rev, epoch } = st.body;
+  assert.ok(epoch, 'state carries its epoch');
+  /* the caller says it already has a later revision (a lagging instance would see this) */
+  const ahead = await call('GET', 'state', { token, query: { since: String(rev + 5), epoch } });
+  assert.equal(ahead.body.unchanged, true);
+  assert.equal(ahead.body.stale, true);
+  assert.ok(!ahead.body.state);
+  /* min= never short-circuits: a user who just switched gets a full view */
+  const full = await call('GET', 'state', { token, query: { min: String(rev), epoch } });
+  assert.ok(full.body.state && full.body.user);
+});
+
+test('reset is authoritative and moves the revision forward', async () => {
+  const token = await signIn('AD2', 'MAKER');
+  const before = await call('GET', 'state', { token });
+  const r = await call('POST', 'reset', { body: { passcode: 'demo' }, ip: '10.3.3.9' });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.rev > before.body.rev, 'revision continues across a reset');
+  assert.notEqual(r.body.epoch, before.body.epoch);
+  assert.equal(r.body.state.smes.length, 0, 'reset answers with the public view');
+  const after = await call('GET', 'state', { token: await signIn('AD2', 'MAKER') });
+  assert.equal(after.body.epoch, r.body.epoch);
 });

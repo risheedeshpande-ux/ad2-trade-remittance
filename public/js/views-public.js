@@ -21,7 +21,7 @@ function viewLogin() {
       <h2>Trade remittance for small and mid-sized exporters and importers</h2>
       <p>Onboard once, then transact: outward payments, inward disposal, bill lodgement and knock-off in a single portal.</p>
       <div class="feats">
-        <div><span>1</span>Digital onboarding, priced and approved by AD2 maker and checker</div>
+        <div><span>1</span>Digital onboarding, priced by the AD2 maker and approved by AD2 Compliance</div>
         <div><span>2</span>AIR, DIR and OTT payments with the documents each purpose code needs</div>
         <div><span>3</span>Every transaction verified, authorised and released by three different people</div>
         <div><span>4</span>Export proceeds disposed against lodged bills, with the FIRC issued on credit</div>
@@ -101,7 +101,7 @@ function viewRegister() {
       <div class="page-head"><div>
         <h1>${d.offline ? 'Offline application' : 'Register your business'}</h1>
         <p>${d.offline ? 'Captured by AD2 on the business’s behalf. The channel is recorded as Offline.'
-                       : 'Digital onboarding. AD2 reviews and prices your application, and a checker approves it.'}</p></div>
+                       : 'Digital onboarding. An AD2 maker reviews and prices your application, and AD2 Compliance approves it.'}</p></div>
         <div class="acts">
           <button class="btn btn-ghost btn-sm" type="button" data-act="ob-sample">Fill with a sample business</button>
           ${d.offline ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/ad2/applications">Cancel</button>` : ''}

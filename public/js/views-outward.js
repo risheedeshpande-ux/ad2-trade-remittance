@@ -38,7 +38,7 @@ function viewOutwardList() {
       <p>${ad2 ? 'Requests from all SMEs. Each is verified by a maker, authorised by a checker and released by operations.'
                : 'Payments to your overseas suppliers and service providers.'}</p></div>
       <div class="acts">
-        ${asSme() && can('outward.create') ? `<button class="btn btn-primary" type="button" data-act="or-new">New request</button>` : ''}
+        ${asSme() && can('outward.create') ? `<button class="btn btn-primary" type="button" data-act="or-new">New outward request</button>` : ''}
         ${ad2 && can('assist.transact') ? `<button class="btn btn-primary" type="button" data-act="assist-pick" data-dir="outward">New request for an SME</button>` : ''}
         <button class="btn btn-plain" type="button" data-act="export-csv" data-what="outward">Export CSV</button></div></div>
     <div class="card">
@@ -57,23 +57,36 @@ function viewOutwardList() {
     </div>`);
 }
 
-/* ---------- new request ---------------------------------------------------- */
+/* ---------- new request ----------------------------------------------------
+   Order follows how a payment is actually put together: who is paid, for
+   what (product and purpose), which bills it settles, how much and from
+   which account, then the rate for exactly that amount, documents, and a
+   review before anything is sent.                                          */
 const RATE_NONE = () => ({ mode:'none', refRate:0, margin:0, customerRate:0, bookedAt:null, expiresAt:null, dealRef:null });
 function newOutwardDraft(from) {
   const base = {
     id:null, smeId:ctxSmeId(), beneficiaryId:'', beneficiary:'', beneficiaryCountry:'', beneficiaryAccount:'',
     beneficiaryBank:'', beneficiaryBankCountry:'', swift:'',
-    currency:'', amount:'', remittanceType:'', purposeCode:'', executionDate:'', debitAccountId:'',
-    referenceNumber:'', lcNumber:'', allocations:[], docs:{}, rate:RATE_NONE(), purposeFilter:'',
-    declarations:{ fema:false, ofac:false }, marginOverride:null,
+    currency:'', amount:'', remittanceType:'', purposeCode:'', executionDate:todayISO(), debitAccountId:'',
+    referenceNumber:'', lcNumber:'', allocations:[], docs:{}, rate:RATE_NONE(), purposeQuery:null,
+    declarations:{ fema:false, ofac:false }, marginOverride:null, amountFromBills:true,
   };
   if (!from) return base;
-  return { ...base, ...clone(from), rate:RATE_NONE(), purposeFilter:'', allocations:clone(from.allocations || []), docs:clone(from.docs || {}),
-           declarations:{ fema:false, ofac:false } };
+  return { ...base, ...clone(from), rate:RATE_NONE(), purposeQuery:null, allocations:clone(from.allocations || []), docs:clone(from.docs || {}),
+           executionDate: from.executionDate && from.executionDate >= todayISO() ? from.executionDate : todayISO(),
+           declarations:{ fema:false, ofac:false }, amountFromBills:false };
 }
 function availableCurrencies(smeRec) {
   if (isAD2()) return DB.currencies.map(c => c.code);
   return smeRec?.config?.currencies || [];
+}
+/* The INR a draft comes to, at its booked rate or today's live rate. */
+function outwardQuote(d, me) {
+  const amt = Number(d.amount) || 0;
+  const rate = d.rate.mode === 'none' ? liveRate(me, d.currency, 'out', acting() && isAD2() ? d.marginOverride : null) : d.rate.customerRate;
+  const charges = (me?.config?.charges || []).map(c => ({ name:c.name, amount: c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100 }));
+  const inrAmt = d.currency ? amt * rate : 0;
+  return { amt, rate, charges, inrAmt, debit: inrAmt + charges.reduce((t, c) => t + c.amount, 0) };
 }
 
 function viewOutwardNew() {
@@ -89,57 +102,29 @@ function viewOutwardNew() {
   const benePool = smeBenes(d.smeId);
   const selBene = bene(d.beneficiaryId);
   const beneCurWarn = !!(selBene && d.currency && selBene.currency && selBene.currency !== d.currency);
-
-  const approvedMargin = d.currency ? marginFor(me, d.currency) : 0;
-  const margin = d.rate.mode !== 'none' ? d.rate.margin
-    : (acting() && isAD2() && d.marginOverride != null && d.marginOverride !== '' ? Number(d.marginOverride) : approvedMargin);
-  const rate = d.rate.mode === 'none' ? customerRate(d.currency, margin) : d.rate.customerRate;
-  const amt = Number(d.amount) || 0;
-  const charges = me?.config?.charges || [];
-  const chargeTotal = charges.reduce((s, c) => s + (c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100), 0);
-  const inrAmt = d.currency ? amt * rate : 0;
-  const debitEstimate = inrAmt + chargeTotal;
-  const checklist = prod && p ? checklistFor(prod.id, p.code, inrAmt) : [];
-
-  /* purpose codes: narrowed by product, then by the search box */
-  const allPurposes = prod ? purposesFor(prod.id) : [];
-  const q = (d.purposeFilter || '').toLowerCase();
-  const shown = q ? allPurposes.filter(x => (x.code + ' ' + x.label).toLowerCase().includes(q)) : allPurposes;
-  if (p && !shown.some(x => x.code === p.code)) shown.unshift(p);
-
-  const rateBox = !d.currency ? `<div class="note note-info"><span>Select a currency to see the live rate.</span></div>`
-    : rateBoxHTML(d, d.currency, me, 'out', 'or') + (d.rate.mode === 'none' ? `<p style="margin:10px 0 0;font-size:var(--fs-xs);color:#0b5f61">
-        Booking locks the rate for 48 hours and notifies treasury. The server recalculates it from the approved margin on submission.</p>` : '');
-
-  const openBills = DB.bills.filter(b =>
-    b.smeId === d.smeId && b.type === 'Import' && b.outstanding > 0 &&
-    (!d.currency || b.currency === d.currency) && b.review === 'Accepted');
+  const q = outwardQuote(d, me);
+  const checklist = prod && p ? checklistFor(prod.id, p.code, q.inrAmt) : [];
   const allocated = d.allocations.reduce((s, a) => s + a.amount, 0);
+  const billPool = DB.bills.filter(b => b.smeId === d.smeId && b.type === 'Import' && b.review === 'Accepted' && b.outstanding > 0);
+
   const billCard = !prod ? '' : prod.bills === 'none'
-    ? `<div class="card"><div class="card-head"><h2>Bill allocation</h2></div><div class="card-body">
+    ? `<div class="card"><div class="card-head"><h2>3 · Bills</h2></div><div class="card-body">
         <div class="note note-info"><span><b>Advance payment — no bill yet.</b> The Bill of Entry is due within 90 days of payment.
         Once the goods arrive, lodge the import bill and knock it off against this payment.</span></div></div></div>`
-    : `<div class="card"><div class="card-head"><h2>Bill allocation ${prod.bills === 'required' ? '<span class="req">*</span>' : '<small style="color:var(--muted);font-weight:400">optional</small>'}</h2>
-        <div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">Allocated ${money(allocated)} of ${money(amt)}</span></div></div>
-        <div class="card-body tight">
-          ${openBills.length ? `<div class="tablewrap"><table class="dt">
-            <thead><tr><th>Bill</th><th>Invoice</th><th>Counterparty</th><th class="num">Available</th><th class="num">Allocate</th></tr></thead>
-            <tbody>${openBills.map(b => {
-              const a = d.allocations.find(x => x.billId === b.id);
-              const avail = Engine.billAvailable(DB, b, d.id);
-              return `<tr class="${a ? 'sel' : ''}"><td class="id">${esc(b.id)}</td><td>${esc(b.invoiceNumber)}</td>
-                <td>${esc(b.counterparty)}</td><td class="num">${money(avail, b.currency)}${avail < b.outstanding ? '<br><small style="color:var(--muted)">rest held by open requests</small>' : ''}</td>
-                <td class="num"><input type="number" class="alloc-in" data-act="or-alloc" data-bill="${b.id}" value="${a ? a.amount : ''}" placeholder="0.00" min="0" max="${avail}" aria-label="Allocate to ${esc(b.id)}">
-                  ${!a && avail > 0 ? `<button class="btn btn-link" type="button" data-act="or-alloc-max" data-bill="${b.id}">Use ${money(Math.min(avail, amt || avail))}</button>` : ''}</td></tr>`;
-            }).join('')}</tbody></table></div>`
-          : empty('No matching import bills', d.currency
-              ? `No accepted import bills outstanding in ${d.currency}. Lodge the bill first — an AD2 checker accepts it before it can be paid.`
-              : 'Select a currency to see matching import bills.')}
+    : `<div class="card"><div class="card-head"><h2>3 · Bills this payment settles ${prod.bills === 'required' ? '<span class="req">*</span>' : '<small style="color:var(--muted);font-weight:400">optional</small>'}</h2>
+        <div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">${d.allocations.length ? `${money(allocated, d.currency)} against ${plural(d.allocations.length, 'bill')}` : 'None chosen yet'}</span></div></div>
+        <div class="card-body">
+          ${billPool.length || d.allocations.length
+            ? billPickerHTML({ prefix:'or', pool: billPool, chosen: d.allocations, currency: d.currency || '', party: d.beneficiary, exclude: d.id })
+            : empty('No accepted import bills', 'Lodge the import bill first — AD2 accepts it, then it can be paid here.')}
+          ${prod.bills === 'required' ? '' : `<p class="hint" style="margin:10px 0 0;font-size:var(--fs-xs);color:var(--muted)">OTT payments for goods may settle a bill; for services leave this empty.</p>`}
         </div></div>`;
+  const hasBillStep = !!prod;
+  const step = k => k + (hasBillStep ? 1 : 0);
 
   return shell(crumb('Outward Remittance', d.id ? d.id + ' (draft)' : 'New request'), `
     <div class="page-head"><div><h1>${d.id ? 'Continue draft ' + esc(d.id) : 'New outward request'}</h1>
-      <p>Choose the product and purpose code — they decide which documents and bills this payment needs.</p></div>
+      <p>Pick the supplier, the product and purpose, the bills you are paying — then book the rate for that amount.</p></div>
       <div class="acts"><button class="btn btn-plain" type="button" data-act="go" data-href="#/sme/outward">Cancel</button></div></div>
 
     <div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start">
@@ -189,23 +174,29 @@ function viewOutwardNew() {
               <input id="or-lcNumber" data-ork="lcNumber" type="text" maxlength="30" value="${esc(d.lcNumber || '')}" placeholder="e.g. ILC/2026/0457">
               <div class="hint">The import LC this payment settles. Attach the LC copy below.</div><div class="err">Enter the LC number.</div></div>` : ''}
             <div class="f span2" data-fld="purposeCode"><label for="or-purpose">Purpose of remittance<span class="req">*</span></label>
-              ${prod && allPurposes.length > 8 ? `<input type="search" class="purpose-search" data-act="purpose-filter" value="${esc(d.purposeFilter || '')}"
-                  placeholder="Search ${allPurposes.length} purpose codes by code or description" aria-label="Search purpose codes">` : ''}
-              <select id="or-purpose" data-ork="purposeCode" ${prod ? '' : 'disabled'}><option value="">${prod ? 'Select…' : 'Choose a product first'}</option>
-                ${shown.map(x => `<option value="${x.code}" ${d.purposeCode === x.code ? 'selected' : ''}>${x.code} — ${esc(x.label)}</option>`).join('')}</select>
-              <div class="hint">${prod ? `Showing ${shown.length} of ${allPurposes.length} RBI purpose codes approved for ${prod.id}.` : 'RBI purpose code.'}</div>
+              ${prod ? purposePickerHTML({ id:'or-purpose', list: purposesFor(prod.id), value: d.purposeCode, query: d.purposeQuery,
+                  placeholder: `Search ${purposesFor(prod.id).length} purpose codes — type a code or a word, e.g. freight, software, S0102` })
+                : `<input type="search" disabled placeholder="Choose a product first">`}
+              <div class="hint">${prod ? `RBI purpose codes approved for ${prod.id}. The document checklist follows the code you pick.` : 'RBI purpose code.'}</div>
               <div class="err">Select a purpose code.</div></div>
           </div></div></div>
 
-        <div class="card"><div class="card-head"><h2>3 · Payment</h2></div><div class="card-body">
+        ${billCard}
+
+        <div class="card"><div class="card-head"><h2>${step(3)} · Amount and account</h2></div><div class="card-body">
           <div class="grid g2 fields">
             <div class="f" data-fld="currency"><label for="or-currency">Currency<span class="req">*</span></label>
               <select id="or-currency" data-ork="currency"><option value="">Select…</option>
                 ${curs.map(c => `<option ${d.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
-              <div class="hint">${isAD2() ? 'AD2-assisted requests may use any supported currency.' : 'Only currencies enabled on your approval are listed.'}</div>
+              <div class="hint">${isAD2() ? 'AD2-assisted requests may use any supported currency.' : 'Only currencies enabled on your approval are listed.'}${d.allocations.length ? ' Set by the bills you chose.' : ''}</div>
               <div class="err">Select a currency.</div></div>
-            ${fldOR('amount','Amount',d.amount,{required:true,type:'number'})}
-            ${fldOR('executionDate','Requested execution date',d.executionDate,{required:true,type:'date', min: todayISO()})}
+            <div class="f" data-fld="amount"><label for="or-amount">Amount to remit${d.currency ? ' (' + esc(d.currency) + ')' : ''}<span class="req">*</span></label>
+              <input id="or-amount" data-ork="amount" type="number" step="0.01" min="0" value="${esc(d.amount)}">
+              <div class="hint">${d.allocations.length ? `Bills account for ${money(allocated, d.currency)}. ${Number(d.amount) > allocated + 0.001 ? money(Number(d.amount) - allocated, d.currency) + ' is not against a bill.' : ''}` : 'The amount the beneficiary is paid, in the remittance currency.'}</div>
+              <div class="err">Enter the amount.</div></div>
+            <div class="f" data-fld="executionDate"><label for="or-executionDate">Requested execution date<span class="req">*</span></label>
+              <input id="or-executionDate" data-ork="executionDate" type="date" value="${esc(d.executionDate)}" min="${todayISO()}">
+              <div class="hint">Today by default. Change it to schedule the payment.</div><div class="err">Choose a date.</div></div>
             <div class="f" data-fld="debitAccountId"><label for="or-debit">Remitter account (INR)<span class="req">*</span></label>
               <select id="or-debit" data-ork="debitAccountId"><option value="">Select…</option>
                 ${accounts.map(a => `<option value="${a.id}" ${d.debitAccountId === a.id ? 'selected' : ''} ${a.verified ? '' : 'disabled'}>
@@ -217,54 +208,45 @@ function viewOutwardNew() {
             </div>
           </div></div></div>
 
-        <div class="card"><div class="card-head"><h2>4 · Rate</h2></div><div class="card-body">${rateBox}</div></div>
+        <div class="card"><div class="card-head"><h2>${step(4)} · Book the rate</h2></div><div class="card-body">
+          ${!d.currency ? `<div class="note note-info"><span>Choose the currency and amount to see the live rate and what it comes to in INR.</span></div>`
+            : rateBoxHTML(d, d.currency, me, 'out', 'or', d.amount)}</div></div>
 
-        ${billCard}
-
-        <div class="card"><div class="card-head"><h2>Documents</h2>
+        <div class="card"><div class="card-head"><h2>${step(5)} · Documents</h2>
           ${prod && p ? `<div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">${esc(prod.id)} · ${esc(p.code)}</span></div>` : ''}</div>
           <div class="card-body">${!prod || !p
             ? `<div class="note note-info"><span>Select a product and purpose code to load the document checklist.</span></div>`
             : `<div class="note note-info" style="margin-bottom:14px"><span>Document policy for <b>${esc(prod.id)} — ${esc(prod.label)}</b>.
-                ${checklist.some(x => x.rule === 'threshold' || x.rule === 'goods') ? 'Some documents depend on the purpose code or the INR amount — the list updates as you type.' : ''}</span></div>
+                ${checklist.some(x => x.rule === 'threshold' || x.rule === 'goods') ? 'Some documents depend on the purpose code or the INR amount — the list updates as you go.' : ''}</span></div>
                ${docRows(checklist, d.docs, 'or')}`}</div></div>
 
-        <div class="card"><div class="card-head"><h2>Declarations<span class="req">*</span></h2></div><div class="card-body">
+        <div class="card"><div class="card-head"><h2>${step(6)} · Declarations<span class="req">*</span></h2></div><div class="card-body">
           ${declarationsHTML(d, 'or')}</div></div>
       </div>
 
-      <div class="card" style="position:sticky;top:130px"><div class="card-head"><h2>Pricing</h2></div>
+      <div class="card" style="position:sticky;top:130px"><div class="card-head"><h2>Summary</h2></div>
         <div class="card-body">
           <div class="calc">
-            <div class="line"><span>Amount</span><b>${d.currency ? money(amt, d.currency) : '—'}</b></div>
-            <div class="line"><span>Reference rate</span><b>${d.currency ? '₹ ' + currency(d.currency).refRate.toFixed(4) : '—'}</b></div>
-            <div class="line"><span>Margin</span><b>${margin} paise${margin !== approvedMargin ? ' (assisted)' : ''}</b></div>
-            <div class="line"><span>Customer rate</span><b>${d.currency ? '₹ ' + Number(rate).toFixed(4) : '—'}</b></div>
-            <div class="line"><span>INR equivalent</span><b>${inr(inrAmt)}</b></div>
-            ${charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100)}</b></div>`).join('')}
-            <div class="line total"><span>Estimated debit</span><b>${inr(debitEstimate)}</b></div>
+            <div class="line"><span>You pay</span><b>${d.currency && q.amt ? money(q.amt, d.currency) : '—'}</b></div>
+            ${seesMargin() && d.currency ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${Number(currency(d.currency).refRate).toFixed(4)}</b></div>
+              <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${d.rate.mode !== 'none' ? d.rate.margin : (acting() && d.marginOverride != null && d.marginOverride !== '' ? d.marginOverride : marginFor(me, d.currency))} paise</b></div>` : ''}
+            <div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'deal' ? 'Deal rate' : 'Booked rate'}</span><b>${d.currency ? '₹ ' + Number(q.rate).toFixed(4) : '—'}</b></div>
+            <div class="line"><span>INR equivalent</span><b>${inr(q.inrAmt)}</b></div>
+            ${q.charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
+            <div class="line total"><span>Estimated debit</span><b>${inr(q.debit)}</b></div>
+            ${d.allocations.length ? `<div class="line"><span>Settles</span><b>${esc(d.allocations.map(a => a.billId).join(', '))}</b></div>` : ''}
           </div>
           <p style="font-size:var(--fs-xs);color:var(--muted);margin:12px 0 0">
-            ${d.rate.mode === 'none'
-              ? 'Illustrative — book a rate or enter a deal reference before submitting.'
-              : 'Based on your ' + (d.rate.mode === 'booked' ? 'booked rate.' : 'negotiated deal.')}</p>
+            ${d.rate.mode === 'none' ? 'Live rate — book it before submitting.' : d.rate.mode === 'booked' ? 'Booked rate, locked for 48 hours.' : 'Negotiated deal rate.'}</p>
           <div class="note note-info" style="margin-top:14px"><span style="font-size:var(--fs-xs)">
-            After you submit: an AD2 maker verifies the documents, a checker authorises, and operations releases the payment over SWIFT.</span></div>
+            After you submit: an AD2 maker verifies the documents, a checker or operations authorises, and operations releases the payment over SWIFT.</span></div>
           <div style="display:grid;gap:8px;margin-top:18px">
             <button class="btn btn-plain" type="button" data-act="or-save">Save draft</button>
-            <button class="btn btn-primary" type="button" data-act="or-submit">Submit request</button>
+            <button class="btn btn-primary" type="button" data-act="or-submit">Review and submit</button>
           </div>
         </div></div>
     </div>`);
 }
-
-const fldOR = (id, label, val, opts = {}) => `
-  <div class="f ${opts.span2 ? 'span2' : ''}" data-fld="${id}">
-    <label for="or-${id}">${esc(label)}${opts.required ? '<span class="req">*</span>' : ''}</label>
-    <input id="or-${id}" data-ork="${id}" type="${opts.type || 'text'}" value="${esc(val)}" placeholder="${esc(opts.ph || '')}" ${opts.min ? `min="${opts.min}"` : ''}>
-    ${opts.hint ? `<div class="hint">${esc(opts.hint)}</div>` : ''}
-    <div class="err">This field is required.</div>
-  </div>`;
 
 /* Quick client-side check before the server's full validation. */
 function outwardMissing(d) {
@@ -272,19 +254,19 @@ function outwardMissing(d) {
   if (!d.beneficiary) m.push('Beneficiary');
   if (!d.remittanceType) m.push('Product (AIR, DIR, OTT or LC)');
   if (d.remittanceType === 'LC' && !String(d.lcNumber || '').trim()) m.push('Letter of credit number');
-  if (!d.declarations || !d.declarations.fema || !d.declarations.ofac) m.push('FEMA and sanctions declarations');
   if (!d.purposeCode) m.push('Purpose code');
   if (!d.currency) m.push('Currency');
   if (!(Number(d.amount) > 0)) m.push('Amount');
   if (!d.executionDate) m.push('Requested execution date');
   if (!d.debitAccountId) m.push('Remitter account');
-  if (d.rate.mode === 'none') m.push('Booked rate or FX deal reference');
+  if (d.rate.mode === 'none') m.push('Book the rate');
+  if (!d.declarations || !d.declarations.fema || !d.declarations.ofac) m.push('FEMA and sanctions declarations');
   const prod = product(d.remittanceType);
   if (prod && d.purposeCode) {
-    const inrAmt = Number(d.amount) * (d.rate.customerRate || customerRate(d.currency, marginFor(sme(d.smeId), d.currency)));
-    checklistFor(prod.id, d.purposeCode, inrAmt).filter(x => x.required && !d.docs[x.id]).forEach(x => m.push('Document: ' + x.name));
+    const q = outwardQuote(d, sme(d.smeId));
+    checklistFor(prod.id, d.purposeCode, q.inrAmt).filter(x => x.required && !d.docs[x.id]).forEach(x => m.push('Document: ' + x.name));
     const allocated = d.allocations.reduce((s, a) => s + a.amount, 0);
-    if (allocated > Number(d.amount)) m.push('Allocations exceed the remittance amount');
+    if (allocated > Number(d.amount) + 0.001) m.push('Bills add up to more than the amount');
     if (prod.bills === 'required' && !allocated && !DB.settings.allowUnlinked) m.push(`At least one accepted import bill (${prod.id} settles a lodged bill)`);
   }
   return m;
@@ -316,14 +298,16 @@ function viewOutwardDetail(id) {
     if (['Submitted','Verified','Authorised'].includes(o.status) && can('outward.reject')) actions.push(`<button class="btn btn-danger" type="button" data-act="or-reject" data-id="${o.id}">Reject</button>`);
     const waiting = { 'Submitted':'outward.verify', 'Verified':'outward.approve', 'Authorised':'outward.complete' }[o.status];
     if (waiting && !can(waiting)) actions.push(`<span class="badge b-amber" style="align-self:center">With ${esc(o.pendingWith)} — ${segregated(waiting) ? 'withheld from your role by design' : 'not your step'}</span>`);
+    else if (waiting && barred(o)) actions.push(`<span class="badge b-amber" style="align-self:center">Four-eyes: you acted on this earlier, so another user takes this step</span>`);
   }
   if (o.status === 'Completed') {
     actions.push(`<button class="btn btn-ghost" type="button" data-act="or-advice" data-id="${o.id}">Payment advice</button>`);
     actions.push(`<button class="btn btn-plain" type="button" data-act="or-mt103" data-id="${o.id}">SWIFT MT103</button>`);
   }
 
-  /* the SME's response to a query happens inline, with document replacement */
-  const respond = asSme() && o.status === 'Clarification Required' && o.query;
+  /* the response to a query happens inline, with documents: by the SME, or
+     by AD2 for it with what the customer sent in */
+  const respond = o.status === 'Clarification Required' && o.query && (asSme() || (ad2 && can('txn.resolveQuery')));
   if (respond && (!RESP || RESP.id !== o.id)) RESP = { id:o.id, text:'', docs:{} };
 
   return shell(crumb('Outward Remittance', o.id), `
@@ -340,14 +324,8 @@ function viewOutwardDetail(id) {
       ${o.boeDueDate ? `<br>Advance payment — the Bill of Entry is due by <b>${dmy(o.boeDueDate)}</b>. Knock it off against the import bill once lodged.` : ''}</span></div>` : ''}
     ${o.query && (o.status === 'Clarification Required' || o.query.response) ? `<div class="note ${o.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px">
       <span><b>Query from AD2:</b> ${esc(o.query.question)}<br><small>${esc(o.query.raisedBy)} · ${dmyt(o.query.raisedAt)}</small>
-      ${o.query.response ? `<br><b>Response:</b> ${esc(o.query.response)} <small>· ${dmyt(o.query.respondedAt)}</small>` : ''}</span></div>` : ''}
-    ${respond ? `<div class="card" style="margin-bottom:18px"><div class="card-head"><h2>Respond to the query</h2></div><div class="card-body">
-        <div class="f"><label for="resp-text">Your response<span class="req">*</span></label>
-          <textarea id="resp-text" data-act="resp-text">${esc(RESP.text)}</textarea></div>
-        <h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Replace or add documents (optional)</h3>
-        ${docRows(checklist.map(x => ({ ...x, required:false, note: o.docs && o.docs[x.id] ? 'On file: ' + o.docs[x.id].filename : 'Not on file' })), RESP.docs, 'resp')}
-        <button class="btn btn-primary" style="margin-top:16px" type="button" data-act="or-respond" data-id="${o.id}">Send response</button>
-      </div></div>` : ''}
+      ${o.query.response ? `<br><b>Response:</b> ${esc(o.query.response)} <small>· ${o.query.respondedBy ? 'recorded by ' + esc(o.query.respondedBy) + ' · ' : ''}${dmyt(o.query.respondedAt)}</small>` : ''}</span></div>` : ''}
+    ${respond ? queryResponseCard(ad2, checklist, o.docs, ad2 ? 'or-resolve' : 'or-respond', o.id) : ''}
     ${o.status === 'Rejected' && o.rejectReason ? `<div class="note note-err" style="margin-bottom:18px">
       <span><b>Rejected:</b> ${esc(o.rejectReason)}</span></div>` : ''}
 
@@ -403,9 +381,11 @@ function viewOutwardDetail(id) {
               : o.rate.mode === 'deal' ? `Negotiated deal <b>${esc(o.rate.dealRef)}</b>.`
               : 'No rate yet (draft).'}</span></div>
           <div class="calc">
-            <div class="line"><span>Reference rate</span><b>₹ ${(o.rate.refRate || 0).toFixed(4)}</b></div>
-            <div class="line"><span>Margin</span><b>${o.rate.margin || 0} paise</b></div>
-            <div class="line"><span>Customer rate</span><b>₹ ${(o.rate.customerRate || 0).toFixed(4)}</b></div>
+            <div class="line"><span>Amount</span><b>${money(o.amount, o.currency)}</b></div>
+            ${seesMargin() ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${(o.rate.refRate || 0).toFixed(4)}</b></div>
+            <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${o.rate.margin || 0} paise</b></div>` : ''}
+            <div class="line"><span>${seesMargin() ? 'Customer rate' : 'Your rate'}</span><b>₹ ${(o.rate.customerRate || 0).toFixed(4)}</b></div>
+            <div class="line"><span>INR equivalent</span><b>${inr(inrAmt)}</b></div>
             ${(o.charges || []).map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
             <div class="line total"><span>${o.status === 'Completed' ? 'Debited' : 'Debit amount'}</span><b>${inr(debit)}</b></div>
           </div></div></div>
@@ -413,6 +393,27 @@ function viewOutwardDetail(id) {
         ${ad2 ? notesCard('outward', o) : ''}
       </div>
     </div>`);
+}
+
+/* Four-eyes: this AD2 user raised or already acted on the record. */
+function barred(rec) {
+  const me = myKey();
+  return rec.createdByKey === me || Object.values(rec.wf || {}).some(w => w && w.key === me);
+}
+
+/* Answering a query, inline with the documents. On the AD2 side it records
+   what the customer sent in (by email or at the branch), so the request can
+   carry on without waiting for the customer to log in. */
+function queryResponseCard(ad2, checklist, onFile, act, id) {
+  return `<div class="card" style="margin-bottom:18px"><div class="card-head"><h2>${ad2 ? 'Answer for the customer' : 'Respond to the query'}</h2></div><div class="card-body">
+    ${ad2 ? `<div class="note note-info" style="margin-bottom:14px"><span>Received the answer or documents from the customer by email or at the branch?
+      Record them here — the request goes back to the maker to verify, exactly as if the customer had answered.</span></div>` : ''}
+    <div class="f"><label for="resp-text">${ad2 ? 'The customer’s answer' : 'Your response'}<span class="req">*</span></label>
+      <textarea id="resp-text" data-act="resp-text" placeholder="${ad2 ? 'e.g. Customer sent the corrected invoice by email on …' : ''}">${esc(RESP.text)}</textarea></div>
+    <h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Upload or replace documents${ad2 ? ' received from the customer' : ''} (optional)</h3>
+    ${docRows(checklist.map(x => ({ ...x, required:false, note: onFile && onFile[x.id] ? 'On file: ' + onFile[x.id].filename : 'Not on file' })), RESP.docs, 'resp')}
+    <button class="btn btn-primary" style="margin-top:16px" type="button" data-act="${act}" data-id="${id}">${ad2 ? 'Record answer and send back to the maker' : 'Send response'}</button>
+  </div></div>`;
 }
 
 /* AD2-only internal notes on a record. */

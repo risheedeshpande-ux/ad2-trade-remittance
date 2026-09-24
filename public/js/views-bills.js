@@ -13,9 +13,11 @@ function viewBills(type) {
       return shell(crumb('Bill Lodgement', type), denied(`${type} bill lodgement is not enabled`, `Your approved service permission is “${me.config?.permission || '—'}”.`));
   }
   if (ad2 && !['register'].includes(billTab)) billTab = 'register';
-  let list = DB.bills.filter(b => b.type === type && (!scoped() || b.smeId === ctxSmeId()));
-  const counts = { All: list.length, 'To accept': list.filter(b => ['Submitted','Resubmitted'].includes(b.review)).length };
+  let list = DB.bills.filter(b => (type === 'All' || b.type === type) && (!scoped() || b.smeId === ctxSmeId()));
+  const counts = { All: list.length, 'To accept': list.filter(b => ['Submitted','Resubmitted'].includes(b.review)).length,
+    'With customer': list.filter(b => b.review === 'Query Raised').length };
   if (billReview === 'To accept') list = list.filter(b => ['Submitted','Resubmitted'].includes(b.review));
+  if (billReview === 'With customer') list = list.filter(b => b.review === 'Query Raised');
   if (billSearch) {
     const q = billSearch.toLowerCase();
     list = list.filter(b => (b.id + b.invoiceNumber + b.counterparty + (b.shipmentRef || '')).toLowerCase().includes(q));
@@ -28,21 +30,23 @@ function viewBills(type) {
     }
     if (asSme() && b.review === 'Query Raised' && can('bills.lodge'))
       out.push(`<button class="btn btn-ghost btn-sm" type="button" data-act="bill-respond" data-id="${b.id}">Respond</button>`);
+    if (ad2 && b.review === 'Query Raised' && can('txn.resolveQuery'))
+      out.push(`<button class="btn btn-ghost btn-sm" type="button" data-act="bill-resolve" data-id="${b.id}">Answer for customer</button>`);
     return out.join(' ');
   };
 
   const panes = {
     register: `<div class="toolbar">
-        <div class="seg-mini">${['All','To accept'].map(k => `<button type="button" data-act="bill-review" data-t="${k}" aria-pressed="${billReview === k}">${k} <span>${counts[k]}</span></button>`).join('')}</div>
+        <div class="seg-mini">${['All','To accept','With customer'].map(k => `<button type="button" data-act="bill-review" data-t="${k}" aria-pressed="${billReview === k}">${k} <span>${counts[k]}</span></button>`).join('')}</div>
         <input type="search" placeholder="Search bill, invoice, counterparty or reference" value="${esc(billSearch)}" data-act="bill-search" aria-label="Search bills">
         <div class="spacer"></div>
         <button class="btn btn-plain btn-sm" type="button" data-act="export-csv" data-what="bills">Export CSV</button></div>
       <div class="tablewrap"><table class="dt">
-        <thead><tr><th data-sort>Bill</th>${ad2 ? '<th data-sort>SME</th>' : ''}<th data-sort>Invoice</th><th data-sort>Counterparty</th><th data-sort>Currency</th>
+        <thead><tr><th data-sort>Bill</th>${ad2 ? '<th data-sort>SME</th>' : ''}${type === 'All' ? '<th data-sort>Type</th>' : ''}<th data-sort>Invoice</th><th data-sort>Counterparty</th><th data-sort>Currency</th>
           <th class="num" data-sort>Original</th><th class="num" data-sort>Adjusted</th><th class="num" data-sort>Outstanding</th>
           <th data-sort>Due</th><th data-sort>Source</th><th data-sort>Review</th><th data-sort>Settlement</th><th></th></tr></thead>
         <tbody>${list.length ? list.map(b => `
-          <tr><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}
+          <tr><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}${type === 'All' ? `<td>${esc(b.type)}</td>` : ''}
             <td>${esc(b.invoiceNumber)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${dmy(b.invoiceDate)}${b.shipmentRef ? ' · ' + esc(b.shipmentRef) : ''}</span></td>
             <td>${esc(b.counterparty)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(b.counterpartyCountry)}</span></td>
             <td>${esc(b.currency)}</td><td class="num">${money(b.amount)}</td>
@@ -51,7 +55,7 @@ function viewBills(type) {
             <td>${badge(b.review)}${b.query && b.review === 'Query Raised' ? `<br><small style="color:var(--muted)">${esc(b.query.question)}</small>` : ''}</td>
             <td>${badge(b.settlement)}${(b.ufi || []).length ? `<br><small style="color:var(--muted)" title="${esc(b.ufi.join(', '))}">${b.type === 'Export' ? 'EDPMS' : 'IDPMS'} · ${plural(b.ufi.length, 'report')}</small>` : ''}</td>
             <td style="white-space:nowrap">${rowActions(b)}</td></tr>`).join('')
-          : `<tr><td colspan="13">${empty('No bills','Lodge a bill by form, CSV upload, SFTP or the SAP integration.')}</td></tr>`}</tbody>
+          : `<tr><td colspan="14">${empty(billReview === 'To accept' ? 'Nothing to accept' : 'No bills', billReview === 'To accept' ? 'Every lodged bill has been reviewed.' : 'Lodge a bill by form, CSV upload, SFTP or the SAP integration.')}</td></tr>`}</tbody>
       </table></div>`,
     form: billForm(type),
     upload: `<div class="card-body">
@@ -85,13 +89,14 @@ function viewBills(type) {
   const tabDefs = ad2 ? [['register','Bill register']]
     : [['register','Bill register'],['form','New bill'],['upload','File upload'],['sftp','SFTP'],['sap','SAP API']];
 
-  return shell(crumb('Bill Lodgement', type + ' bills'), `
-    <div class="page-head"><div><h1>${esc(type)} Bills</h1>
-      <p>${type === 'Export'
+  return shell(crumb('Bill Lodgement', type === 'All' ? 'All bills' : type + ' bills'), `
+    <div class="page-head"><div><h1>${type === 'All' ? 'Bills' : esc(type) + ' Bills'}</h1>
+      <p>${type === 'All' ? 'Import and export bills lodged by every SME.' : type === 'Export'
         ? 'Lodged export bills are what inward receipts are disposed against.'
-        : 'Lodged import bills are what DIR payments settle.'}
+        : 'Lodged import bills are what DIR and LC payments settle.'}
         ${DB.settings.autoChecker ? 'AutoChecker is on — new bills are accepted on lodgement.' : 'An AD2 checker accepts each bill before it can be used.'}</p></div>
       <div class="acts">${ad2 ? `
+        <button class="btn ${type === 'All' ? 'btn-primary' : 'btn-plain'} btn-sm" type="button" data-act="go" data-href="#/ad2/bills">All</button>
         <button class="btn ${type === 'Import' ? 'btn-primary' : 'btn-plain'} btn-sm" type="button" data-act="go" data-href="#/ad2/bills/import">Import</button>
         <button class="btn ${type === 'Export' ? 'btn-primary' : 'btn-plain'} btn-sm" type="button" data-act="go" data-href="#/ad2/bills/export">Export</button>` : ''}</div></div>
     <div class="card">
@@ -185,22 +190,32 @@ function koEligible(side, smeId) {
       }).filter(r => r.left > 0);
 }
 
+/* What is still free on a bill or a remittance once the allocations being
+   put together on this screen are counted — so the panes shrink as you go
+   and anything used up drops out. */
+const koDraftOn = (key, id) => KO.allocations.filter(a => a[key] === id).reduce((t, a) => t + a.amount, 0);
+const koBillLeft = b => +(Engine.billAvailable(DB, b) - koDraftOn('billId', b.id)).toFixed(2);
+
 function viewKnockoff() {
   const smeId = ctxSmeId();
   const me = sme(smeId);
   const pm = perm(me);
   if (KO.side === 'Import' && !pm.importSide) KO.side = 'Export';
   if (KO.side === 'Export' && !pm.exportSide) KO.side = 'Import';
-  const bills = DB.bills.filter(b => b.smeId === smeId && b.type === KO.side && b.review === 'Accepted'
+  const allBills = DB.bills.filter(b => b.smeId === smeId && b.type === KO.side && b.review === 'Accepted'
     && Engine.billAvailable(DB, b) > 0 && (!KO.currency || b.currency === KO.currency));
-  const rems = koEligible(KO.side, smeId).filter(r => !KO.currency || r.cur === KO.currency);
+  const bills = allBills.filter(b => koBillLeft(b) > 0.001);
+  const allRems = koEligible(KO.side, smeId).filter(r => !KO.currency || r.cur === KO.currency)
+    .map(r => ({ ...r, left: +(r.left - koDraftOn('remId', r.id)).toFixed(2), used: koDraftOn('remId', r.id) }));
+  const rems = allRems.filter(r => r.left > 0.001);
   const totalAlloc = KO.allocations.reduce((s, a) => s + a.amount, 0);
   const mine = DB.allocations.filter(l => l.smeId === smeId && l.source === 'Knock-off');
+  const usedUp = allBills.length - bills.length + allRems.length - rems.length;
 
   return shell(crumb('Bill Knock-off'), `
     <div class="page-head"><div><h1>Bill Knock-off</h1>
       <p>Match money that moved before its bill existed: an advance (AIR) payment against the import bill that followed, or an export FIRC pending knock-off
-        (an advance receipt) against the export bill. An AD2 checker confirms each match and it is reported to IDPMS / EDPMS through UFI.</p></div></div>
+        (an advance receipt) against the export bill. AD2 confirms each match and the UFI portal (IDPMS / EDPMS) is updated.</p></div></div>
 
     <div class="card" style="margin-bottom:18px"><div class="toolbar">
       <select data-act="ko-side" aria-label="Bill type">
@@ -209,6 +224,7 @@ function viewKnockoff() {
       <select data-act="ko-currency" aria-label="Currency"><option value="">All currencies</option>
         ${DB.currencies.map(c => `<option ${KO.currency === c.code ? 'selected' : ''}>${c.code}</option>`).join('')}</select>
       <div class="spacer"></div>
+      ${usedUp ? `<span style="color:var(--muted);font-size:var(--fs-sm)">${plural(usedUp, 'item')} fully used in this batch</span>` : ''}
       <button class="btn btn-ghost btn-sm" type="button" data-act="ko-suggest">Suggest matches</button>
       <button class="btn btn-plain btn-sm" type="button" data-act="ko-clear">Clear</button>
     </div></div>
@@ -216,34 +232,36 @@ function viewKnockoff() {
     <div class="knock">
       <div class="pane"><h3>Outstanding ${esc(KO.side.toLowerCase())} bills</h3>
         <div class="tablewrap"><table class="dt">
-          <thead><tr><th>Bill</th><th>Invoice</th><th>Counterparty</th><th class="num">Available</th></tr></thead>
-          <tbody>${bills.length ? bills.map(b => `
-            <tr class="${KO.allocations.some(a => a.billId === b.id) ? 'sel' : ''}">
+          <thead><tr><th>Bill</th><th>Invoice</th><th>Counterparty</th><th class="num">Bill amount</th><th class="num">Free to knock off</th></tr></thead>
+          <tbody>${bills.length ? bills.map(b => { const used = koDraftOn('billId', b.id); return `
+            <tr class="${used ? 'sel' : ''}">
               <td class="id">${esc(b.id)}</td><td>${esc(b.invoiceNumber)}</td>
-              <td>${esc(b.counterparty)}</td><td class="num">${money(Engine.billAvailable(DB, b), b.currency)}</td></tr>`).join('')
-            : `<tr><td colspan="4">${empty('Nothing outstanding','No accepted bills with a balance match these filters.')}</td></tr>`}</tbody>
+              <td>${esc(b.counterparty)}</td><td class="num">${money(b.amount, b.currency)}</td>
+              <td class="num"><b>${money(koBillLeft(b), b.currency)}</b>${used ? `<br><small style="color:var(--muted)">${money(used)} in this batch</small>` : ''}</td></tr>`; }).join('')
+            : `<tr><td colspan="5">${empty('Nothing outstanding','No accepted bills with a balance left for these filters.')}</td></tr>`}</tbody>
         </table></div></div>
       <div class="pane"><h3>${KO.side === 'Export' ? 'FIRCs pending knock-off' : 'Completed payments not yet matched'}</h3>
         <div class="tablewrap"><table class="dt">
           <thead><tr><th>Reference</th><th>Counterparty</th><th class="num">Unapplied</th></tr></thead>
           <tbody>${rems.length ? rems.map(r => `
-            <tr><td class="id">${esc(r.ref)}</td><td>${esc(r.party)}</td><td class="num">${money(r.left, r.cur)}</td></tr>`).join('')
+            <tr class="${r.used ? 'sel' : ''}"><td class="id">${esc(r.ref)}</td><td>${esc(r.party)}</td>
+              <td class="num"><b>${money(r.left, r.cur)}</b>${r.used ? `<br><small style="color:var(--muted)">${money(r.used)} in this batch</small>` : ''}</td></tr>`).join('')
             : `<tr><td colspan="3">${empty('Nothing eligible', KO.side === 'Export' ? 'No FIRC has an amount pending knock-off. Dispose of a receipt as an advance to create one.' : 'No completed payment has an unapplied balance.')}</td></tr>`}</tbody>
         </table></div></div>
     </div>
 
     <div class="card" style="margin-top:18px"><div class="card-head"><h2>Add an allocation</h2></div><div class="card-body">
       <div class="grid fields" style="grid-template-columns:2fr 2fr 1fr auto;align-items:end;gap:12px">
-        <div class="f"><label for="ko-bill">Bill</label><select id="ko-bill"><option value="">Select…</option>
-          ${bills.map(b => `<option value="${b.id}">${esc(b.id)} · ${esc(b.invoiceNumber)} · ${money(Engine.billAvailable(DB, b), b.currency)}</option>`).join('')}</select></div>
-        <div class="f"><label for="ko-rem">${KO.side === 'Export' ? 'FIRC' : 'Payment'}</label><select id="ko-rem"><option value="">Select…</option>
+        <div class="f"><label for="ko-bill">Bill</label><select id="ko-bill" data-act="ko-pick"><option value="">Select…</option>
+          ${bills.map(b => `<option value="${b.id}">${esc(b.id)} · ${esc(b.invoiceNumber)} · ${esc(b.counterparty)} · free ${money(koBillLeft(b), b.currency)}</option>`).join('')}</select></div>
+        <div class="f"><label for="ko-rem">${KO.side === 'Export' ? 'FIRC' : 'Payment'}</label><select id="ko-rem" data-act="ko-pick"><option value="">Select…</option>
           ${rems.map(r => `<option value="${r.id}" ${KO.focus === r.id ? 'selected' : ''}>${esc(r.ref)} · ${esc(r.party)} · ${money(r.left, r.cur)}</option>`).join('')}</select></div>
-        <div class="f"><label for="ko-amt">Amount</label><input id="ko-amt" type="number" step="0.01"></div>
+        <div class="f"><label for="ko-amt">Amount</label><input id="ko-amt" type="number" step="0.01" placeholder="Filled when both are chosen"></div>
         <button class="btn btn-ghost" type="button" data-act="ko-add">Add</button>
       </div></div></div>
 
     <div class="allocbar" style="margin-top:18px">
-      <div><div class="m">Proposed allocations</div><div class="v">${KO.allocations.length}</div></div>
+      <div><div class="m">Allocations in this batch</div><div class="v">${KO.allocations.length}</div></div>
       <div><div class="m">Total</div><div class="v">${money(totalAlloc)}</div></div>
       <div class="spacer"></div>
       <button class="btn btn-primary" type="button" data-act="ko-submit" ${KO.allocations.length ? '' : 'disabled'}>Submit for AD2 confirmation</button>
@@ -251,11 +269,12 @@ function viewKnockoff() {
     ${KO.allocations.length ? `<div class="card" style="margin-top:18px">
       <div class="card-head"><h2>To submit</h2></div>
       <div class="card-body tight"><div class="tablewrap"><table class="dt">
-        <thead><tr><th>Bill</th><th>Remittance</th><th class="num">Amount</th><th class="num">Bill after</th><th></th></tr></thead>
+        <thead><tr><th>Bill</th><th>Remittance</th><th class="num">Amount</th><th class="num">Bill outstanding after</th><th></th></tr></thead>
         <tbody>${KO.allocations.map((a, i) => { const b = bill(a.billId);
+          const after = (b?.outstanding || 0) - KO.allocations.filter((x, j) => j <= i && x.billId === a.billId).reduce((t, x) => t + x.amount, 0);
           return `<tr><td class="id">${esc(a.billId)}</td><td>${esc(a.remId)}</td>
             <td class="num">${money(a.amount, b?.currency)}</td>
-            <td class="num">${money((b?.outstanding || 0) - a.amount, b?.currency)}</td>
+            <td class="num">${money(after, b?.currency)}${after <= 0.001 ? ' <span class="badge b-green">settles</span>' : ''}</td>
             <td><button class="btn btn-link" type="button" data-act="ko-remove" data-i="${i}">Remove</button></td></tr>`;
         }).join('')}</tbody></table></div></div></div>` : ''}
 
@@ -273,7 +292,7 @@ function ledgerTable(rows, withActions) {
         <td class="num">${money(l.amount, l.currency)}</td><td>${esc(l.source)}</td>
         <td>${badge(l.status)}${l.rejectReason ? `<br><small style="color:var(--muted)">${esc(l.rejectReason)}</small>` : ''}
           ${l.reversedBy ? `<br><small style="color:var(--muted)">${esc(l.reversedBy.reason)}</small>` : ''}</td>
-        <td>${l.ufi ? ufiTag(l.ufi) : '<span style="color:var(--muted)">—</span>'}${l.ufiReversal ? '<br>' + ufiTag(l.ufiReversal) + ' <small>reversal</small>' : ''}</td>
+        <td>${l.ufi ? ufiTag(l.ufi) + '<br><small style="color:var(--r4m-green)">UFI portal updated</small>' : l.status === 'Proposed' ? '<span style="color:var(--muted)">On confirmation</span>' : '<span style="color:var(--muted)">—</span>'}${l.ufiReversal ? '<br>' + ufiTag(l.ufiReversal) + ' <small>reversal</small>' : ''}</td>
         <td data-v="${esc(l.at)}">${dmy(l.at)}</td>
         ${withActions ? `<td style="white-space:nowrap">${
           l.status === 'Proposed'

@@ -24,15 +24,23 @@ const getStore = () => (store = store || makeStore());
 let cache = null;           // { state, etag, at }
 const CACHE_MS = 4000;
 
+/* A state is newer than another if it was seeded later (epoch), or it is the
+   same seeding with a higher revision. Revisions carry on across a reset, so
+   either test alone would do; both together survive a wiped store too. */
+const newer = (a, b) => !b || (a.epoch || '') > (b.epoch || '') || ((a.epoch || '') === (b.epoch || '') && (a.rev || 0) > (b.rev || 0));
+
 async function readState({ fresh } = {}) {
   if (!fresh && cache && Date.now() - cache.at < CACHE_MS) return cache;
   const s = getStore();
   let { state, etag } = await s.read();
   if (!state || state.version !== SEED.version) {
-    const seeded = Engine.freshState(SEED);
+    const seeded = Engine.freshState(SEED, null, { rev: state ? (state.rev || 0) + 1 : 0 });
     try { etag = await s.write(seeded, etag); state = seeded; }
     catch (e) { if (!e.conflict) throw e; ({ state, etag } = await s.read()); }
   }
+  /* A lagging read (a CDN copy, another instance) never replaces a newer
+     state this instance has already seen. */
+  if (cache && newer(cache.state, state)) return cache;
   cache = { state, etag, at: Date.now() };
   return cache;
 }
@@ -98,11 +106,21 @@ async function handle({ method, route, query, headers, body, ip }) {
     if (route === 'state' && method === 'GET') {
       const w = who(headers);
       if (!w.ok) return json(401, { error: 'Your session has expired. Sign in again.', code: 'auth' });
-      const { state } = await readState();
-      if (query.since && String(state.rev) === String(query.since)) return json(200, { unchanged: true, rev: state.rev });
+      let { state } = await readState();
+      /* The caller already holds a newer state than this instance has: read
+         the store again, and if it still lags, tell the caller to keep what
+         it has rather than send it back in time. */
+      const floor = query.since != null ? query.since : query.min;
+      const theirs = floor != null ? { rev: Number(floor), epoch: query.epoch || state.epoch } : null;
+      if (theirs && newer(theirs, state)) {
+        ({ state } = await readState({ fresh: true }));
+        if (newer(theirs, state)) return json(200, { unchanged: true, stale: true, rev: theirs.rev, epoch: theirs.epoch });
+      }
+      if (query.since != null && String(state.rev) === String(query.since) && (!query.epoch || query.epoch === state.epoch))
+        return json(200, { unchanged: true, rev: state.rev, epoch: state.epoch });
       const user = publicUser(state, w.who);
       if (w.who && !user) return json(401, { error: 'Your session is no longer valid. Sign in again.', code: 'auth' });
-      return json(200, { rev: state.rev, state: Engine.scopeState(state, w.who), user });
+      return json(200, { rev: state.rev, epoch: state.epoch, state: Engine.scopeState(state, w.who), user });
     }
 
     if (route === 'command' && method === 'POST') {
@@ -111,16 +129,19 @@ async function handle({ method, route, query, headers, body, ip }) {
       const cmd = String(body.cmd || '');
       if (!Engine.COMMANDS.includes(cmd)) return json(400, { error: 'Unknown action.', code: 'unknown' });
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
-      for (let attempt = 0; attempt < 4; attempt++) {
+      for (let attempt = 0; attempt < 6; attempt++) {
         const { state, etag } = await readState({ fresh: true });
         const next = clone(state);
         const result = Engine.execute(next, w.who, cmd, payload, { now: new Date().toISOString(), hashPassword: auth.hashPassword });
         try {
           const newTag = await getStore().write(next, etag);
           cache = { state: next, etag: newTag, at: Date.now() };
-          return json(200, { ok: true, result, rev: next.rev, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
+          return json(200, { ok: true, result, rev: next.rev, epoch: next.epoch, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
         } catch (e) {
           if (!e.conflict) throw e;
+          /* someone wrote first, or the read lagged: wait a moment and replay on a fresh read */
+          cache = null;
+          await new Promise(r => setTimeout(r, 120 * (attempt + 1)));
         }
       }
       return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
@@ -130,11 +151,14 @@ async function handle({ method, route, query, headers, body, ip }) {
       if (auth.throttled(ip)) return json(429, { error: 'Too many attempts. Wait a few minutes.', code: 'throttled' });
       if (!auth.checkPasscode(body.passcode)) { auth.recordFailure(ip); return json(403, { error: 'The demo passcode is incorrect.', code: 'forbidden' }); }
       const s = getStore();
-      const { etag } = await s.read();
-      const seeded = Engine.freshState(SEED);
-      const newTag = await s.write(seeded, etag);
+      let prev = null;
+      try { prev = (await readState({ fresh: true })).state; } catch (e) { prev = null; }
+      /* A reset is authoritative: it overwrites whatever is stored, and its
+         revision continues from the state it replaces. */
+      const seeded = Engine.freshState(SEED, null, { rev: ((prev && prev.rev) || 0) + 1 });
+      const newTag = await s.write(seeded, null, { force: true });
       cache = { state: seeded, etag: newTag, at: Date.now() };
-      return json(200, { ok: true, message: 'Demo data reset.' });
+      return json(200, { ok: true, rev: seeded.rev, epoch: seeded.epoch, state: Engine.scopeState(seeded, null), user: null, message: 'Demo data reset.' });
     }
 
     return json(404, { error: 'Not found.', code: 'not_found' });

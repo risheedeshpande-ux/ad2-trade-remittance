@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v6';
+const SEED_VERSION = 'ad2-trade-v7';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -175,10 +175,20 @@ const PRODUCTS = [
 ];
 
 /* --- inward purpose and disposal options -------------------------------------
-   The workbook's disposal sheet names one purpose, TRADE. The Administrator
-   can add more. Disposal options are the BRD's "AD2-configured list".      */
+   The workbook's disposal sheet names the product, TRADE. Each disposal also
+   carries the RBI inward purpose code (P-code) that is reported with the
+   FIRC. The Administrator can add more. Disposal options are the BRD's
+   "AD2-configured list".                                                    */
 const INWARD_PURPOSES = [
-  { code:'TRADE', label:'Proceeds against export of goods and services' },
+  { code:'P0101', label:'Value of export bills negotiated, purchased or discounted' },
+  { code:'P0102', label:'Realisation of export bills sent on collection (full invoice value)' },
+  { code:'P0103', label:'Advance receipts against export contracts (export of goods only)' },
+  { code:'P0104', label:'Receipts against export of goods not covered by an EDF or SOFTEX form' },
+  { code:'P0108', label:'Receipts for goods sold under merchanting (export leg of merchanting trade)' },
+  { code:'P0802', label:'Software consultancy and implementation' },
+  { code:'P0807', label:'Off-site software exports' },
+  { code:'P1006', label:'Business and management consultancy and public relations services' },
+  { code:'P1008', label:'Architectural, engineering and other technical services' },
 ];
 const DISPOSAL_OPTIONS = [
   { id:'knockoff', label:'Knock off against export bills',
@@ -292,9 +302,14 @@ const CHARGE_CATEGORIES = [
    A capability marked *segregated* is withheld deliberately so that whoever
    prepares work is not whoever approves or releases it.
 
-   Transaction flow:  SME submits -> AD2 Maker verifies -> AD2 Checker
-   authorises -> AD2 Operations executes. Each stage must be a different
-   person from the stages before it.                                       */
+   Onboarding:   applicant (or Sales / Maker offline) -> AD2 Maker reviews and
+                 prices -> AD2 Compliance approves.
+   Transactions: SME (or AD2 on its behalf) -> AD2 Maker verifies -> AD2
+                 Checker or Operations authorises -> AD2 Operations releases
+                 or processes. Each stage must be a different person.
+   The branch maker is common to onboarding and transactions; the checking
+   is split — Compliance approves customers, Trade (Checker / Operations)
+   approves money (review of 24 Sep).                                       */
 const CAPABILITIES = [
   { id:'onboard.apply',        group:'Onboarding',     label:'Submit an onboarding application and answer queries' },
   { id:'onboard.createOffline',group:'Onboarding',     label:'Capture an application for an SME (offline)' },
@@ -313,8 +328,8 @@ const CAPABILITIES = [
 
   { id:'inward.viewOwn',       group:'Inward',         label:'View its own inward receipts' },
   { id:'inward.viewAll',       group:'Inward',         label:'View inward receipts across all SMEs' },
-  { id:'inward.record',        group:'Inward',         label:'Record an incoming inward remittance' },
-  { id:'inward.dispose',       group:'Inward',         label:'Submit a disposal instruction' },
+  { id:'inward.record',        group:'Inward',         label:'Record an incoming remittance, or confirm one the SME reported' },
+  { id:'inward.dispose',       group:'Inward',         label:'Report an inward remittance and submit a disposal instruction' },
   { id:'inward.verifyDisposal',group:'Inward',         label:'Verify a disposal instruction (maker)' },
   { id:'inward.approveDisposal',group:'Inward',        label:'Authorise a disposal instruction (checker)' },
   { id:'inward.processDisposal',group:'Inward',        label:'Process an authorised disposal and issue the FIRC' },
@@ -327,8 +342,11 @@ const CAPABILITIES = [
   { id:'recon.confirm',        group:'Reconciliation', label:'Confirm a knock-off allocation' },
   { id:'recon.reverse',        group:'Reconciliation', label:'Reverse a confirmed allocation' },
 
+  { id:'txn.resolveQuery',     group:'Queries',        label:'Answer a query on the customer’s behalf, with the documents it sent' },
+
   { id:'masters.beneficiary',  group:'Masters',        label:'Maintain the beneficiary and account masters' },
   { id:'assist.transact',      group:'Assisted',       label:'Transact on behalf of an SME' },
+  { id:'fx.dealRef',           group:'Assisted',       label:'Apply an FX deal reference negotiated with the treasury desk' },
   { id:'reports.view',         group:'Reports',        label:'View and export reports' },
   { id:'lab.use',              group:'Test data',      label:'Generate test businesses, bills, receipts and requests' },
 
@@ -343,43 +361,52 @@ const ROLES = [
     can:['onboard.apply'] },
 
   { id:'SME User', portal:'SME', order:2,
-    summary:'The day-to-day user at an approved SME. Raises outward requests, disposes of inward receipts, lodges bills and proposes knock-offs — within the service permission and currencies AD2 approved, and only for its own SME.',
+    summary:'The day-to-day user at an approved SME. Raises outward payments, reports and disposes of inward receipts, lodges bills and proposes knock-offs — within the service permission and currencies AD2 approved, and only for its own SME. It books the live rate; it never sees AD2’s margin.',
     can:['outward.create','outward.viewOwn','inward.viewOwn','inward.dispose','bills.lodge',
          'recon.propose','masters.beneficiary','reports.view','lab.use'],
-    segregated:['outward.approve','recon.confirm'],
-    note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition.' },
+    segregated:['outward.approve','recon.confirm','fx.dealRef'],
+    note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition. FX deal references are entered by AD2, not the customer.' },
 
   { id:'AD2 Sales', portal:'AD2', order:3,
-    summary:'Branch or sales assist. Captures offline applications and transacts on behalf of the SMEs it looks after — which then go to a maker to verify and a checker to authorise.',
+    summary:'Branch relationship manager. Captures offline applications and transacts on behalf of the SMEs it looks after — bookings, disposals, bill lodgement — which then go to a maker to verify.',
     can:['onboard.createOffline','outward.viewAll','inward.viewAll','bills.viewAll','bills.lodge','recon.propose',
-         'assist.transact','masters.beneficiary','reports.view','lab.use'],
+         'assist.transact','fx.dealRef','masters.beneficiary','reports.view','lab.use'],
     segregated:['onboard.review','onboard.approve','outward.verify','outward.approve','outward.complete',
                 'inward.verifyDisposal','inward.approveDisposal','inward.processDisposal','recon.confirm'],
-    note:'Sales assist → maker → checker: whatever this role raises is verified and authorised by other people.' },
+    note:'Sales → maker → checker: whatever this role raises is verified and authorised by other people.' },
 
   { id:'AD2 Maker', portal:'AD2', order:4,
-    summary:'First line at AD2. Reviews and prices applications, verifies documents on outward requests and disposal instructions, and can transact on behalf of an SME — but never authorises or releases its own work.',
+    summary:'The branch maker. Onboards customers (captures and prices applications), transacts on their behalf, verifies what customers submit, and answers a query with the documents a customer hands in — but never approves a customer or authorises money.',
     can:['onboard.createOffline','onboard.review','onboard.query','outward.viewAll','outward.verify','outward.query',
-         'inward.viewAll','inward.verifyDisposal','bills.viewAll','bills.lodge','recon.propose','assist.transact',
-         'masters.beneficiary','reports.view','lab.use'],
+         'inward.viewAll','inward.verifyDisposal','bills.viewAll','bills.lodge','recon.propose','assist.transact','fx.dealRef',
+         'txn.resolveQuery','masters.beneficiary','reports.view','lab.use'],
     segregated:['onboard.approve','outward.approve','outward.reject','outward.complete','inward.approveDisposal',
-                'inward.processDisposal','recon.confirm'],
-    note:'With AutoChecker on, a maker\u2019s onboarding review and bill lodgements commit without a checker. Outward and disposal always need a checker.' },
+                'inward.processDisposal','bills.accept','recon.confirm'],
+    note:'One maker login serves the branch for both onboarding and transactions. The checking is split: Compliance approves customers; Checker or Operations approves money.' },
 
   { id:'AD2 Checker', portal:'AD2', order:5,
-    summary:'The second pair of eyes. Approves applications, authorises what a maker verified, accepts bills and confirms knock-offs — and cannot originate or verify the work it approves.',
-    can:['onboard.approve','onboard.query','outward.viewAll','outward.approve','outward.query','outward.reject',
-         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept','recon.confirm','reports.view','lab.use'],
+    summary:'Trade checker — the second pair of eyes on money. Authorises what a maker verified, accepts lodged bills and confirms knock-offs. Does not approve customers (that is Compliance) and cannot originate or verify the work it approves.',
+    can:['outward.viewAll','outward.approve','outward.query','outward.reject',
+         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept','recon.confirm','txn.resolveQuery','reports.view','lab.use'],
     segregated:['onboard.createOffline','onboard.review','outward.create','outward.verify','outward.complete',
                 'inward.verifyDisposal','inward.processDisposal','bills.lodge','recon.propose'] },
 
-  { id:'AD2 Operations', portal:'AD2', order:6,
-    summary:'Runs settlement. Records incoming remittances, executes authorised outward payments over SWIFT, processes authorised disposals and issues FIRCs, and reverses allocations when needed.',
-    can:['outward.viewAll','outward.complete','outward.reject','inward.viewAll','inward.record',
-         'inward.processDisposal','bills.viewAll','recon.reverse','assist.transact','reports.view','lab.use'],
-    segregated:['onboard.approve','outward.approve','outward.verify','inward.approveDisposal','inward.verifyDisposal'] },
+  { id:'AD2 Compliance', portal:'AD2', order:6,
+    summary:'Onboarding checker. Approves, returns or rejects the applications a maker has reviewed and priced, and raises clarifications with the applicant. Sees transactions for oversight but holds no transaction authority.',
+    can:['onboard.approve','onboard.query','outward.viewAll','inward.viewAll','bills.viewAll','reports.view','lab.use'],
+    segregated:['onboard.createOffline','onboard.review','outward.approve','outward.complete','inward.approveDisposal',
+                'inward.processDisposal','bills.accept','recon.confirm'],
+    note:'Kept apart from transaction approval, per the 24 Sep review: the person who approves a customer is not the person who approves its money.' },
 
-  { id:'AD2 Administrator', portal:'AD2', order:7,
+  { id:'AD2 Operations', portal:'AD2', order:7,
+    summary:'Trade operations. Records and confirms incoming remittances, authorises verified requests, accepts bills and confirms knock-offs, then releases payments over SWIFT and processes disposals with the FIRC. Four-eyes still applies: whoever authorises a request cannot also release it.',
+    can:['outward.viewAll','outward.approve','outward.complete','outward.query','outward.reject','inward.viewAll','inward.record',
+         'inward.approveDisposal','inward.processDisposal','bills.viewAll','bills.accept','recon.confirm','recon.reverse',
+         'assist.transact','fx.dealRef','txn.resolveQuery','masters.beneficiary','reports.view','lab.use'],
+    segregated:['onboard.approve','onboard.review','outward.verify','inward.verifyDisposal'],
+    note:'Two operations users (Farhan, Neha) let one authorise and the other release the same request.' },
+
+  { id:'AD2 Administrator', portal:'AD2', order:8,
     summary:'Maintains the platform rather than the book: purpose codes, document policy, users, roles and settings. Deliberately holds no transaction authority.',
     can:['admin.masters','admin.users','admin.settings','outward.viewAll','inward.viewAll',
          'bills.viewAll','reports.view','lab.use'],
@@ -553,6 +580,10 @@ const BENEFICIARIES = [
     address:'Jebel Ali Free Zone, Dubai', accountNumber:'AE070331234567890123456',
     bank:'Emirates NBD', bankCountry:'United Arab Emirates', swift:'EBILAEAD', currency:'AED',
     relationship:'Freight and handling', addedBy:'SME User', addedOn:'2026-09-01', lastUsed:null },
+  { id:'BEN-008', smeId:'SME-1001', name:'Tianjin Cotton Yarn Co Ltd', country:'China',
+    address:'88 Binhai Road, Tianjin 300450', accountNumber:'6013820000451127',
+    bank:'Bank of China', bankCountry:'China', swift:'BKCHCNBJ', currency:'USD',
+    relationship:'Supplier — cotton yarn', addedBy:'SME User', addedOn:'2026-08-21', lastUsed:null },
 ];
 
 
@@ -574,6 +605,13 @@ const BILLS = [
   { id:'BL-24012', smeId:'SME-1001', type:'Export', invoiceNumber:'MTX/EXP/2026/0171', invoiceDate:'2026-09-08', counterparty:'Halstead Retail Group', counterpartyCountry:'United Kingdom', currency:'GBP', amount:60000, adjusted:0, outstanding:60000, dueDate:'2026-12-07', orderRef:'PO-HRG-88512', shipmentRef:'SB-2294471', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
   { id:'BL-24013', smeId:'SME-1002', type:'Import', invoiceNumber:'ACX-IMP-5547', invoiceDate:'2026-09-20', counterparty:'Shenzhen Ruiyang Electronics', counterpartyCountry:'China', currency:'USD', amount:30000, adjusted:0, outstanding:30000, dueDate:'2026-11-19', orderRef:'ARC-PO-796', shipmentRef:'BOE-7760043', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
   { id:'BL-24011', smeId:'SME-1003', type:'Export', invoiceNumber:'NSE/EX/2026/331', invoiceDate:'2026-09-19', counterparty:'Gulf Spice Trading LLC', counterpartyCountry:'United Arab Emirates', currency:'AED', amount:156400, adjusted:0, outstanding:156400, dueDate:'2026-12-18', orderRef:'GST-PO-1204', shipmentRef:'SB-2301770', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
+  /* Free to use from the start: nothing in flight holds these. */
+  { id:'BL-24014', smeId:'SME-1001', type:'Import', invoiceNumber:'SUP-IT-99058', invoiceDate:'2026-09-15', counterparty:'Filatura Ponti S.p.A.', counterpartyCountry:'Italy', currency:'EUR', amount:45000, adjusted:0, outstanding:45000, dueDate:'2026-11-14', orderRef:'MTX-PO-2251', shipmentRef:'BOE-7752210', source:'SAP API', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24015', smeId:'SME-1001', type:'Import', invoiceNumber:'SUP-IT-99071', invoiceDate:'2026-09-19', counterparty:'Filatura Ponti S.p.A.', counterpartyCountry:'Italy', currency:'EUR', amount:32750, adjusted:0, outstanding:32750, dueDate:'2026-11-18', orderRef:'MTX-PO-2263', shipmentRef:'BOE-7753396', source:'SAP API', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24016', smeId:'SME-1001', type:'Import', invoiceNumber:'TCY/2026/4471', invoiceDate:'2026-09-10', counterparty:'Tianjin Cotton Yarn Co Ltd', counterpartyCountry:'China', currency:'USD', amount:26400, adjusted:0, outstanding:26400, dueDate:'2026-11-09', orderRef:'MTX-PO-2238', shipmentRef:'BOE-7750981', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24017', smeId:'SME-1001', type:'Export', invoiceNumber:'MTX/EXP/2026/0178', invoiceDate:'2026-09-16', counterparty:'Atlantic Home Stores Inc', counterpartyCountry:'United States', currency:'USD', amount:22000, adjusted:0, outstanding:22000, dueDate:'2026-12-15', orderRef:'AHS-PO-5510', shipmentRef:'SB-2296013', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24018', smeId:'SME-1002', type:'Import', invoiceNumber:'ACX-IMP-5552', invoiceDate:'2026-09-18', counterparty:'Shenzhen Ruiyang Electronics', counterpartyCountry:'China', currency:'USD', amount:48000, adjusted:0, outstanding:48000, dueDate:'2026-11-17', orderRef:'ARC-PO-801', shipmentRef:'BOE-7760102', source:'SAP API', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24019', smeId:'SME-1003', type:'Export', invoiceNumber:'NSE/EX/2026/338', invoiceDate:'2026-09-21', counterparty:'Aroma Europe BV', counterpartyCountry:'Netherlands', currency:'USD', amount:41500, adjusted:0, outstanding:41500, dueDate:'2026-12-20', orderRef:'AEB-PO-3302', shipmentRef:'SB-2297450', source:'Form fill', review:'Submitted', settlement:'Unsettled' },
 ];
 
 /* --- outward remittances ---------------------------------------------------
@@ -679,6 +717,18 @@ const INWARD = [
   { id:'IR-3307', smeId:'SME-1001', reference:'SWF-INW-774420', valueDate:'2026-09-15', remitter:'Halstead Retail Group',
     remitterCountry:'United Kingdom', currency:'GBP', amount:40000, available:0, status:'Processed',
     remittanceType:'TRADE', purposeCode:'', remarks:'Advance against order PO-HRG-88512', firc:'FIRC-2026-119121' },
+  { id:'IR-3308', smeId:'SME-1001', reference:'SWF-INW-779012', valueDate:'2026-09-23', remitter:'Bergmann Textilhandel GmbH',
+    remitterCountry:'Germany', currency:'EUR', amount:106800, available:106800, status:'Awaiting Instruction',
+    remittanceType:'TRADE', purposeCode:'', remarks:'Balance payment against MTX/EXP/2026/0152', firc:null },
+  { id:'IR-3309', smeId:'SME-1001', reference:'SWF-INW-779044', valueDate:'2026-09-23', remitter:'Atlantic Home Stores Inc',
+    remitterCountry:'United States', currency:'USD', amount:15000, available:15000, status:'Awaiting Instruction',
+    remittanceType:'TRADE', purposeCode:'', remarks:'Advance for order AHS-PO-5524 — not yet shipped', firc:null },
+  /* Reported by the SME before the credit was confirmed in the nostro. */
+  { id:'IR-3310', smeId:'SME-1003', reference:'SWF-INW-779101', valueDate:'2026-09-24', remitter:'Aroma Europe BV',
+    remitterCountry:'Netherlands', currency:'USD', amount:41500, available:0, status:'Intimated', pendingWith:'AD2 Operations',
+    remittanceType:'TRADE', purposeCode:'', remarks:'Buyer’s MT103 copy attached — against NSE/EX/2026/338', firc:null,
+    intimatedBy:{ by:'SME User (Suresh Palaniappan)', key:'NILGIRISPICE/SMEUSER', at:'2026-09-24T08:40:00', verb:'reported' },
+    docs:{ swiftcopy:{ filename:'MT103-Aroma-Europe.pdf', size:'96 KB', type:'application/pdf', at:'2026-09-24T08:40:00' } } },
 ];
 
 /* --- disposal instructions ------------------------------------------------ */
@@ -749,14 +799,14 @@ const JOBS = [
 
 /* --- activity / audit ----------------------------------------------------- */
 const AUDIT = [
-  { id:'AU-1', record:'SME-1001', actor:'AD2 Checker (Shalini Nair)', action:'Application approved with pricing configuration', at:'2026-07-09T15:42:00' },
-  { id:'AU-2', record:'SME-1001', actor:'AD2 Maker (Rohit Iyer)',     action:'Pricing prepared — USD 50p, EUR 60p, GBP 68p',    at:'2026-07-09T14:10:00' },
+  { id:'AU-1', record:'SME-1001', actor:'AD2 Compliance (Meera Krishnan)', action:'Application approved — Both, USD/EUR/GBP', at:'2026-07-09T15:42:00' },
+  { id:'AU-2', record:'SME-1001', actor:'AD2 Maker (Rohit Iyer)',     action:'Pricing prepared — USD 50p, EUR 60p, GBP 68p',    at:'2026-07-09T14:10:00', internal:true },
   { id:'AU-3', record:'OR-5103',  actor:'AD2 Maker (Rohit Iyer)',     action:'Verified — documents, sanctions screening and purpose code checked', at:'2026-09-23T10:30:00' },
   { id:'AU-4', record:'OR-5103',  actor:'SME User (Kavita Raghunathan)', action:'Outward request submitted — 88,400.00 EUR, DIR under S0102', at:'2026-09-22T15:05:00' },
   { id:'AU-5', record:'OR-5104',  actor:'AD2 Maker (Rohit Iyer)',     action:'Clarification requested', at:'2026-09-21T09:15:00' },
   { id:'AU-6', record:'BL-24007', actor:'Integration (SAP API)',      action:'Bill lodged from synchronisation job JOB-7739',   at:'2026-09-09T02:04:00' },
   { id:'AU-7', record:'DI-9003',  actor:'SME User (Suresh Palaniappan)', action:'Partial disposal instruction submitted', at:'2026-09-23T09:45:00' },
-  { id:'AU-8', record:'SME-1005', actor:'AD2 Maker (Rohit Iyer)',     action:'Review complete — sent to checker with Export permission, USD/EUR', at:'2026-09-19T10:05:00' },
+  { id:'AU-8', record:'SME-1005', actor:'AD2 Maker (Rohit Iyer)',     action:'Review complete — sent to compliance with Export permission, USD/EUR', at:'2026-09-19T10:05:00' },
   { id:'AU-9', record:'SME-1004', actor:'AD2 Maker (Rohit Iyer)',     action:'Clarification requested: IEC is mandatory for regular importers', at:'2026-09-16T11:20:00' },
 ];
 
@@ -774,6 +824,8 @@ const ACCOUNTS = [
   { domainId:'AD2',         loginId:'MAKER2',   role:'AD2 Maker',          smeId:null,       name:'Priya Menon',        demo:true },
   { domainId:'AD2',         loginId:'CHECKER',  role:'AD2 Checker',        smeId:null,       name:'Shalini Nair',       demo:true },
   { domainId:'AD2',         loginId:'CHECKER2', role:'AD2 Checker',        smeId:null,       name:'Vikram Sethi',       demo:true },
+  { domainId:'AD2',         loginId:'COMPLIANCE', role:'AD2 Compliance',   smeId:null,       name:'Meera Krishnan',     demo:true },
+  { domainId:'AD2',         loginId:'COMPLIANCE2',role:'AD2 Compliance',   smeId:null,       name:'Arvind Rao',         demo:true },
   { domainId:'AD2',         loginId:'OPS',      role:'AD2 Operations',     smeId:null,       name:'Farhan Qureshi',     demo:true },
   { domainId:'AD2',         loginId:'OPS2',     role:'AD2 Operations',     smeId:null,       name:'Neha Kapoor',        demo:true },
   { domainId:'AD2',         loginId:'ADMIN',    role:'AD2 Administrator',  smeId:null,       name:'Anita Desai',        demo:true },

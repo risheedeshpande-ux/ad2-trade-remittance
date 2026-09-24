@@ -9,6 +9,7 @@ const NOW = '2026-09-24T10:00:00.000Z';
 const ctx = (over = {}) => ({ now: NOW, hashPassword: pw => 'plain$' + pw, ...over });
 const who = (d, l) => ({ domainId: d, loginId: l });
 const MAKER = who('AD2', 'MAKER'), MAKER2 = who('AD2', 'MAKER2'), CHECKER = who('AD2', 'CHECKER'), OPS = who('AD2', 'OPS'), ADMIN = who('AD2', 'ADMIN');
+const COMPLIANCE = who('AD2', 'COMPLIANCE'), OPS2 = who('AD2', 'OPS2'), CHECKER2 = who('AD2', 'CHECKER2');
 const run = (db, w, cmd, p, c) => Engine.execute(db, w, cmd, p, ctx(c));
 const refuses = (fn, re) => assert.throws(fn, e => e instanceof Engine.EngineError && (!re || re.test(e.message)));
 const doc = n => ({ filename: n + '.pdf', size: '100 KB', type: 'application/pdf' });
@@ -73,7 +74,7 @@ test('end to end: onboard a partner, pay a supplier, dispose export proceeds', (
   refuses(() => run(db, MAKER, 'onboarding.approve', { smeId }), /withheld by design/);
   run(db, MAKER, 'onboarding.review', { smeId, config: pricing, submit: true });
   assert.equal(Engine.publicStatus(db, smeId, 'COROMANDEL').status, 'Pending Approval');
-  run(db, CHECKER, 'onboarding.approve', { smeId });
+  run(db, COMPLIANCE, 'onboarding.approve', { smeId });
   const sme = db.smes.find(s => s.id === smeId);
   assert.equal(sme.status, 'Approved');
   assert.equal(db.logins.find(l => l.domainId === 'COROMANDEL').role, 'SME User');
@@ -361,7 +362,7 @@ test('test data lab: new businesses, top-ups and parked requests', () => {
   const ap = run(db, MAKER, 'lab.createSme', { profile: 'KERALACOIR', stage: 'applicant' });
   assert.equal(db.smes.find(x => x.id === ap.smeId).status, 'Submitted');
   run(db, MAKER, 'onboarding.review', { smeId: ap.smeId, config: { ...pricing, permission: 'Export', currencies: ['USD'] }, submit: true });
-  run(db, CHECKER, 'onboarding.approve', { smeId: ap.smeId });
+  run(db, COMPLIANCE, 'onboarding.approve', { smeId: ap.smeId });
   /* the lab can be switched off */
   run(db, ADMIN, 'settings.update', { testLab: false });
   refuses(() => run(db, MAKER, 'lab.topUp', { smeId: s.id }), /switched off/);
@@ -386,4 +387,121 @@ test('users: add, deactivate, role change; duplicate PAN flagged', () => {
   /* same PAN as Meridian: accepted, flagged for the maker */
   const r = run(db, null, 'onboarding.submit', { application: application({ domainId: 'MERIDIAN2', pan: 'AAFCM4521K' }), password: 'Welcome123' });
   assert.match(db.smes.find(s => s.id === r.smeId).dupFlags[0], /PAN matches SME-1001/);
+});
+
+/* ---- review of 24 Sep: roles, pricing visibility, inward reporting, queries ---- */
+
+test('roles: Compliance approves customers, Checker and Operations approve money', () => {
+  const db = Engine.freshState(SEED);
+  /* the trade checker no longer approves applications; Compliance does */
+  refuses(() => run(db, CHECKER, 'onboarding.approve', { smeId: 'SME-1005' }), /cannot approve/);
+  refuses(() => run(db, COMPLIANCE, 'outward.authorise', { id: 'OR-5103' }), /cannot authorise/);
+  run(db, COMPLIANCE, 'onboarding.approve', { smeId: 'SME-1005' });
+  assert.equal(db.smes.find(s => s.id === 'SME-1005').status, 'Approved');
+  /* charges are optional: approve an application with none */
+  run(db, MAKER, 'onboarding.review', { smeId: 'SME-1006', config: { ...pricing, charges: [] }, submit: true });
+  run(db, COMPLIANCE, 'onboarding.approve', { smeId: 'SME-1006' });
+  assert.deepEqual(db.smes.find(s => s.id === 'SME-1006').config.charges, []);
+  /* operations can authorise and accept bills, but not release what it authorised */
+  run(db, OPS, 'outward.authorise', { id: 'OR-5103' });
+  refuses(() => run(db, OPS, 'outward.execute', { id: 'OR-5103' }), /another user/);
+  run(db, OPS2, 'outward.execute', { id: 'OR-5103' });
+  assert.equal(db.outward.find(o => o.id === 'OR-5103').status, 'Completed');
+  run(db, OPS, 'bill.accept', { id: 'BL-24005' });
+  assert.equal(db.bills.find(b => b.id === 'BL-24005').review, 'Accepted');
+  /* the maker still cannot authorise or accept */
+  refuses(() => run(db, MAKER, 'bill.accept', { id: 'BL-24019' }), /withheld by design/);
+});
+
+test('pricing: the customer books the live rate, never a deal, and never sees the margin', () => {
+  const db = Engine.freshState(SEED);
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const base = { beneficiaryId: 'BEN-001', beneficiary: 'Filatura Ponti S.p.A.', beneficiaryCountry: 'Italy', beneficiaryAccount: 'IT60X0542811101000000123456',
+    beneficiaryBank: 'Intesa Sanpaolo', beneficiaryBankCountry: 'Italy', swift: 'BCITITMM', currency: 'EUR', amount: 45000,
+    remittanceType: 'DIR', purposeCode: 'S0102', executionDate: '2026-09-24', debitAccountId: 'BA-001',
+    allocations: [{ billId: 'BL-24014', amount: 45000 }], docs: { transport: doc('t'), invoice: doc('i'), boe: doc('b') }, declarations: DEC };
+  refuses(() => run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'deal', dealRef: 'FXD-2026-1', customerRate: 96 } } }), /applied by AD2/);
+  const id = run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'booked', bookedAt: NOW } } }).id;
+  /* AD2 in an assisted journey may apply a deal */
+  run(db, MAKER, 'outward.submit', { actingFor: 'SME-1001', draft: { ...base, amount: 10000, allocations: [{ billId: 'BL-24015', amount: 10000 }],
+    rate: { mode: 'deal', dealRef: 'FXD-2026-88', customerRate: 96.1 } } });
+  const view = Engine.scopeState(db, MER);
+  const cfg = view.smes[0].config;
+  assert.ok(!cfg.margins, 'no margins in the customer view');
+  assert.equal(cfg.customerRates.EUR.out, +(95.87 + 0.60).toFixed(4));
+  assert.ok(view.currencies.every(c => c.refRate == null), 'no reference rates in the customer view');
+  const o = view.outward.find(x => x.id === id);
+  assert.equal(o.rate.margin, undefined);
+  assert.equal(o.rate.refRate, undefined);
+  assert.ok(o.rate.customerRate > 0);
+  assert.ok(!view.audit.some(a => /\dp\b|paise|margin/i.test(a.action)), 'no margin in the customer activity');
+});
+
+test('free bills in the seed: every seeded business can pay or dispose at once', () => {
+  const db = Engine.freshState(SEED);
+  const free = id => Engine.billAvailable(db, db.bills.find(b => b.id === id));
+  assert.equal(free('BL-24004'), 0);            // held by OR-5103
+  assert.equal(free('BL-24014'), 45000);
+  assert.equal(free('BL-24015'), 32750);
+  assert.equal(free('BL-24016'), 26400);
+  assert.equal(free('BL-24018'), 48000);
+  assert.equal(db.inward.find(i => i.id === 'IR-3308').available, 106800);
+  assert.equal(db.inward.find(i => i.id === 'IR-3310').status, 'Intimated');
+});
+
+test('inward reported by the SME: operations confirms, then it can be disposed', () => {
+  const db = Engine.freshState(SEED);
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const ARC = who('ARCADIACOMP', 'SMEUSER');
+  refuses(() => run(db, ARC, 'inward.intimate', { inward: { remitter: 'X', remitterCountry: 'Y', currency: 'USD', amount: 10 } }), /Export or Both/);
+  refuses(() => run(db, MER, 'inward.intimate', { inward: { remitter: 'Atlantic Home Stores Inc', remitterCountry: 'United States', currency: 'JPY', amount: 10 } }), /not enabled/);
+  const id = run(db, MER, 'inward.intimate', { inward: { remitter: 'Atlantic Home Stores Inc', remitterCountry: 'United States', currency: 'USD', amount: 22000,
+    valueDate: '2026-09-24', remarks: 'Against MTX/EXP/2026/0178' }, docs: { swiftcopy: doc('mt103') } }).id;
+  const i = db.inward.find(x => x.id === id);
+  assert.equal(i.status, 'Intimated');
+  assert.equal(i.available, 0);
+  refuses(() => run(db, MER, 'disposal.submit', { draft: { inwardId: id, amount: 1000, option: 'advance', creditAccountId: 'BA-001',
+    rate: { mode: 'booked', bookedAt: NOW }, docs: { dil: doc('d') }, declarations: DEC } }), /not confirmed/);
+  refuses(() => run(db, MAKER, 'inward.confirm', { id }), /cannot/);
+  run(db, OPS, 'inward.confirm', { id, amount: 21950 });                 // bank charges deducted abroad
+  assert.equal(i.status, 'Awaiting Instruction');
+  assert.equal(i.available, 21950);
+  assert.match(i.reference, /^SWF-INW-/);
+  const di = run(db, MER, 'disposal.submit', { draft: { inwardId: id, option: 'knockoff', purposeCode: 'P0102', allocations: [{ billId: 'BL-24017', amount: 21950 }],
+    creditAccountId: 'BA-001', rate: { mode: 'booked', bookedAt: NOW }, docs: tradeDocs, declarations: DEC } }).id;
+  assert.equal(db.disposals.find(d => d.id === di).purposeCode, 'P0102');
+  /* a report with no matching credit is declined with a reason */
+  const id2 = run(db, MER, 'inward.intimate', { inward: { remitter: 'Unknown Buyer', remitterCountry: 'France', currency: 'EUR', amount: 5000 } }).id;
+  run(db, OPS, 'inward.decline', { id: id2, reason: 'No credit in the nostro after two days' });
+  assert.equal(db.inward.find(x => x.id === id2).status, 'Not Received');
+});
+
+test('disposal purposes: RBI inward codes, defaulting by option', () => {
+  const db = Engine.freshState(SEED);
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const adv = run(db, MER, 'disposal.submit', { draft: { inwardId: 'IR-3309', option: 'advance', creditAccountId: 'BA-001',
+    rate: { mode: 'booked', bookedAt: NOW }, docs: { dil: doc('d') }, declarations: DEC } }).id;
+  assert.equal(db.disposals.find(d => d.id === adv).purposeCode, 'P0103');
+  refuses(() => run(db, MER, 'disposal.submit', { draft: { inwardId: 'IR-3308', amount: 1000, option: 'advance', purposeCode: 'S0102', creditAccountId: 'BA-001',
+    rate: { mode: 'booked', bookedAt: NOW }, docs: { dil: doc('d') }, declarations: DEC } }), /Purpose of remittance/);
+});
+
+test('queries: AD2 answers for the customer with its documents, and it goes back to the maker', () => {
+  const db = Engine.freshState(SEED);
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const o = db.outward.find(x => x.id === 'OR-5104');
+  assert.equal(o.status, 'Clarification Required');
+  refuses(() => run(db, MER, 'outward.resolveQuery', { id: 'OR-5104', response: 'x' }), /cannot/);
+  refuses(() => run(db, COMPLIANCE, 'outward.resolveQuery', { id: 'OR-5104', response: 'x' }), /cannot/);
+  run(db, CHECKER, 'outward.resolveQuery', { id: 'OR-5104', response: 'Travel agent invoice received by email', docs: { invoice: doc('agent-invoice') } });
+  assert.equal(o.status, 'Submitted');
+  assert.equal(o.docs.invoice.filename, 'agent-invoice.pdf');
+  assert.match(o.query.respondedBy, /on behalf of the SME/);
+  run(db, MAKER, 'outward.verify', { id: 'OR-5104', checks: { documents: true, sanctions: true, purpose: true, beneficiary: true } });
+  /* a bill query answered for the customer returns to the checker */
+  run(db, MAKER, 'bill.resolveQuery', { id: 'BL-24008', response: 'BoE number from the customer', shipmentRef: 'BOE-7760011' });
+  assert.equal(db.bills.find(b => b.id === 'BL-24008').review, 'Resubmitted');
+  /* the SME sees the answer but not who inside AD2 priced it */
+  const view = Engine.scopeState(db, MER);
+  assert.ok(view.outward.find(x => x.id === 'OR-5104').query.response);
 });

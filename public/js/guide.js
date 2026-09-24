@@ -37,16 +37,16 @@ function guideSteps() {
   const d = dis[0];
   const st = x => x && x.status;
   const at = (x, list) => !!x && list.includes(st(x));
-  const MAKER = ['AD2','MAKER'], CHECKER = ['AD2','CHECKER'], OPS = ['AD2','OPS'];
+  const MAKER = ['AD2','MAKER'], CHECKER = ['AD2','CHECKER'], OPS = ['AD2','OPS'], COMPLIANCE = ['AD2','COMPLIANCE'];
 
   return [
     { part:'Onboard the partner' },
     { who:'Public', title:'Register a new business', hint:'Use “Fill with a sample business”, set a password, submit.',
       done: !!s, acct:'public', dest:'#/register' },
-    { who:'AD2 Maker', title:'Review and price the application', hint:'Set permission, currencies, margins and a charge, then send to the checker.',
+    { who:'AD2 Maker', title:'Review and price the application', hint:'Set permission, currencies (Select all), one margin across the board, charges if any — then send to Compliance.',
       done: s && ['Pending Approval','Approved'].includes(s.status), acct:MAKER, dest: sid && '#/ad2/applications/' + sid },
-    { who:'AD2 Checker', title:'Approve the application', hint:'Four eyes: the checker approves what the maker prepared.',
-      done: s && s.status === 'Approved', acct:CHECKER, dest: sid && '#/ad2/applications/' + sid },
+    { who:'AD2 Compliance', title:'Approve the application', hint:'Four eyes: Compliance approves the customer the maker prepared.',
+      done: s && s.status === 'Approved', acct:COMPLIANCE, dest: sid && '#/ad2/applications/' + sid },
 
     { part:'Outward payment (import)', skip: s && !pm.importSide },
     { who:'SME', title:'Add a beneficiary', hint:'Profile → Add beneficiary (the overseas supplier).',
@@ -55,7 +55,7 @@ function guideSteps() {
       done: !!imp, acct:smeAcct, dest:'#/sme/bills/import', tab:'form', skip: s && !pm.importSide },
     { who:'AD2 Checker', title:'Accept the import bill', hint:'Bills → To accept → Accept.',
       done: imp && imp.review === 'Accepted', acct:CHECKER, dest:'#/ad2/bills/import', skip: s && !pm.importSide },
-    { who:'SME', title:'Raise a DIR payment against the bill', hint:'Choose DIR, purpose S0102, book the rate, allocate the bill, upload the three documents and accept the declarations.',
+    { who:'SME', title:'Raise a DIR payment against the bill', hint:'Choose DIR, pick the bill from the dropdown (the amount follows it), book the rate for that amount, attach the three documents, accept the declarations, review and confirm.',
       done: !!o, acct:smeAcct, dest:'#/sme/outward/new', skip: s && !pm.importSide },
     { who:'AD2 Maker', title:'Verify the payment', hint:'Tick the document, sanctions, purpose and beneficiary checks.',
       done: at(o, ['Verified','Authorised','Completed']), acct:MAKER, dest: o && '#/ad2/outward/' + o.id, skip: s && !pm.importSide },
