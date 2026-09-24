@@ -1,7 +1,7 @@
 # AD2 Trade Remittance Platform — Product Requirements
 
-Version 1.0 · 22 September 2026
-Source: AD2 Trade Remittance BRD v1.0, requirements call of 22 September 2026, and the live Remit4Me operations platform (uat1.remit4me.com).
+Version 1.2 · 24 September 2026
+Source: AD2 Trade Remittance BRD v1.0, requirements call of 22 September 2026, the product review of 22–23 September 2026, and the live Remit4Me operations platform (uat1.remit4me.com).
 
 ---
 
@@ -33,6 +33,16 @@ The requirements call revised the BRD in ten places (C1–C10); two further chan
 | C10 | Bill lodgement | Part of the transaction flow | A module in its own right, with export and import lodgement as separate entries in the customer menu. |
 | C11 | Remittance classification | Purpose code only, outward only | **Remittance type** is captured alongside the purpose code, on outward *and* inward, including on the disposal instruction. Type narrows the purpose codes on offer and can add documents of its own. |
 | C12 | AD2 transacting | SME initiates; AD2 reviews | AD2 can **transact on behalf of an SME**, picked from the SME Directory. |
+| C13 | Partial disposal | Instruction consumed the whole receipt | The SME chooses the **amount to dispose** on each instruction; the balance stays on the receipt for later instructions. Each instruction gets its own FIRC. |
+| C14 | Disposal option | Bills only (C9) | Two options: **knock off against export bills**, or **credit as advance** and knock off later. Any part of an instruction not applied to bills is tracked as a **FIRC pending knock-off**. |
+| C15 | Inward purpose | None collected | The SME declares a purpose on each disposal. The workbook names **TRADE**; the Administrator can add more. |
+| C16 | EEFC | INR credit only | Proceeds may be credited to an **EEFC account in the receipt currency**, with no conversion and no rate. |
+| C17 | UFI | Manual EDPMS/IDPMS knock-off | Every confirmed or reversed bill match, and every FIRC, is reported to IDPMS/EDPMS through RBI's Unified Portal (**UFI**) — simulated, with a report reference on the record. |
+| C18 | LC | Out of scope (C9) | **LC settlement** added as an outward remittance type, with the LC number and LC copy. |
+| C19 | Compliance | Screening only | Every outward request and disposal is **scored** on configurable rules; High needs a written reason from maker and checker. FEMA and sanctions **declarations** are required on submission. |
+| C20 | Sales assist | Maker transacts on behalf | An **AD2 Sales** role raises requests for its customers; a maker verifies and a checker authorises. In an assisted journey the margin may be set within a configurable **band** below the approved margin. |
+| C21 | Workspaces | One AD2 menu for every role | Each role gets its **own sidebar and dashboard**; the sidebar collapses to an icon rail. |
+| C22 | Test data | Seed only | A **test data lab** creates businesses, bills, receipts and parked requests on demand, so any journey can be repeated. |
 
 Two further decisions carry into the build:
 
@@ -47,11 +57,12 @@ Two further decisions carry into the build:
 |---|---|---|
 | SME Applicant | SME | Onboarding, document upload, query response, application status. No transaction access until approved. |
 | SME User | SME | Outward requests, inward disposal instructions, bill lodgement, knock-off proposals, reports — for its own SME only, within approved permissions. |
+| AD2 Sales | AD2 | Captures offline applications and **transacts on behalf** of its customers. Cannot verify, authorise or release anything. |
 | AD2 Maker | AD2 | Creates offline applications, reviews and prices applications, **verifies** outward requests and disposal instructions. |
 | AD2 Checker | AD2 | Approves or rejects applications, **authorises** verified outward requests and disposals, accepts bills, confirms knock-offs. |
 | AD2 Operations | AD2 | Records incoming SWIFT credits, **releases** authorised payments, **processes** authorised disposals and issues FIRCs, reverses allocations. |
 | AD2 (assisted) | SME portal | Any AD2 maker or operations user may act inside an approved SME's portal on its behalf. Covered in §7A. |
-| AD2 Administrator | AD2 | Users, roles, currencies, charge categories, document checklists, purpose-code to document mapping. |
+| AD2 Administrator | AD2 | Users (add, deactivate, change role, reset password), purpose codes, document policy, compliance rules, settings, audit log. No transaction authority. |
 
 An SME user may submit without a second SME approver. SME-side maker-checker is a later addition.
 
@@ -78,28 +89,19 @@ The full action-by-role matrix is maintained in Administration → Roles and per
 
 ## 4. Navigation
 
-**Public:** Sign In (Domain ID, Login ID, Password), Register SME, Application Status.
+**Public:** Sign In (Domain ID, Login ID, Password), Register SME, Application Status. The sign-in page lists the shared demo accounts grouped as AD2 staff, businesses and applications in progress.
 
-**SME menu**
-- Dashboard
-- Outward Remittance
-- Inward Remittance
-- Bill Lodgement → Export Bill Lodgement, Import Bill Lodgement
-- Bill Knock-off
-- Reports
-- Integrations
-- Profile
+Each role has its own workspace. The sidebar is grouped around that role's work, collapses to an icon rail (remembered per browser), and a role cannot open another role's screens by URL. **Switch user** in the top bar opens a searchable list of demo users.
 
-**AD2 menu**
-- Dashboard
-- SME Applications
-- SME Directory
-- Outward Requests
-- Inward Remittances
-- Bills
-- Reconciliation
-- Reports
-- Administration
+| Role | Sidebar |
+|---|---|
+| SME User | Home: Dashboard · Transact: Outward remittance (Import), Inward & disposal (Export) · Bills: Export bills, Import bills, Knock-off · Records: Reports, Integrations · Settings: Accounts & beneficiaries, Test data |
+| SME Applicant | Application |
+| AD2 Sales | Home: Dashboard (my customers) · My customers: SME directory, SME applications · Track: Outward, Inward & disposal, Bills · Insight: Reports · Tools: Test data lab |
+| AD2 Maker | Home: Dashboard, My work queue · Onboarding: Applications, Directory · Transactions: Outward, Inward & disposal, Bills, Reconciliation · Insight · Tools |
+| AD2 Checker | Home: Dashboard, My work queue · Approvals: Applications, Outward, Inward & disposal, Bills, Reconciliation · Customers: Directory · Insight · Tools |
+| AD2 Operations | Home: Dashboard, My work queue · Settlement: Outward, Inward & disposal, Reconciliation · Records: Bills, Directory · Insight · Tools |
+| AD2 Administrator | Home: Dashboard · Configuration: Purpose codes, Document policy, Compliance rules, Currencies & checklists, Platform settings · Access: Users, Roles & permissions · Oversight: Audit log, Directory, Outward, Inward & disposal, Bills, Reports · Tools |
 
 ---
 
@@ -162,7 +164,7 @@ The request **snapshots** the beneficiary details it was sent with, so later edi
 
 The master is per SME and is maintained on Profile → Beneficiary master. It records who added each payee and when it was last used. An AD2 user in the assisted journey sees and adds to that SME's master, and additions are stamped as made on the SME's behalf.
 
-**Remittance** — **product** (AIR, DIR or OTT), **purpose of remittance**, currency (enabled currencies only), amount, requested execution date, **remitter account** (a verified INR account from the account master), and an optional free-text **Reference Number**.
+**Remittance** — **product** (AIR, DIR, OTT or LC), **purpose of remittance**, the **LC number** for an LC settlement, currency (enabled currencies only), amount, requested execution date, **remitter account** (a verified INR account from the account master), and an optional free-text **Reference Number**.
 
 **Product and purpose code** come from the business team's *Purpose / Doc Policy* workbook, which replaces the provisional mapping in earlier drafts. Only the codes AD2 is approved to handle are offered: 111 unique codes (the workbook's two duplicated OTT rows, S0801 and S0802, are merged, and descriptions are tidied — "slews" → "news", "lostel" → "hostel", spacing). Selecting a product narrows the purpose codes; OTT's 110 codes are searchable. A code may sit under more than one product (S0101 appears under AIR, DIR and OTT).
 
@@ -171,6 +173,7 @@ The master is per SME and is maintained on Profile → Beneficiary master. It re
 | AIR — Advance Import Remittance | S0101, S0104, S0109, S1505 | None at payment. The Bill of Entry is due within 90 days; the payment is knocked off against the import bill once lodged |
 | DIR — Direct Import Remittance | S0101, S0102, S0104, S0109, S0501, S1505 | Settles an accepted import bill — at least one allocation is required |
 | OTT — Miscellaneous Remittance | 110 services and current-account codes (S0001–S1701) | Optional |
+| LC — Letter of Credit Settlement | S0101, S0102, S0104, S0109, S1505 | Settles an accepted import bill, like DIR. Added on review (C18) |
 
 Principal Debit Account, Fee Account, Transport Document Number and Transfer Reference are not collected.
 
@@ -184,6 +187,8 @@ Principal Debit Account, Fee Account, Transport Document Number and Transfer Ref
 | OTT | Form 145 (formerly Form 15CA) | Required |
 | OTT | Transport Document | Required when the purpose code is an import of goods (S0101, S0102, S0103, S0104, S0109, S1505, S0501); optional otherwise |
 | OTT | Form 146 (formerly Form 15CB, CA certificate) | Required above ₹5,00,000 INR equivalent; optional below |
+| LC | Letter of Credit copy, Commercial Invoice, Transport Document | Required |
+| LC | Bill of Entry | Optional |
 
 FORM_145 and FORM146 in the workbook are the Income-tax Act 2025 successors to Form 15CA and 15CB. The Administrator can change any rule (required, optional, goods-only, above threshold) and stop any purpose code being offered.
 
@@ -191,7 +196,11 @@ FORM_145 and FORM146 in the workbook are the Income-tax Act 2025 successors to F
 
 **Bill allocation** — linked import bills, allocation per bill, unallocated amount. Allocations may not exceed the remittance value or the available bill balance.
 
-**Pricing** — reference rate, margin, customer rate, charges, estimated debit amount, quote timestamp.
+**Pricing** — reference rate, margin, customer rate, charges, estimated debit amount, quote timestamp. In the assisted journey AD2 may set the margin between the approved margin less the configured band (default 5 paise) and the approved margin plus 100 paise; the override is recorded in the audit trail.
+
+**Declarations** — the SME accepts the FEMA and sanctions declarations before submitting; the time is recorded on the request.
+
+**Compliance score** — computed on submission from the rules in Administration → Compliance rules: large amount (USD equivalent above a threshold), high-risk jurisdiction, watchlist name match, new beneficiary, first transaction, capital-account purpose code, Document AI mismatch, bank outside the beneficiary country, rate by offline deal. Score 60+ is High, 25–59 Medium, below 25 Low. AD2 sees the score and the rules that fired on the request; at High the maker and the checker must each record a reason. The SME never sees the score, the reasons or the rule list.
 
 **Approval chain.** Every outward request passes three AD2 stages, each by a different person:
 
@@ -230,28 +239,24 @@ The SME picker lists only approved SMEs whose service permission allows the dire
 
 ## 8. Inward remittance and disposal
 
-AD2 records the inward receipt. The SME views it and disposes of it.
+AD2 Operations records the inward receipt. The SME views it and disposes of it — in one instruction or several.
 
-**Receipt fields** — remittance reference, receipt or value date, remitter name, remitter country, currency, amount, available amount for disposal, remarks, processing status.
+**Receipt fields** — remittance reference, value date, remitter name, remitter country, currency, amount, amount still to dispose, remarks, status, FIRCs issued.
 
-**Disposal instruction** — two decisions:
+**Disposal instruction**
 
-1. Select the outstanding **export bill** to knock off, and the amount applied per bill.
-2. Select the **bank account to credit**, from the account master.
+1. **Amount to dispose now** — up to what is left on the receipt (defaults to all of it). The balance stays for a later instruction.
+2. **Purpose** — from the inward purposes (TRADE from the workbook; the Administrator can add more).
+3. **How to apply it** — *Knock off against export bills* (apply the amount to accepted export bills of the same currency; any part not applied is credited too and tracked as pending knock-off), or *Credit as advance* (no bills yet; knock off later).
+4. **Account to credit** — a verified INR account, converted at a booked rate or FX deal, or a verified **EEFC account in the receipt currency**, credited as it is with no rate.
+5. **Documents** — the TRADE policy: Disposal Instruction Letter always; Commercial Export Invoice and Shipping Bill when bills are knocked off, optional for an advance.
+6. **Declarations** — FEMA and sanctions, as for outward. The instruction is scored for compliance on submission.
 
-The instruction is classified under the **TRADE** product from the workbook, whose document policy requires the **Disposal Instruction Letter**, the **Commercial Export Invoice** and the **Shipping Bill**. The workbook defines no inward purpose codes, so none are collected.
+**Approval chain.** AD2 Maker verifies (documents, remitter screening, bill match, credit account), AD2 Checker authorises, AD2 Operations processes — credits the account, knocks off the bills, issues the FIRC and reports it to EDPMS through UFI. The FIRC shows the amount applied to bills and any amount **pending knock-off**.
 
-Supporting fields: amount to dispose, conversion currency where applicable, remarks, supporting documents per the resolved checklist. Partial disposal is supported and the remaining balance is shown. Amounts already disposed cannot be re-allocated.
+**Status flow:** receipt Awaiting Instruction → Partially Disposed → Instruction Submitted → Processed; instruction Submitted → Verified → Authorised → Processed. Clarification Required returns it to the SME; Rejected returns the amount to the receipt.
 
-Rate handling matches outward: **Book Rate** for a 48-hour lock, or enter an **FX Deal Reference** for a negotiated deal.
-
-**Approval chain.** As for outward: AD2 Maker verifies (documents, bill match, credit account), AD2 Checker authorises, AD2 Operations processes — credits the INR account at the booked rate, knocks off the export bills and issues the FIRC.
-
-**Status flow:** receipt Awaiting Instruction → Instruction Submitted → Processed; instruction Submitted → Verified → Authorised → Processed. Clarification Required returns it to the SME; Rejected returns the amount to the receipt.
-
-AD2 Operations records each incoming SWIFT credit against the exporter, and the SME is notified to submit an instruction.
-
-Trade-finance disposal options (LC, documentary collections) are not in scope.
+Documentary collections and other trade-finance disposal options are not in scope.
 
 ---
 
@@ -286,15 +291,16 @@ The outstanding bill amount is what drives knock-off against inward remittance.
 
 ## 10. Bill knock-off and reconciliation
 
-One screen. Filters: Import/Export, currency, counterparty, date range, outstanding status.
+One screen. Filters: Import/Export and currency.
 
-Three panels: outstanding bills on the left, eligible remittances on the right, allocations and remaining balances at the bottom.
+Two panels — outstanding bills and eligible remittances — with allocations and remaining balances below.
 
-Import bills match outward remittances. Export bills match inward remittances. Matching is same-currency. One bill may be settled by several remittances and one remittance may settle several bills, including partial settlement.
+- **Import**: a completed outward payment not yet matched (typically an AIR advance) against the import bill lodged after the Bill of Entry.
+- **Export**: a **FIRC pending knock-off** (an advance disposal, or the unapplied part of a disposal) against the export bill lodged after shipment. Receipts are always disposed first, so money is credited before it is matched.
 
-**Suggest Matches** proposes allocations on currency, counterparty, reference and amount. Proposed allocations are visually distinct from confirmed ones and require user confirmation before submission. AD2 approval confirms them.
+Matching is same-currency. One bill may be settled by several remittances and one remittance may settle several bills, including partial settlement. **Suggest Matches** proposes allocations on currency and counterparty. Proposals hold the amounts until an AD2 checker confirms or rejects them.
 
-An allocation cannot exceed either available balance. Before and after balances are shown. Reversal requires a reason and writes an audit event.
+Every confirmation is reported to **IDPMS** (import) or **EDPMS** (export) through UFI and carries the report reference; payments and disposals report their bill matches the same way when they settle. Reversal, by Operations, requires a reason, is reported as a reversal, and returns the amount to the payment or to the FIRC's pending knock-off.
 
 ---
 
@@ -387,13 +393,27 @@ Outstanding balances derive from confirmed transactions and approved allocations
 
 ---
 
+## 14A. Test data lab
+
+Seeded data is used up as journeys are run. The lab — *Test data lab* for AD2 users, *Test data* for an SME — makes more on demand:
+
+- **Create a test business** from six profiles — approved with verified INR and EEFC accounts, suppliers (including one watchlist test payee that scores High), accepted import and export bills, a bill awaiting the checker and receipts ready to dispose; or as an application for onboarding review.
+- **Add bills & receipts** to a business.
+- **Park requests** at each stage (DIR submitted, LC verified, AIR authorised, a disposal submitted) by running the real commands as lab users, so every control still applies.
+
+The six test businesses are also created whenever the demo is reset. The Administrator can switch the lab off in Platform settings.
+
+---
+
 ## 15. Decisions pending
 
 | Item | Owner | Blocking |
 |---|---|---|
 | ~~Full purpose code to document mapping workbook~~ | Business team | **Resolved** — the Purpose / Doc Policy workbook is loaded (§7, §8) |
 | FX quotation direction, rounding and final pricing formula | Treasury | Live rate display and booked-rate arithmetic |
-| Disposal option list beyond bill knock-off and account credit | Operations | §8 scope |
+| ~~Disposal option list beyond bill knock-off and account credit~~ | Operations | **Resolved** — knock-off or advance, INR or EEFC (§8) |
+| Compliance rule weights, thresholds and the real screening provider | Compliance | Scoring in §7 and §8 |
+| UFI API access for AD2 (EDPMS/IDPMS knock-off) — expected from RBI, not yet confirmed | Regulatory | §10 reporting goes live |
 | Transaction limits per SME and per currency | Risk | Validation on outward and disposal |
 | Whether unlinked outward requests are permitted | Operations | §7 allocation rules |
 | SFTP and SAP integration contracts | Technology | §9 channel behaviour |

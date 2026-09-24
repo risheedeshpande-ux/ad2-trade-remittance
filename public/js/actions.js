@@ -32,12 +32,14 @@ function render(opts = {}) {
         case 'reports':      html = viewReports(); break;
         case 'integrations': html = viewIntegrations(); break;
         case 'profile':      html = viewProfile(); break;
+        case 'lab':          html = viewLab(); break;
         default: location.hash = '#/sme/dashboard'; return;
       }
     }
     else if (parts[0] === 'ad2') {
       if (!isAD2()) { location.hash = '#/sme/dashboard'; return; }
       if (acting()) setSession({ ...S, actingFor:null });
+      if (!navAllows(hash)) { toast('That screen is not part of the ' + S.role + ' workspace.', 'err'); location.hash = '#/ad2/dashboard'; return; }
       switch (parts[1]) {
         case 'dashboard':      html = viewAd2Dashboard(); break;
         case 'queue':          html = viewQueue(); break;
@@ -49,7 +51,8 @@ function render(opts = {}) {
         case 'bills':          html = viewBills(parts[2] === 'import' ? 'Import' : 'Export'); break;
         case 'reconciliation': html = viewReconciliation(); break;
         case 'reports':        html = viewReports(); break;
-        case 'admin':          html = viewAdmin(); break;
+        case 'admin':          html = viewAdmin(parts[2]); break;
+        case 'lab':            html = viewLab(); break;
         default: location.hash = '#/ad2/dashboard'; return;
       }
     }
@@ -139,9 +142,13 @@ function startAssist(smeId, dest) {
 }
 
 function rateBook(draft, cur, smeRec, dir) {
-  const m = marginFor(smeRec, cur);
+  const approved = marginFor(smeRec, cur);
+  const m = acting() && isAD2() && draft.marginOverride != null && draft.marginOverride !== '' ? Math.round(Number(draft.marginOverride)) : approved;
+  const band = DB.settings.marginBand ?? 5;
+  if (m < Math.max(0, approved - band) || m > approved + 100) { toast(`Margin must be between ${Math.max(0, approved - band)} and ${approved + 100} paise.`, 'err'); return false; }
   draft.rate = { mode:'booked', refRate:currency(cur).refRate, margin:m, customerRate:customerRate(cur, dir === 'out' ? m : -m),
     bookedAt:nowISO(), expiresAt:new Date(Date.now() + 48 * 3600000).toISOString(), dealRef:null };
+  return true;
 }
 function dealModal(draft, cur, smeRec, dir) {
   const m = marginFor(smeRec, cur);
@@ -161,23 +168,62 @@ function dealModal(draft, cur, smeRec, dir) {
     } });
 }
 
+/* One line on the compliance score, for the approval modals. */
+function riskLine(rec) {
+  if (!rec || !rec.risk) return '';
+  const r = rec.risk;
+  return `<div class="note ${r.level === 'High' ? 'note-err' : r.level === 'Medium' ? 'note-warn' : 'note-ok'}" style="margin:10px 0"><span>
+    <b>Compliance: ${esc(r.level)} (${r.score})</b>${r.flags.length ? ' — ' + r.flags.map(f => esc(f.label)).join(' · ') : ' — no rule fired'}
+    ${r.level === 'High' ? '<br>Record your reason for passing it.' : ''}</span></div>`;
+}
+const noteField = (rec, label) => {
+  const high = rec && rec.risk && rec.risk.level === 'High';
+  return `<div class="f" style="margin-top:14px"><label for="vnote">${high ? 'Reason for passing a High risk score<span class="req">*</span>' : esc(label)}</label><textarea id="vnote" maxlength="500"></textarea></div>`;
+};
+const readNote = rec => {
+  const note = val('#vnote');
+  if (rec && rec.risk && rec.risk.level === 'High' && !note) throw 'The risk score is High — record your reason.';
+  return note;
+};
+
 /* Checklist modal used by makers when verifying. */
-function verifyModal(title, items, cmd, id, intro) {
+function verifyModal(title, items, cmd, id, intro, rec) {
   modal({ title, okLabel:'Verify and send to checker', wide:true, body:`
-    ${intro || ''}
+    ${intro || ''}${riskLine(rec)}
     <div class="checks" style="gap:12px;margin-top:10px">${items.map(([k, l, sub]) => `
       <label class="chk"><input type="checkbox" data-vchk="${k}"><span>${esc(l)}<small>${esc(sub)}</small></span></label>`).join('')}</div>
     <button class="btn btn-link" type="button" data-act="vchk-all" style="margin-top:8px">Tick all</button>
-    <div class="f" style="margin-top:14px"><label for="vnote">Note for the checker (optional)</label><textarea id="vnote" maxlength="500"></textarea></div>`,
+    ${noteField(rec, 'Note for the checker (optional)')}`,
     onOk: () => {
       const checks = {}; $$('[data-vchk]').forEach(x => { checks[x.dataset.vchk] = x.checked; });
       if (Object.values(checks).some(v => !v)) { toast('Complete every check before verifying.', 'err'); return; }
-      run(cmd, { id, checks, note: val('#vnote') }, { after: () => closeModal() });
+      let note; try { note = readNote(rec); } catch (m) { toast(m, 'err'); return; }
+      run(cmd, { id, checks, note }, { after: () => closeModal() });
     } });
 }
 
 /* ---------- click handling ----------------------------------------------------- */
+/* Sort any table whose header cells carry data-sort, in place. */
+function sortTable(th) {
+  const table = th.closest('table'), tbody = table.tBodies[0];
+  const idx = [...th.parentNode.children].indexOf(th);
+  const dir = th.classList.contains('asc') ? -1 : 1;
+  $$('th[data-sort]', table).forEach(x => x.classList.remove('asc', 'desc'));
+  th.classList.add(dir === 1 ? 'asc' : 'desc');
+  const key = tr => {
+    const td = tr.children[idx]; if (!td) return '';
+    const raw = td.dataset.v || td.textContent.trim();
+    const n = Number(raw.replace(/[₹,\s]|[A-Z]{3}$/g, ''));
+    return raw !== '' && !isNaN(n) && /\d/.test(raw) ? n : raw.toLowerCase();
+  };
+  const rows = [...tbody.rows].filter(r => r.children.length > 1);
+  rows.sort((a, b) => { const x = key(a), y = key(b); return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
 document.addEventListener('click', async e => {
+  const th = e.target.closest('th[data-sort]');
+  if (th) { sortTable(th); return; }
   const t = e.target.closest('[data-act]');
   if (!t) return;
   const act = t.dataset.act;
@@ -188,6 +234,15 @@ document.addEventListener('click', async e => {
   if (act === 'logout')    { setSession(null); resetDrafts(); location.hash = '#/login'; render(); return; }
   if (act === 'reset-demo'){ resetDemo(); return; }
   if (act === 'nav-toggle'){ document.body.classList.toggle('nav-open'); return; }
+  if (act === 'nav-mini')  { if (window.innerWidth <= 1024) { document.body.classList.toggle('nav-open'); return; } setNavMini(!navMini()); render({ keepScroll:true }); return; }
+  if (act === 'switch-open') { switchUserModal(); return; }
+  if (act === 'switch-user') {
+    const d = t.dataset.d, l = t.dataset.l;
+    closeModal();
+    if (S && S.domainId === d && S.loginId === l) return;
+    switchTo(d, l).then(ok => { if (ok) toast('Switched to ' + S.role + (S.name ? ' — ' + S.name : '') + '.'); else render(); });
+    return;
+  }
   if (act === 'print')     { window.print(); return; }
   if (act === 'view-doc')  { modal({ title: t.dataset.n, body:`<div class="empty"><div class="ic">▤</div><h3>${esc(t.dataset.n)}</h3>
       <p>Only the file name and size are recorded in this demo, so there is nothing to display.</p></div>` }); return; }
@@ -199,7 +254,7 @@ document.addEventListener('click', async e => {
   if (act === 'guide-open')  { GUIDE_OPEN = true; sessSet('ad2-guide-open', true); render(); return; }
   if (act === 'guide-close') { GUIDE_OPEN = false; sessSet('ad2-guide-open', null); render(); return; }
   if (act === 'guide-go')    { guideGo(+t.dataset.i); return; }
-  if (act === 'guide-restart') { localSet(GUIDE_KEY, null); setSession(null); resetDrafts(); DRAFT = newDraft(); location.hash = '#/register'; render(); return; }
+  if (act === 'guide-restart') { localSet(GUIDE_KEY, null); setSession(null); resetDrafts(); clearObDraft(); DRAFT = newDraft(); location.hash = '#/register'; render(); return; }
   if (act === 'notifications') { openNotifications(); return; }
   if (act === 'notif-open') { closeModal(); return; }
   if (act === 'vchk-all')   { $$('[data-vchk]').forEach(x => { x.checked = true; }); return; }
@@ -274,7 +329,7 @@ document.addEventListener('click', async e => {
     const res = await run('onboarding.submit', { application, loginId, password: offline ? undefined : password }, { quiet:true, keepScroll:false });
     if (!res) return;
     setGuideTarget(res.smeId, res.domainId, res.loginId);
-    DRAFT = null;
+    DRAFT = null; clearObDraft();
     if (offline) { toast(`Offline application ${res.smeId} captured.`, 'ok'); location.hash = '#/ad2/applications/' + res.smeId; return; }
     modal({ title:'Application submitted', okLabel:'Sign in and track it', body:`
       <div class="note note-ok"><span>Application <b>${esc(res.smeId)}</b> is with AD2. A maker reviews and prices it, then a checker approves it.</span></div>
@@ -295,7 +350,8 @@ document.addEventListener('click', async e => {
     run('onboarding.respond', { response, iec: val('#ap-iec') || undefined });
     return;
   }
-  if (act === 'offline-app') { resetDrafts(); DRAFT = newDraft(); location.hash = '#/register'; return; }
+  if (act === 'offline-app') { resetDrafts(); location.hash = '#/register'; return; }
+  if (act === 'ob-restart')  { clearObDraft(); DRAFT = newDraft(); render(); return; }
 
   /* beneficiaries */
   if (act === 'bene-sample') {
@@ -363,7 +419,7 @@ document.addEventListener('click', async e => {
     OR_DRAFT.remittanceType = p.id;
     if (OR_DRAFT.purposeCode && !purposesFor(p.id).some(x => x.code === OR_DRAFT.purposeCode)) OR_DRAFT.purposeCode = '';
     if (p.purposes.length === 1) OR_DRAFT.purposeCode = p.purposes[0];
-    if (p.id === 'DIR' && !OR_DRAFT.purposeCode) OR_DRAFT.purposeCode = 'S0102';
+    if ((p.id === 'DIR' || p.id === 'LC') && !OR_DRAFT.purposeCode) OR_DRAFT.purposeCode = 'S0102';
     if (p.id === 'AIR' && !OR_DRAFT.purposeCode) OR_DRAFT.purposeCode = 'S0101';
     OR_DRAFT.docs = {}; OR_DRAFT.purposeFilter = '';
     if (p.bills === 'none') OR_DRAFT.allocations = [];
@@ -383,7 +439,7 @@ document.addEventListener('click', async e => {
   }
   if (act === 'or-book-rate') {
     if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; }
-    rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out');
+    if (!rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out')) return;
     render(); toast('Rate booked and locked for 48 hours. Treasury notified.', 'ok'); return;
   }
   if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out'); return; }
@@ -419,19 +475,20 @@ document.addEventListener('click', async e => {
       ['sanctions', 'Sanctions and negative-list screening clear', `${o.beneficiary}, ${o.beneficiaryBank} and ${o.beneficiaryCountry} screened — no match (simulated).`],
       ['purpose', 'Purpose code is correct for the underlying transaction', purposeLabel(o.purposeCode)],
       ['beneficiary', 'Beneficiary and bank details verified', `${o.beneficiaryAccount} · ${o.swift}`],
-    ], 'outward.verify', o.id, `<p style="font-size:var(--fs-md);margin:0">${money(o.amount, o.currency)} to ${esc(o.beneficiary)} for ${esc(sme(o.smeId)?.tradingName || '')}.</p>`);
+    ], 'outward.verify', o.id, `<p style="font-size:var(--fs-md);margin:0">${money(o.amount, o.currency)} to ${esc(o.beneficiary)} for ${esc(sme(o.smeId)?.tradingName || '')}.</p>`, o);
     return;
   }
   if (act === 'or-authorise') {
     const o = outwardRec(t.dataset.id);
-    commandModal({ title:'Authorise ' + o.id, okLabel:'Authorise payment', cmd:'outward.authorise', read: () => ({ id:o.id }), body:`
+    commandModal({ title:'Authorise ' + o.id, okLabel:'Authorise payment', cmd:'outward.authorise', read: () => ({ id:o.id, note: readNote(o) }), wide:true, body:`
       <div class="kv">
         <div><div class="k">Pay</div><div class="v big">${money(o.amount, o.currency)}</div></div>
         <div><div class="k">To</div><div class="v">${esc(o.beneficiary)}<br><small>${esc(o.beneficiaryBank)} · ${esc(o.swift)}</small></div></div>
-        <div><div class="k">Product / purpose</div><div class="v">${esc(o.remittanceType)} · ${esc(o.purposeCode)}</div></div>
+        <div><div class="k">Product / purpose</div><div class="v">${esc(o.remittanceType)} · ${esc(o.purposeCode)}${o.lcNumber ? '<br><small>LC ' + esc(o.lcNumber) + '</small>' : ''}</div></div>
         <div><div class="k">INR debit</div><div class="v">${inr(o.debitInr)}</div></div>
         <div class="span2"><div class="k">Verified by</div><div class="v">${esc(o.wf?.verified?.by || '')} · ${dmyt(o.wf?.verified?.at)}${o.wf?.verified?.note ? '<br><i>' + esc(o.wf.verified.note) + '</i>' : ''}</div></div>
       </div>
+      ${riskLine(o)}${noteField(o, 'Note (optional)')}
       <p style="font-size:var(--fs-sm);color:var(--muted);margin-top:14px">Operations releases the payment once you authorise it.</p>` });
     return;
   }
@@ -479,46 +536,70 @@ document.addEventListener('click', async e => {
   if (act === 'di-alloc-max') {
     const b = bill(t.dataset.bill), i = inwardRec(DI_DRAFT.inwardId);
     const other = DI_DRAFT.allocations.filter(a => a.billId !== b.id).reduce((s, a) => s + a.amount, 0);
-    const use = Math.min(Engine.billAvailable(DB, b), i.available - other);
-    if (!(use > 0)) { toast('Nothing left on the receipt to apply.', 'err'); return; }
+    const use = Math.min(Engine.billAvailable(DB, b), diAmount(DI_DRAFT, i) - other);
+    if (!(use > 0)) { toast('Nothing left of the amount to dispose. Increase the amount first.', 'err'); return; }
     DI_DRAFT.allocations = [...DI_DRAFT.allocations.filter(a => a.billId !== b.id), { billId:b.id, amount:+use.toFixed(2) }];
     render(); return;
   }
-  if (act === 'di-book-rate') { const i = inwardRec(DI_DRAFT.inwardId); rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in'); render(); toast('Rate booked and locked for 48 hours. Treasury notified.', 'ok'); return; }
+  if (act === 'di-option') {
+    DI_DRAFT.option = t.dataset.id;
+    if (DI_DRAFT.option === 'advance') DI_DRAFT.allocations = [];
+    render(); return;
+  }
+  if (act === 'di-book-rate') { const i = inwardRec(DI_DRAFT.inwardId); if (!rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in')) return; render(); toast('Rate booked and locked for 48 hours. Treasury notified.', 'ok'); return; }
   if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in'); return; }
   if (act === 'di-rate-clear'){ DI_DRAFT.rate = RATE_NONE(); render(); return; }
   if (act === 'di-submit') {
-    const d = DI_DRAFT, errs = [];
-    if (!d.allocations.length) errs.push('Apply the receipt to at least one export bill.');
+    const d = DI_DRAFT, errs = [], i = inwardRec(d.inwardId), acc = acct(d.creditAccountId);
+    const amt = Number(d.amount);
+    if (!(amt > 0)) errs.push('Enter the amount to dispose.');
+    else if (amt > i.available + 0.001) errs.push(`The amount is more than the ${money(i.available, i.currency)} left on the receipt.`);
+    const applied = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
+    if (d.option === 'knockoff' && !d.allocations.length) errs.push('Apply the amount to at least one export bill, or choose “Credit as advance”.');
+    if (d.option === 'knockoff' && applied > amt + 0.001) errs.push('Bills applied add up to more than the amount to dispose.');
     if (!d.creditAccountId) errs.push('Select an account to credit.');
-    if (d.rate.mode === 'none') errs.push('Book a rate or enter an FX deal reference.');
-    checklistFor('TRADE', '', 0).filter(x => x.required && !d.docs[x.id]).forEach(x => errs.push('Upload: ' + x.name));
+    if ((!acc || acc.currency === 'INR') && d.rate.mode === 'none') errs.push('Book a rate or enter an FX deal reference.');
+    Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option:d.option }).filter(x => x.required && !d.docs[x.id]).forEach(x => errs.push('Upload: ' + x.name));
+    if (!d.declarations.fema || !d.declarations.ofac) errs.push('Accept the FEMA and sanctions declarations.');
     if (errs.length) { modal({ title:'Cannot submit yet', body:`<ul style="margin:0 0 0 18px;font-size:var(--fs-md);line-height:1.8">${errs.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` }); return; }
-    run('disposal.submit', { draft:d }, { keepScroll:false, after: r => { DI_DRAFT = null; location.hash = '#/sme/disposals/' + r.id; } });
+    const draft = { ...d, allocations: d.option === 'knockoff' ? d.allocations : [], rate: acc && acc.currency !== 'INR' ? RATE_NONE() : d.rate };
+    run('disposal.submit', { draft }, { keepScroll:false, after: r => { DI_DRAFT = null; location.hash = '#/sme/disposals/' + r.id; } });
     return;
   }
-  if (act === 'di-verify') {
+  if (act === 'ko-from-firc') {
     const d = disposalRec(t.dataset.id);
+    KO.side = 'Export'; KO.currency = d.currency; KO.allocations = []; KO.focus = d.id;
+    location.hash = '#/sme/knockoff'; return;
+  }
+  if (act === 'di-verify') {
+    const d = disposalRec(t.dataset.id), acc = acct(d.creditAccountId), i = inwardRec(d.inwardId);
+    const docsNeeded = Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option:d.option || 'knockoff' }).filter(x => x.required).map(x => x.name).join(', ');
     verifyModal('Verify ' + d.id, [
-      ['documents', 'TRADE documents on file and consistent', 'Disposal instruction letter, commercial export invoice and shipping bill.'],
-      ['bills', 'Receipt matches the export bills applied', d.allocations.map(a => `${a.billId} ${money(a.amount, d.currency)}`).join(', ')],
-      ['account', 'Credit account belongs to the exporter', acct(d.creditAccountId)?.accountNumber || ''],
-    ], 'disposal.verify', d.id);
+      ['documents', 'Documents on file and consistent', docsNeeded],
+      ['sanctions', 'Remitter screening clear', `${i ? i.remitter + ', ' + i.remitterCountry : ''} screened — no match (simulated).`],
+      ...(d.allocations.length ? [['bills', 'Receipt matches the export bills applied', d.allocations.map(a => `${a.billId} ${money(a.amount, d.currency)}`).join(', ')]] : []),
+      ['account', 'Credit account belongs to the exporter', acc ? `${acc.bank} ${acc.accountNumber} · ${acc.currency} ${acc.type}` : ''],
+    ], 'disposal.verify', d.id, `<p style="font-size:var(--fs-md);margin:0">${money(d.amount, d.currency)} under ${esc(d.purposeCode || 'TRADE')} ·
+      ${d.allocations.length ? 'knocks off ' + esc(d.allocations.map(a => a.billId).join(', ')) : 'credited as an advance'}${(d.unallocated || 0) > 0 && d.allocations.length ? ` · ${money(d.unallocated, d.currency)} as advance` : ''}.</p>`, d);
     return;
   }
   if (act === 'di-authorise') {
     const d = disposalRec(t.dataset.id);
-    commandModal({ title:'Authorise ' + d.id, okLabel:'Authorise', cmd:'disposal.authorise', read: () => ({ id:d.id }), body:`
-      <p style="font-size:var(--fs-md)">Authorise the disposal of <b>${money(d.amount, d.currency)}</b> against ${esc(d.allocations.map(a => a.billId).join(', '))},
-        crediting ${inr(d.creditInr || d.amount * d.rate.customerRate)}?</p>
-      <p style="font-size:var(--fs-sm);color:var(--muted)">Verified by ${esc(d.wf?.verified?.by || '')} · ${dmyt(d.wf?.verified?.at)}.</p>` });
+    const fcy = (d.creditCurrency || 'INR') !== 'INR';
+    commandModal({ title:'Authorise ' + d.id, okLabel:'Authorise', cmd:'disposal.authorise', wide:true, read: () => ({ id:d.id, note: readNote(d) }), body:`
+      <p style="font-size:var(--fs-md)">Authorise the disposal of <b>${money(d.amount, d.currency)}</b> ${d.allocations.length ? 'against ' + esc(d.allocations.map(a => a.billId).join(', ')) : 'as an advance'},
+        crediting ${fcy ? money(d.amount, d.currency) + ' to EEFC' : inr(d.creditInr || d.amount * d.rate.customerRate)}?</p>
+      <p style="font-size:var(--fs-sm);color:var(--muted)">Verified by ${esc(d.wf?.verified?.by || '')} · ${dmyt(d.wf?.verified?.at)}${d.wf?.verified?.note ? ' — <i>' + esc(d.wf.verified.note) + '</i>' : ''}.</p>
+      ${riskLine(d)}${noteField(d, 'Note (optional)')}` });
     return;
   }
   if (act === 'di-process') {
-    const d = disposalRec(t.dataset.id);
+    const d = disposalRec(t.dataset.id), a = acct(d.creditAccountId);
+    const fcy = (d.creditCurrency || 'INR') !== 'INR';
     commandModal({ title:'Process ' + d.id, okLabel:'Credit and issue FIRC', cmd:'disposal.process', read: () => ({ id:d.id }), body:`
-      <p style="font-size:var(--fs-md)">Credit <b>${inr(d.amount * d.rate.customerRate)}</b> to ${esc(acct(d.creditAccountId)?.bank + ' ' + acct(d.creditAccountId)?.accountNumber)},
-        knock off the export bills and issue the FIRC?</p>`,
+      <p style="font-size:var(--fs-md)">Credit <b>${fcy ? money(d.amount, d.currency) : inr(d.amount * d.rate.customerRate)}</b> to ${esc((a?.bank || '') + ' ' + (a?.accountNumber || ''))}${fcy ? ' (EEFC)' : ''},
+        ${d.allocations.length ? 'knock off the export bills, ' : ''}issue the FIRC and report it to EDPMS through UFI?</p>
+      ${(d.unallocated || 0) > 0 ? `<p style="font-size:var(--fs-sm);color:var(--muted)">${money(d.unallocated, d.currency)} stays pending knock-off on the FIRC.</p>` : ''}`,
       after: () => setTimeout(() => showFirc(d.id), 80) });
     return;
   }
@@ -671,8 +752,14 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   }
   if (act === 'ko-clear')  { KO.allocations = []; render(); return; }
   if (act === 'ko-remove') { KO.allocations.splice(+t.dataset.i, 1); render(); return; }
-  if (act === 'ko-submit') { run('knockoff.propose', { side:KO.side, items:KO.allocations }, { after: () => { KO.allocations = []; } }); return; }
+  if (act === 'ko-submit') { run('knockoff.propose', { side:KO.side, items:KO.allocations }, { after: () => { KO.allocations = []; KO.focus = ''; } }); return; }
   if (act === 'rec-tab')     { recTab = t.dataset.t; render(); return; }
+  if (act === 'export-ledger') {
+    csvDownload('allocation-ledger.csv', [['Allocation','SME','Side','Remittance','Reference','Bill','Currency','Amount','Source','Status','UFI report','UFI system','Reversal report','When'],
+      ...DB.allocations.map(l => [l.id, sme(l.smeId)?.tradingName || '', l.side, l.remId, l.ref || '', l.billId, l.currency, l.amount, l.source, l.status,
+        l.ufi ? l.ufi.ref : '', l.ufi ? l.ufi.system : '', l.ufiReversal ? l.ufiReversal.ref : '', l.at])]);
+    return;
+  }
   if (act === 'rec-confirm') { run('recon.confirm', { id:t.dataset.id }); return; }
   if (act === 'rec-reject')  { commandModal({ title:'Reject allocation', okLabel:'Reject', okClass:'btn-danger', cmd:'recon.reject', body: reason('Reason'),
       read: () => ({ id:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
@@ -760,8 +847,72 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
 
   /* lists, reports, admin */
   if (act === 'out-tab')      { outTab = t.dataset.t; render(); return; }
-  if (act === 'admin-tab')    { adminTab = t.dataset.t; render(); return; }
   if (act === 'admin-product'){ adminProduct = t.dataset.id; render(); return; }
+  if (act === 'inpurpose-add') { run('purpose.addInward', { code: val('#ip-code'), label: val('#ip-label') }); return; }
+  if (act === 'doc-add') {
+    const prod = t.dataset.product;
+    commandModal({ title:'Add a document to ' + prod, okLabel:'Add document', cmd:'policy.addDoc', body:`
+      <div class="grid g2 fields">
+        <div class="f span2"><label for="nd-name">Document name</label><input id="nd-name" type="text" maxlength="80" placeholder="e.g. Insurance certificate"></div>
+        <div class="f span2"><label for="nd-rule">Rule</label><select id="nd-rule">${RULE_LABELS.filter(([k]) => k !== 'knockoff' || prod === 'TRADE').map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      </div>`,
+      read: () => ({ product:prod, name: needText('#nd-name', 'Enter the document name.'), rule: val('#nd-rule') }) });
+    return;
+  }
+  if (act === 'doc-remove') {
+    const d = DB.docPolicy.find(x => x.product === t.dataset.product && x.id === t.dataset.doc);
+    commandModal({ title:'Remove ' + (d ? d.name : 'document'), okLabel:'Remove', okClass:'btn-danger', cmd:'policy.removeDoc',
+      body:`<p style="font-size:var(--fs-md)">Stop asking for <b>${esc(d ? d.name : '')}</b> on ${esc(t.dataset.product)} requests? Records already submitted keep what they uploaded.</p>`,
+      read: () => ({ product:t.dataset.product, docId:t.dataset.doc }) });
+    return;
+  }
+  if (act === 'rule-save') {
+    const id = t.dataset.id, p = $('#rp-' + id);
+    run('compliance.setRule', { id, weight: val('#rw-' + id), ...(p ? { param: p.value } : {}) });
+    return;
+  }
+  if (act === 'set-band-save') { run('settings.update', { marginBand: val('#set-band') }); return; }
+  if (act === 'user-add') {
+    const ad2Roles = DB.roles.filter(r => r.portal === 'AD2').sort((a, b) => a.order - b.order);
+    const domains = DB.smes.filter(x => x.status === 'Approved');
+    commandModal({ title:'Add a user', okLabel:'Add user', cmd:'user.add', wide:true, body:`
+      <div class="grid g2 fields">
+        <div class="f"><label for="nu-dom">Portal</label><select id="nu-dom">
+          <option value="AD2">AD2 — staff</option>${domains.map(x => `<option value="${esc(x.domainId)}">${esc(x.domainId)} — ${esc(x.tradingName || x.legalName)}</option>`).join('')}</select></div>
+        <div class="f"><label for="nu-role">Role</label><select id="nu-role">${ad2Roles.map(r => `<option>${esc(r.id)}</option>`).join('')}</select>
+          <div class="hint">Business users are always SME User.</div></div>
+        <div class="f"><label for="nu-login">Login ID</label><input id="nu-login" type="text" maxlength="20" placeholder="e.g. CHECKER3"></div>
+        <div class="f"><label for="nu-name">Name</label><input id="nu-name" type="text" maxlength="100"></div>
+        <div class="f span2"><label for="nu-pw">Password (optional)</label><input id="nu-pw" type="password" autocomplete="new-password">
+          <div class="hint">Leave blank to use the demo passcode. At least 8 characters with a letter and a digit.</div></div>
+      </div>`,
+      read: () => ({ user:{ domainId: val('#nu-dom'), loginId: needText('#nu-login', 'Enter a Login ID.'), name: needText('#nu-name', 'Enter a name.'),
+        role: val('#nu-dom') === 'AD2' ? val('#nu-role') : 'SME User', password: $('#nu-pw').value || undefined } }) });
+    return;
+  }
+  if (act === 'user-active') {
+    const on = !!t.dataset.on;
+    commandModal({ title:(on ? 'Reactivate ' : 'Deactivate ') + t.dataset.d + ' / ' + t.dataset.l, okLabel: on ? 'Reactivate' : 'Deactivate', okClass: on ? 'btn-primary' : 'btn-danger',
+      cmd:'user.setActive', body:`<p style="font-size:var(--fs-md)">${on ? 'This user can sign in again.' : 'This user is signed out on their next action and cannot sign in. Their history is kept.'}</p>`,
+      read: () => ({ domainId:t.dataset.d, loginId:t.dataset.l, active:on }) });
+    return;
+  }
+  if (act === 'user-reset') { run('user.resetPassword', { domainId:t.dataset.d, loginId:t.dataset.l }); return; }
+  if (act === 'audit-export') {
+    csvDownload('audit-log.csv', [['When','Record','Who','Action'], ...DB.audit.map(a => [a.at, a.record, a.actor, a.action])]);
+    return;
+  }
+  if (act === 'lab-create') {
+    run('lab.createSme', { profile:t.dataset.p, stage:t.dataset.stage }, { quiet:true, after: r => {
+      modal({ title:'Test business created', body:`<div class="note note-ok"><span>${esc(r.message)}</span></div>
+        <div class="kv" style="margin-top:16px"><div><div class="k">Domain ID</div><div class="v">${esc(r.domainId)}</div></div>
+          <div><div class="k">Login ID</div><div class="v">${esc(r.loginId)}</div></div></div>`,
+        okLabel:'Sign in as them', onOk: () => { closeModal(); switchTo(r.domainId, r.loginId); } });
+    } });
+    return;
+  }
+  if (act === 'lab-topup') { run('lab.topUp', { smeId:t.dataset.id }); return; }
+  if (act === 'lab-queue') { run('lab.queue', { smeId:t.dataset.id }); return; }
   if (act === 'report-reset') { reportCur = ''; render(); return; }
   if (act === 'export-report') { const { cols, rows } = reportRows(reportId); csvDownload(reportId + '-report.csv', [cols, ...rows]); return; }
   if (act === 'export-csv') {
@@ -846,11 +997,6 @@ document.addEventListener('change', e => {
     return;
   }
 
-  if (t.dataset.act === 'switch-role') {
-    const [d, l] = t.value.split('|');
-    switchTo(d, l).then(ok => { if (ok) toast('Switched to ' + S.role + (S.name ? ' — ' + S.name : '') + '.'); else render(); });
-    return;
-  }
 
   /* registration fields */
   if (t.dataset.k) {
@@ -863,6 +1009,7 @@ document.addEventListener('change', e => {
       DRAFT[k] = ['domainId','loginId','pan','gstin','iec'].includes(k) ? t.value.trim().toUpperCase() : t.value;
       if (k === 'legalName' && !DRAFT.domainId) DRAFT.domainId = slugDomain(t.value);
     }
+    saveObDraft();
     return;
   }
 
@@ -890,7 +1037,22 @@ document.addEventListener('change', e => {
   }
 
   if (t.dataset.blk) { BILL_DRAFT[t.dataset.blk] = t.value; return; }
-  if (t.dataset.dik) { DI_DRAFT[t.dataset.dik] = t.value; return; }
+  if (t.dataset.dik) {
+    DI_DRAFT[t.dataset.dik] = t.value;
+    if (t.dataset.dik === 'amount') {
+      const i = inwardRec(DI_DRAFT.inwardId), amt = diAmount(DI_DRAFT, i);
+      if (Number(t.value) > i.available) toast(`Only ${money(i.available, i.currency)} is left on the receipt.`, 'err');
+      let left = amt; DI_DRAFT.allocations = DI_DRAFT.allocations.map(a => ({ ...a, amount:+Math.min(a.amount, Math.max(0, left)).toFixed(2) }))
+        .map(a => { left -= a.amount; return a; }).filter(a => a.amount > 0);
+    }
+    if (t.dataset.dik === 'creditAccountId') { const a = acct(t.value); if (a && a.currency !== 'INR') DI_DRAFT.rate = RATE_NONE(); }
+    if (['amount','purposeCode','creditAccountId'].includes(t.dataset.dik)) render();
+    return;
+  }
+  if (t.dataset.act === 'di-dec') { DI_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
+  if (t.dataset.act === 'or-dec') { OR_DRAFT.declarations = OR_DRAFT.declarations || {}; OR_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
+  if (t.dataset.act === 'di-margin') { DI_DRAFT.marginOverride = t.value; render(); return; }
+  if (t.dataset.act === 'or-margin') { OR_DRAFT.marginOverride = t.value; render(); return; }
 
   /* review */
   if (t.dataset.act === 'rv-cur') {
@@ -919,6 +1081,11 @@ document.addEventListener('change', e => {
 
   /* admin */
   if (t.dataset.act === 'set-autochecker') { run('settings.update', { autoChecker:t.checked }); return; }
+  if (t.dataset.act === 'set-testlab')     { run('settings.update', { testLab:t.checked }); return; }
+  if (t.dataset.act === 'inpurpose-toggle'){ run('purpose.setInwardEnabled', { code:t.dataset.code, enabled:t.checked }); return; }
+  if (t.dataset.act === 'policy-threshold'){ run('policy.setRule', { product:t.dataset.product, docId:t.dataset.doc, rule:'threshold', threshold:t.value }); return; }
+  if (t.dataset.act === 'rule-toggle')     { run('compliance.setRule', { id:t.dataset.id, enabled:t.checked }); return; }
+  if (t.dataset.act === 'user-role')       { run('user.setRole', { domainId:t.dataset.d, loginId:t.dataset.l, role:t.value }); return; }
   if (t.dataset.act === 'set-unlinked')    { run('settings.update', { allowUnlinked:t.checked }); return; }
   if (t.dataset.act === 'purpose-toggle')  { run('purpose.setEnabled', { product:t.dataset.product, code:t.dataset.code, enabled:t.checked }); return; }
   if (t.dataset.act === 'policy-rule')     { run('policy.setRule', { product:t.dataset.product, docId:t.dataset.doc, rule:t.value }); return; }
@@ -939,15 +1106,14 @@ document.addEventListener('change', e => {
   }
   if (t.dataset.act === 'di-alloc') {
     const b = bill(t.dataset.bill), v = Number(t.value) || 0;
-    const i = inwardRec(DI_DRAFT.inwardId);
+    const i = inwardRec(DI_DRAFT.inwardId), amt = diAmount(DI_DRAFT, i);
     DI_DRAFT.allocations = DI_DRAFT.allocations.filter(a => a.billId !== b.id);
     if (v > 0) {
-      const cap = Math.min(Engine.billAvailable(DB, b), i.available);
-      if (v > cap) toast(`Cannot apply more than ${money(cap, b.currency)}.`, 'err');
-      const amount = Math.min(v, cap);
       const other = DI_DRAFT.allocations.reduce((s, a) => s + a.amount, 0);
-      if (other + amount > i.available) { toast('Total cannot exceed the amount available on the receipt.', 'err'); render(); return; }
-      DI_DRAFT.allocations.push({ billId:b.id, amount });
+      const cap = Math.max(0, Math.min(Engine.billAvailable(DB, b), amt - other));
+      if (v > cap + 0.001) toast(`Only ${money(cap, b.currency)} can go to ${b.id} — the bill balance or the amount to dispose limits it.`, 'err');
+      const amount = +Math.min(v, cap).toFixed(2);
+      if (amount > 0) DI_DRAFT.allocations.push({ billId:b.id, amount });
     }
     render(); return;
   }
@@ -956,12 +1122,23 @@ document.addEventListener('change', e => {
 /* live typing: keep drafts in sync without re-rendering and losing focus */
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset.act === 'sw-filter') {
+    const q = t.value.trim().toLowerCase();
+    $$('.swrow').forEach(r => { r.hidden = !!q && !r.dataset.q.includes(q); });
+    return;
+  }
   if (t.dataset.act === 'out-search')  { outSearch = t.value; debounceRender(); return; }
   if (t.dataset.act === 'bill-search') { billSearch = t.value; debounceRender(); return; }
   if (t.dataset.act === 'admin-filter'){ adminFilter = t.value; debounceRender(); return; }
+  if (t.dataset.act === 'audit-filter'){ auditFilter = t.value; debounceRender(); return; }
+  if (t.dataset.act === 'table-filter') {
+    const q = t.value.trim().toLowerCase();
+    $$(t.dataset.target + ' tbody tr').forEach(r => { r.hidden = !!q && !r.textContent.toLowerCase().includes(q); });
+    return;
+  }
   if (t.dataset.act === 'purpose-filter') { OR_DRAFT.purposeFilter = t.value; debounceRender(); return; }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
-  if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; return; }
+  if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; saveObDraft(); return; }
   if (t.dataset.ork && t.tagName !== 'SELECT') { OR_DRAFT[t.dataset.ork] = t.value; return; }
   if (t.dataset.blk) { BILL_DRAFT[t.dataset.blk] = t.value; return; }
   if (t.dataset.dik && t.tagName !== 'SELECT') { DI_DRAFT[t.dataset.dik] = t.value; return; }
@@ -987,6 +1164,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 /* ---------- boot --------------------------------------------------------------------- */
 (async function boot() {
   const q = new URLSearchParams(location.search);
+  if (localGet('ad2-nav-mini')) document.body.classList.add('nav-mini');
   if (!EMBEDDED && /^https?:$/.test(location.protocol) && q.get('mode') !== 'local') {
     try {
       const h = await http('/api/health', { timeout:5000 });
@@ -1020,7 +1198,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
   if (!location.hash) location.hash = '#/login';
   render({ keepScroll:false });
   if (API.mode === 'server') {
-    setInterval(poll, 5000);
+    setInterval(poll, 8000);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
   }
 })();

@@ -3,11 +3,14 @@
    ========================================================================== */
 
 function viewLogin() {
-  const demo = DB.logins.filter(a => a.demo).map(a => `
-    <button type="button" data-act="fill-login" data-domain="${esc(a.domainId)}" data-login="${esc(a.loginId)}">
-      ${esc(a.domainId)} / ${esc(a.loginId)} — ${esc(a.role)}${a.tradingName ? ' · ' + esc(a.tradingName) : ''}
-    </button>`).join('');
+  const btn = (a, own) => `<button type="button" data-act="fill-login" data-domain="${esc(a.domainId)}" data-login="${esc(a.loginId)}"${own ? ' data-own="1"' : ''}>
+      <b>${esc(a.name || a.loginId)}</b> — ${esc(a.role)}${a.tradingName ? ' · ' + esc(a.tradingName) : ''}
+      <small>${esc(a.domainId)} / ${esc(a.loginId)}</small></button>`;
+  const demo = DB.logins.filter(a => a.demo && a.active !== false);
+  const staff = demo.filter(a => a.domainId === 'AD2').sort((a, b) => (DB.roles.find(r => r.id === a.role)?.order || 0) - (DB.roles.find(r => r.id === b.role)?.order || 0));
+  const users = demo.filter(a => a.role === 'SME User'), applicants = demo.filter(a => a.role === 'SME Applicant');
   const registered = DB.logins.filter(a => !a.demo);
+  const group = (title, list, open, own) => list.length ? `<details ${open ? 'open' : ''}><summary>${esc(title)} (${list.length})</summary>${list.map(a => btn(a, own)).join('')}</details>` : '';
   const passHint = API.mode === 'local'
     ? 'Offline demo — any value is accepted.'
     : API.passcodeRequired ? 'Demo accounts use the passcode for this deployment. Registered businesses use their own password.'
@@ -44,10 +47,11 @@ function viewLogin() {
           <button class="btn btn-link" type="button" data-act="go" data-href="#/status">Track an application</button>
         </div>
       </form>
-      <div class="demo-note"><b>Demo accounts — click to fill</b>${demo}
-        ${registered.length ? `<b style="margin-top:10px">Registered through the portal</b>${registered.map(a => `
-          <button type="button" data-act="fill-login" data-domain="${esc(a.domainId)}" data-login="${esc(a.loginId)}" data-own="1">
-            ${esc(a.domainId)} / ${esc(a.loginId)} — ${esc(a.role)}${a.tradingName ? ' · ' + esc(a.tradingName) : ''}</button>`).join('')}` : ''}
+      <div class="demo-note"><b>Demo accounts — click to fill</b>
+        ${group('AD2 staff', staff, true)}
+        ${group('Businesses', users, true)}
+        ${group('Applications in progress', applicants, false)}
+        ${group('Registered through the portal', registered, false, true)}
       </div>
     </div>
   </div>`;
@@ -67,8 +71,24 @@ function newDraft() {
 const ONBOARD_STEPS = ['Business details','Domain and sign-in','Identifiers','Contact','Business profile','Bank accounts','Documents','Review'];
 const slugDomain = name => (name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
 
+/* The application in progress is kept in this browser (without passwords)
+   so a reload or a closed tab does not lose it. */
+const obKey = () => 'ad2-ob-draft-' + (isAD2() ? 'offline' : 'digital');
+function saveObDraft() {
+  if (!DRAFT || EMBEDDED) return;
+  const { password, password2, restored, ...keep } = DRAFT;
+  localSet(obKey(), { ...keep, savedAt: nowISO() });
+}
+function restoreObDraft() {
+  const d = localGet(obKey());
+  if (!d || !d.legalName && !d.pan && !(d.banks || []).length) return null;
+  return { ...newDraft(), ...d, password:'', password2:'', offline: isAD2(), restored: d.savedAt };
+}
+function clearObDraft() { try { localStorage.removeItem(obKey()); } catch (e) {} }
+
 function viewRegister() {
-  if (!DRAFT) DRAFT = newDraft();
+  if (!DRAFT) DRAFT = restoreObDraft() || newDraft();
+  saveObDraft();
   const d = DRAFT, step = d.step;
   const steps = ONBOARD_STEPS.map((s, i) => `
     <button type="button" data-act="ob-step" data-i="${i}"
@@ -86,6 +106,8 @@ function viewRegister() {
           <button class="btn btn-ghost btn-sm" type="button" data-act="ob-sample">Fill with a sample business</button>
           ${d.offline ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/ad2/applications">Cancel</button>` : ''}
         </div></div>
+      ${d.restored ? `<div class="note note-info" style="margin-bottom:16px"><span>We restored the application you were filling in (saved ${dmyt(d.restored)}).
+        <button class="btn btn-link" type="button" data-act="ob-restart">Start again</button></span></div>` : ''}
       <div class="card">
         <div class="stepper">${steps}</div>
         <div class="card-body">${bodies[step](d)}</div>

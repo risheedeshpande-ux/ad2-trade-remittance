@@ -17,7 +17,7 @@ function viewSmeDashboard() {
   const inFlight = [...out.filter(o => Engine.OPEN.includes(o.status)).map(o => ({ id:o.id, kind:'Outward', href:'#/sme/outward/' + o.id,
       what:`${o.remittanceType} · ${o.beneficiary}`, amt:money(o.amount, o.currency), status:o.status, with:o.pendingWith, at:o.requestDate })),
     ...dis.filter(d => Engine.OPEN.includes(d.status)).map(d => ({ id:d.id, kind:'Disposal', href:'#/sme/disposals/' + d.id,
-      what:'TRADE · ' + d.allocations.map(a => a.billId).join(', '), amt:money(d.amount, d.currency), status:d.status, with:d.pendingWith, at:d.submittedAt }))]
+      what:(d.purposeCode || 'TRADE') + ' · ' + (d.allocations.length ? d.allocations.map(a => a.billId).join(', ') : 'advance'), amt:money(d.amount, d.currency), status:d.status, with:d.pendingWith, at:d.submittedAt }))]
     .sort((a, b) => new Date(b.at) - new Date(a.at));
   const queries = out.filter(o => o.status === 'Clarification Required').length + dis.filter(d => d.status === 'Clarification Required').length
     + bills.filter(b => b.review === 'Query Raised').length;
@@ -26,6 +26,7 @@ function viewSmeDashboard() {
   bills.filter(b => b.outstanding > 0 && b.review === 'Accepted').forEach(b => { byCur[b.currency] = (byCur[b.currency] || 0) + b.outstanding; });
   const inrAccts = smeAccounts(me.id).filter(a => a.currency === 'INR');
   const boeDue = out.filter(o => o.boeDueDate && !DB.allocations.some(l => l.remId === o.id && l.status === 'Confirmed'));
+  const fircPending = dis.filter(d => d.status === 'Processed' && (d.unallocated || 0) > 0);
 
   return shell(crumb('Dashboard'), `
     <div class="page-head"><div>
@@ -38,6 +39,8 @@ function viewSmeDashboard() {
       </div></div>
 
     ${queries ? `<div class="note note-warn" style="margin-bottom:18px"><span><b>${plural(queries, 'query', 'queries')} from AD2</b> need your response. Open the items marked Clarification Required or Query Raised.</span></div>` : ''}
+    ${fircPending.length ? `<div class="note note-info" style="margin-bottom:18px"><span><b>${plural(fircPending.length, 'FIRC')} pending knock-off</b> against export bills:
+      ${fircPending.map(d => `<a href="#/sme/disposals/${d.id}">${esc(d.firc)} (${money(d.unallocated, d.currency)})</a>`).join(', ')}. <a href="#/sme/knockoff">Knock off now</a>.</span></div>` : ''}
     ${awaiting.length ? `<div class="note note-info" style="margin-bottom:18px"><span><b>${plural(awaiting.length, 'receipt')}</b> awaiting your disposal instruction:
       ${awaiting.map(i => `<a href="#/sme/inward/${i.id}/dispose">${esc(i.reference)} (${money(i.available, i.currency)})</a>`).join(', ')}.</span></div>` : ''}
 
@@ -157,6 +160,8 @@ function viewQueue() {
 
 /* ---------- AD2 dashboard ------------------------------------------------------ */
 function viewAd2Dashboard() {
+  if (S.role === 'AD2 Sales') return viewSalesDashboard();
+  if (S.role === 'AD2 Administrator') return viewAdminDashboard();
   const q = myQueue();
   const volByCur = {};
   DB.outward.filter(o => o.status === 'Completed').forEach(o => volByCur[o.currency] = (volByCur[o.currency] || 0) + o.amount);
@@ -291,6 +296,8 @@ function viewApplicationReview(id) {
       <p>${esc(s.id)} · ${esc(s.constitution)} · ${esc(s.source)} · submitted ${dmy(s.submittedAt)} · with ${esc(s.pendingWith || '—')}</p></div>
       <div class="acts"><button class="btn btn-plain" type="button" data-act="go" data-href="#/ad2/applications">Back</button></div></div>
 
+    ${(s.dupFlags || []).length && !['Approved','Rejected'].includes(s.status) ? `<div class="note note-warn" style="margin-bottom:18px"><span>
+      <b>Duplicate check:</b> ${s.dupFlags.map(esc).join('; ')}. Confirm this is a genuine new application before pricing it.</span></div>` : ''}
     ${s.query ? `<div class="note ${s.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px"><span>
       <b>Clarification:</b> ${esc(s.query.question)} <small>· ${esc(s.query.raisedBy)} · ${dmyt(s.query.raisedAt)}</small>
       ${s.query.response ? `<br><b>Applicant:</b> ${esc(s.query.response)} <small>· ${dmyt(s.query.respondedAt)}</small>` : '<br><i>Awaiting the applicant.</i>'}</span></div>` : ''}
@@ -367,6 +374,7 @@ function viewApplicationReview(id) {
 
 function viewDirectory() {
   const list = DB.smes.filter(s => s.status === 'Approved');
+  const openApp = navAllows('#/ad2/applications');
   return shell(crumb('SME Directory'), `
     <div class="page-head"><div><h1>SME Directory</h1>
       <p>Approved SMEs with their live permissions and pricing. <b>Transact on behalf</b> opens that SME's portal as an assisted journey.</p></div></div>
@@ -374,14 +382,14 @@ function viewDirectory() {
       <thead><tr><th>SME</th><th>Constitution</th><th>IEC</th><th>Permission</th><th>Currencies</th>
         <th class="num">USD margin</th><th>Effective</th><th></th></tr></thead>
       <tbody>${list.map(s => `
-        <tr><td class="id" data-act="go" data-href="#/ad2/applications/${s.id}">${esc(s.tradingName || s.legalName)}
+        <tr><td class="id" ${openApp ? `data-act="go" data-href="#/ad2/applications/${s.id}"` : ''}>${esc(s.tradingName || s.legalName)}
             <br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(s.id)} · ${esc(s.domainId)}</span></td>
           <td>${esc(s.constitution)}</td><td>${esc(s.iec || '—')}</td>
           <td>${esc(s.config.permission)}</td><td>${s.config.currencies.join(' · ')}</td>
           <td class="num">${s.config.margins.USD ?? '—'}</td><td>${dmy(s.config.effectiveDate)}</td>
           <td style="white-space:nowrap">
             ${can('assist.transact') ? `<button class="btn btn-ghost btn-sm" type="button" data-act="assist-start" data-id="${s.id}">Transact on behalf</button>` : ''}
-            <button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/applications/${s.id}">Open</button></td></tr>`).join('')}</tbody>
+            ${openApp ? `<button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/applications/${s.id}">Open</button>` : ''}</td></tr>`).join('')}</tbody>
     </table></div></div></div>`);
 }
 
@@ -472,6 +480,8 @@ const REPORTS = [
   { id:'aging',       name:'Aging Report' },
   { id:'charges',     name:'Charges Report' },
   { id:'firc',        name:'FIRCs Issued' },
+  { id:'fircpending', name:'FIRCs Pending Knock-off' },
+  { id:'ufi',         name:'UFI Reporting (EDPMS / IDPMS)', ad2:true },
   { id:'realised',    name:'Bills Lodged and Realised' },
   { id:'notlodged',   name:'Receipts With No Matching Bill' },
 ];
@@ -530,9 +540,25 @@ function reportRows(id) {
           [o.id, nm(o.smeId), o.status, o.currency, money(o.amount), String(o.rate.margin || 0),
            inr((o.charges || []).reduce((s, c) => s + c.amount, 0)), '₹ ' + (o.rate.customerRate || 0).toFixed(4)]));
     case 'firc':
-      return wrap(['FIRC','SME','Instruction','Receipt','Currency','Amount','INR credited','Issued'],
+      return wrap(['FIRC','SME','Instruction','Receipt','Purpose','Currency','Amount','Credited','Pending knock-off','Issued','Reported'],
         DB.disposals.filter(mine).filter(cur).filter(d => d.firc).map(d =>
-          [d.firc, nm(d.smeId), d.id, inwardRec(d.inwardId)?.reference || d.inwardId, d.currency, money(d.amount), inr(d.creditInr), dmy(d.wf?.processed?.at)]));
+          [d.firc, nm(d.smeId), d.id, inwardRec(d.inwardId)?.reference || d.inwardId, d.purposeCode || 'TRADE', d.currency, money(d.amount),
+           (d.creditCurrency || 'INR') === 'INR' ? inr(d.creditInr) : money(d.amount) + ' ' + d.currency + ' (EEFC)', money(d.unallocated || 0),
+           dmy(d.wf?.processed?.at), d.fircUfi ? d.fircUfi.ref : '—']));
+    case 'fircpending':
+      return wrap(['FIRC','SME','Instruction','Remitter','Currency','Pending knock-off','Issued','Days'],
+        DB.disposals.filter(mine).filter(cur).filter(d => d.status === 'Processed' && (d.unallocated || 0) > 0).map(d =>
+          [d.firc, nm(d.smeId), d.id, inwardRec(d.inwardId)?.remitter || '', d.currency, money(d.unallocated), dmy(d.wf?.processed?.at), String(daysBetween(d.wf?.processed?.at, today))]));
+    case 'ufi': {
+      const rows = [];
+      DB.allocations.filter(mine).filter(cur).forEach(l => {
+        if (l.ufi) rows.push([l.ufi.ref, l.ufi.system, 'Knock-off', nm(l.smeId), l.billId, l.ref || l.remId, l.currency, money(l.amount), dmyt(l.ufi.at)]);
+        if (l.ufiReversal) rows.push([l.ufiReversal.ref, l.ufiReversal.system, 'Reversal', nm(l.smeId), l.billId, l.ref || l.remId, l.currency, money(l.amount), dmyt(l.ufiReversal.at)]);
+      });
+      DB.disposals.filter(mine).filter(cur).filter(d => d.fircUfi).forEach(d =>
+        rows.push([d.fircUfi.ref, d.fircUfi.system, 'FIRC / realisation', nm(d.smeId), '—', d.firc, d.currency, money(d.amount), dmyt(d.fircUfi.at)]));
+      return wrap(['UFI reference','System','Report','SME','Bill','Remittance','Currency','Amount','Reported'], rows.sort((a, b) => a[0] < b[0] ? 1 : -1));
+    }
     case 'realised':
       return wrap(['Bill','SME','Type','Invoice','Currency','Original','Adjusted','Settlement'],
         DB.bills.filter(mine).filter(cur).filter(b => b.adjusted > 0).map(b =>
@@ -594,8 +620,6 @@ function viewIntegrations() {
 }
 
 /* ---------- administration ------------------------------------------------------ */
-let adminTab = 'purpose', adminProduct = 'OTT', adminFilter = '';
-
 function rolesPane() {
   const roles = [...DB.roles].sort((a, b) => a.order - b.order);
   const groups = [...new Set(DB.capabilities.map(c => c.group))];
@@ -627,74 +651,4 @@ function rolesPane() {
         <thead><tr><th style="min-width:260px">Action</th>
           ${roles.map(r => `<th>${esc(r.id).replace('AD2 ', 'AD2<br>').replace('SME ', 'SME<br>')}</th>`).join('')}</tr></thead>
         <tbody>${matrix}</tbody></table></div></div>`;
-}
-
-function viewAdmin() {
-  const edit = can('admin.masters');
-  const prod = product(adminProduct) || DB.products[0];
-  const q = adminFilter.toLowerCase();
-  const codes = prod.purposes.map(c => purpose(c)).filter(Boolean).filter(p => !q || (p.code + ' ' + p.label).toLowerCase().includes(q));
-  const off = prod.disabled || [];
-  const RULES = [['required','Required'],['optional','Optional'],['goods','Required for goods imports'],['threshold','Required above ₹5,00,000']];
-  const panes = {
-    purpose: `<div class="card-body">
-      <div class="note note-info" style="margin-bottom:16px"><span>From the business team's <b>Purpose / Doc Policy</b> workbook: ${DB.purposeCodes.length} approved
-        purpose codes across AIR, DIR and OTT. ${edit ? 'Untick a code to stop it being offered on new requests.' : 'Only the Administrator can change the mapping.'}</span></div>
-      <div class="toolbar" style="padding:0 0 12px">
-        ${DB.products.filter(p => p.purposes.length).map(p => `<button class="btn ${p.id === prod.id ? 'btn-primary' : 'btn-plain'} btn-sm" type="button"
-          data-act="admin-product" data-id="${p.id}">${esc(p.id)} · ${p.purposes.length}</button>`).join('')}
-        <input type="search" data-act="admin-filter" value="${esc(adminFilter)}" placeholder="Search codes" aria-label="Search purpose codes">
-      </div>
-      <p style="margin:0 0 10px;color:var(--muted);font-size:var(--fs-sm)"><b>${esc(prod.id)} — ${esc(prod.label)}.</b> ${esc(prod.hint)}</p>
-      <div class="tablewrap"><table class="dt">
-        <thead><tr><th style="width:90px">Offered</th><th>Code</th><th>Description</th><th>Also under</th></tr></thead>
-        <tbody>${codes.map(p => `<tr><td><input type="checkbox" data-act="purpose-toggle" data-product="${prod.id}" data-code="${p.code}"
-            ${off.includes(p.code) ? '' : 'checked'} ${edit ? '' : 'disabled'} aria-label="Offer ${p.code}"></td>
-          <td><b>${esc(p.code)}</b></td><td>${esc(p.label)}</td>
-          <td>${DB.products.filter(x => x.id !== prod.id && x.purposes.includes(p.code)).map(x => x.id).join(', ') || '—'}</td></tr>`).join('')}</tbody>
-      </table></div></div>`,
-    docs: `<div class="card-body">
-      <div class="note note-info" style="margin-bottom:16px"><span>Document policy by product, from the workbook's Document Policy sheet. Form 145 and Form 146 replace Form 15CA and 15CB under the Income-tax Act 2025.
-        ${edit ? 'Change a rule and it applies to the next request.' : ''}</span></div>
-      ${DB.products.map(p => `<h3 style="font-size:var(--fs-md);margin:18px 0 8px">${esc(p.id)} — ${esc(p.label)} <small style="color:var(--muted);font-weight:400">${p.direction === 'inward' ? 'disposal instructions' : 'outward remittance'}</small></h3>
-        <div class="tablewrap"><table class="dt"><thead><tr><th>Document</th><th style="width:320px">Rule</th></tr></thead>
-        <tbody>${DB.docPolicy.filter(d => d.product === p.id).map(d => `<tr><td>${esc(d.name)}</td>
-          <td><select data-act="policy-rule" data-product="${p.id}" data-doc="${d.id}" ${edit ? '' : 'disabled'} aria-label="Rule for ${esc(d.name)}">
-            ${RULES.map(([k, l]) => `<option value="${k}" ${d.rule === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`).join('')}
-      <p style="margin-top:14px;color:var(--muted);font-size:var(--fs-xs)">Goods-import purpose codes: ${DB.goodsCodes.join(', ')}.</p></div>`,
-    currencies: `<div class="card-body tight"><div class="tablewrap"><table class="dt">
-      <thead><tr><th>Code</th><th>Name</th><th class="num">Margin multiplier</th><th class="num">Reference rate</th></tr></thead>
-      <tbody>${DB.currencies.map(c => `<tr><td><b>${esc(c.code)}</b></td><td>${esc(c.name)}</td>
-        <td class="num">${c.marginMultiplier.toFixed(2)}</td><td class="num">₹ ${c.refRate.toFixed(4)}</td></tr>`).join('')}</tbody>
-    </table></div></div>`,
-    checklists: `<div class="card-body tight"><div class="tablewrap"><table class="dt">
-      <thead><tr><th>Onboarding document</th><th>Requirement</th></tr></thead>
-      <tbody>${DB.onboardDocs.map(d => `<tr><td>${esc(d.name)}</td>
-        <td>${d.required ? '<span class="badge b-red">Mandatory</span>' : '<span class="badge b-grey">Optional</span>'}</td></tr>`).join('')}</tbody>
-    </table></div></div>`,
-    users: `<div class="card-body tight"><div class="tablewrap"><table class="dt">
-      <thead><tr><th>Domain ID</th><th>Login ID</th><th>Name</th><th>Role</th><th>Business</th><th>Sign-in</th></tr></thead>
-      <tbody>${DB.logins.map(a => `<tr><td>${esc(a.domainId)}</td><td>${esc(a.loginId)}</td><td>${esc(a.name || '')}</td>
-          <td><b>${esc(a.role)}</b></td><td>${esc(a.tradingName || '—')}</td>
-          <td>${a.demo ? '<span class="badge b-grey">Demo passcode</span>' : '<span class="badge b-teal">Own password</span>'}</td></tr>`).join('')}</tbody>
-    </table></div></div>`,
-    roles: rolesPane(),
-    settings: `<div class="card-body">
-      ${can('admin.settings') ? '' : `<div class="note note-warn" style="margin-bottom:var(--s4)"><span>Your role can see these settings but not change them.</span></div>`}
-      <div class="checks" style="gap:18px">
-        <label class="chk"><input type="checkbox" data-act="set-autochecker" ${DB.settings.autoChecker ? 'checked' : ''} ${can('admin.settings') ? '' : 'disabled'}>
-          <span>AutoChecker for onboarding and bills<small>A maker's application review and SME bill lodgements commit without a checker. Outward payments and disposals always need a checker.</small></span></label>
-        <label class="chk"><input type="checkbox" data-act="set-unlinked" ${DB.settings.allowUnlinked ? 'checked' : ''} ${can('admin.settings') ? '' : 'disabled'}>
-          <span>Permit DIR payments without a linked import bill<small>Off by default: a DIR payment settles a lodged bill.</small></span></label>
-      </div></div>`,
-  };
-  const tabs = [['purpose','Purpose codes'],['docs','Document policy'],['roles','Roles and permissions'],['currencies','Currency master'],
-    ['checklists','Onboarding documents'],['users','Users'],['settings','Settings']];
-  return shell(crumb('Administration'), `
-    <div class="page-head"><div><h1>Administration</h1><p>Masters and controls behind the trade journey.</p></div></div>
-    <div class="card">
-      <div class="tabs">${tabs.map(([k, l]) =>
-        `<button type="button" data-act="admin-tab" data-t="${k}" aria-selected="${adminTab === k}">${esc(l)}</button>`).join('')}</div>
-      ${panes[adminTab]}
-    </div>`);
 }

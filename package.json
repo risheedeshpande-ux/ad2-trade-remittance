@@ -2,13 +2,16 @@
   "name": "ad2-trade-remittance",
   "version": "1.0.0",
   "private": true,
-  "description": "AD2 trade remittance platform — SME onboarding, outward and inward remittance with maker-checker, bill lodgement and knock-off.",
+  "description": "AD2 trade remittance platform \u2014 SME onboarding, outward and inward remittance with maker-checker, bill lodgement and knock-off.",
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
-    "test:e2e": "node tests/e2e.js"
+    "test:e2e": "node tests/e2e.js",
+    "test:qa": "node tests/qa.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@vercel/blob": "^2.8.0"
   },

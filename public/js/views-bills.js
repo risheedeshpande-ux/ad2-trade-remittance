@@ -38,18 +38,19 @@ function viewBills(type) {
         <div class="spacer"></div>
         <button class="btn btn-plain btn-sm" type="button" data-act="export-csv" data-what="bills">Export CSV</button></div>
       <div class="tablewrap"><table class="dt">
-        <thead><tr><th>Bill</th>${ad2 ? '<th>SME</th>' : ''}<th>Invoice</th><th>Counterparty</th><th>Currency</th>
-          <th class="num">Original</th><th class="num">Adjusted</th><th class="num">Outstanding</th>
-          <th>Due</th><th>Source</th><th>Review</th><th>Settlement</th><th></th></tr></thead>
+        <thead><tr><th data-sort>Bill</th>${ad2 ? '<th data-sort>SME</th>' : ''}<th data-sort>Invoice</th><th data-sort>Counterparty</th><th data-sort>Currency</th>
+          <th class="num" data-sort>Original</th><th class="num" data-sort>Adjusted</th><th class="num" data-sort>Outstanding</th>
+          <th data-sort>Due</th><th data-sort>Source</th><th data-sort>Review</th><th data-sort>Settlement</th><th></th></tr></thead>
         <tbody>${list.length ? list.map(b => `
           <tr><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}
             <td>${esc(b.invoiceNumber)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${dmy(b.invoiceDate)}${b.shipmentRef ? ' · ' + esc(b.shipmentRef) : ''}</span></td>
             <td>${esc(b.counterparty)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(b.counterpartyCountry)}</span></td>
             <td>${esc(b.currency)}</td><td class="num">${money(b.amount)}</td>
             <td class="num">${money(b.adjusted)}</td><td class="num"><b>${money(b.outstanding)}</b></td>
-            <td>${dmy(b.dueDate)}</td><td>${esc(b.source)}</td>
+            <td data-v="${esc(b.dueDate)}">${dmy(b.dueDate)}</td><td>${esc(b.source)}</td>
             <td>${badge(b.review)}${b.query && b.review === 'Query Raised' ? `<br><small style="color:var(--muted)">${esc(b.query.question)}</small>` : ''}</td>
-            <td>${badge(b.settlement)}</td><td style="white-space:nowrap">${rowActions(b)}</td></tr>`).join('')
+            <td>${badge(b.settlement)}${(b.ufi || []).length ? `<br><small style="color:var(--muted)" title="${esc(b.ufi.join(', '))}">${b.type === 'Export' ? 'EDPMS' : 'IDPMS'} · ${plural(b.ufi.length, 'report')}</small>` : ''}</td>
+            <td style="white-space:nowrap">${rowActions(b)}</td></tr>`).join('')
           : `<tr><td colspan="13">${empty('No bills','Lodge a bill by form, CSV upload, SFTP or the SAP integration.')}</td></tr>`}</tbody>
       </table></div>`,
     form: billForm(type),
@@ -164,11 +165,19 @@ function billForm(type) {
 }
 
 /* ---------- knock-off -------------------------------------------------------- */
-let KO = { side:'Import', currency:'', allocations:[] };
+let KO = { side:'Import', currency:'', allocations:[], focus:'' };
 
+/* What a processed disposal's FIRC still has to knock off. */
+function fircLeft(d) {
+  const held = DB.allocations.filter(l => l.status === 'Proposed' && l.remKind === 'disposal' && l.remId === d.id).reduce((t, l) => t + l.amount, 0);
+  return +Math.max(0, (d.unallocated || 0) - held).toFixed(2);
+}
 function koEligible(side, smeId) {
   return side === 'Export'
-    ? DB.inward.filter(i => i.smeId === smeId && i.available > 0).map(i => ({ id:i.id, ref:i.reference, party:i.remitter, cur:i.currency, left:i.available }))
+    ? DB.disposals.filter(d => d.smeId === smeId && d.status === 'Processed' && fircLeft(d) > 0).map(d => {
+        const i = inwardRec(d.inwardId) || {};
+        return { id:d.id, ref:d.firc + ' (' + d.id + ')', party:i.remitter || '', cur:d.currency, left:fircLeft(d) };
+      })
     : DB.outward.filter(o => o.smeId === smeId && o.status === 'Completed').map(o => {
         const used = DB.allocations.filter(l => l.remKind === 'outward' && l.remId === o.id && ['Confirmed','Proposed'].includes(l.status))
           .reduce((t, l) => t + l.amount, 0);
@@ -190,13 +199,13 @@ function viewKnockoff() {
 
   return shell(crumb('Bill Knock-off'), `
     <div class="page-head"><div><h1>Bill Knock-off</h1>
-      <p>Apply a remittance to a bill that was not linked when it was made — typically an advance (AIR) payment against the import bill that followed.
-        An AD2 checker confirms each allocation.</p></div></div>
+      <p>Match money that moved before its bill existed: an advance (AIR) payment against the import bill that followed, or an export FIRC pending knock-off
+        (an advance receipt) against the export bill. An AD2 checker confirms each match and it is reported to IDPMS / EDPMS through UFI.</p></div></div>
 
     <div class="card" style="margin-bottom:18px"><div class="toolbar">
       <select data-act="ko-side" aria-label="Bill type">
         ${pm.importSide ? `<option value="Import" ${KO.side === 'Import' ? 'selected' : ''}>Import bills ↔ outward payments</option>` : ''}
-        ${pm.exportSide ? `<option value="Export" ${KO.side === 'Export' ? 'selected' : ''}>Export bills ↔ inward receipts</option>` : ''}</select>
+        ${pm.exportSide ? `<option value="Export" ${KO.side === 'Export' ? 'selected' : ''}>Export bills ↔ FIRCs pending knock-off</option>` : ''}</select>
       <select data-act="ko-currency" aria-label="Currency"><option value="">All currencies</option>
         ${DB.currencies.map(c => `<option ${KO.currency === c.code ? 'selected' : ''}>${c.code}</option>`).join('')}</select>
       <div class="spacer"></div>
@@ -214,12 +223,12 @@ function viewKnockoff() {
               <td>${esc(b.counterparty)}</td><td class="num">${money(Engine.billAvailable(DB, b), b.currency)}</td></tr>`).join('')
             : `<tr><td colspan="4">${empty('Nothing outstanding','No accepted bills with a balance match these filters.')}</td></tr>`}</tbody>
         </table></div></div>
-      <div class="pane"><h3>Eligible ${KO.side === 'Export' ? 'inward receipts' : 'completed payments'}</h3>
+      <div class="pane"><h3>${KO.side === 'Export' ? 'FIRCs pending knock-off' : 'Completed payments not yet matched'}</h3>
         <div class="tablewrap"><table class="dt">
           <thead><tr><th>Reference</th><th>Counterparty</th><th class="num">Unapplied</th></tr></thead>
           <tbody>${rems.length ? rems.map(r => `
             <tr><td class="id">${esc(r.ref)}</td><td>${esc(r.party)}</td><td class="num">${money(r.left, r.cur)}</td></tr>`).join('')
-            : `<tr><td colspan="3">${empty('Nothing eligible','No remittances with an unapplied balance match these filters.')}</td></tr>`}</tbody>
+            : `<tr><td colspan="3">${empty('Nothing eligible', KO.side === 'Export' ? 'No FIRC has an amount pending knock-off. Dispose of a receipt as an advance to create one.' : 'No completed payment has an unapplied balance.')}</td></tr>`}</tbody>
         </table></div></div>
     </div>
 
@@ -227,8 +236,8 @@ function viewKnockoff() {
       <div class="grid fields" style="grid-template-columns:2fr 2fr 1fr auto;align-items:end;gap:12px">
         <div class="f"><label for="ko-bill">Bill</label><select id="ko-bill"><option value="">Select…</option>
           ${bills.map(b => `<option value="${b.id}">${esc(b.id)} · ${esc(b.invoiceNumber)} · ${money(Engine.billAvailable(DB, b), b.currency)}</option>`).join('')}</select></div>
-        <div class="f"><label for="ko-rem">${KO.side === 'Export' ? 'Receipt' : 'Payment'}</label><select id="ko-rem"><option value="">Select…</option>
-          ${rems.map(r => `<option value="${r.id}">${esc(r.ref)} · ${esc(r.party)} · ${money(r.left, r.cur)}</option>`).join('')}</select></div>
+        <div class="f"><label for="ko-rem">${KO.side === 'Export' ? 'FIRC' : 'Payment'}</label><select id="ko-rem"><option value="">Select…</option>
+          ${rems.map(r => `<option value="${r.id}" ${KO.focus === r.id ? 'selected' : ''}>${esc(r.ref)} · ${esc(r.party)} · ${money(r.left, r.cur)}</option>`).join('')}</select></div>
         <div class="f"><label for="ko-amt">Amount</label><input id="ko-amt" type="number" step="0.01"></div>
         <button class="btn btn-ghost" type="button" data-act="ko-add">Add</button>
       </div></div></div>
@@ -256,15 +265,16 @@ function viewKnockoff() {
 
 function ledgerTable(rows, withActions) {
   return `<div class="tablewrap"><table class="dt">
-    <thead><tr><th>Allocation</th>${withActions ? '<th>SME</th>' : ''}<th>Side</th><th>Remittance</th><th>Bill</th><th class="num">Amount</th>
-      <th>Source</th><th>Status</th><th>When</th>${withActions ? '<th></th>' : ''}</tr></thead>
+    <thead><tr><th data-sort>Allocation</th>${withActions ? '<th data-sort>SME</th>' : ''}<th data-sort>Side</th><th>Remittance</th><th data-sort>Bill</th><th class="num" data-sort>Amount</th>
+      <th>Source</th><th data-sort>Status</th><th>Reported (UFI)</th><th data-sort>When</th>${withActions ? '<th></th>' : ''}</tr></thead>
     <tbody>${rows.map(l => `
       <tr><td class="id">${esc(l.id)}</td>${withActions ? `<td>${esc(sme(l.smeId)?.tradingName || '')}</td>` : ''}
-        <td>${esc(l.side)}</td><td class="id">${esc(l.disposalId || l.remId)}</td><td class="id">${esc(l.billId)}</td>
+        <td>${esc(l.side)}</td><td class="id">${esc(l.ref || l.disposalId || l.remId)}${l.ref ? `<br><small style="color:var(--muted)">${esc(l.remId)}</small>` : ''}</td><td class="id">${esc(l.billId)}</td>
         <td class="num">${money(l.amount, l.currency)}</td><td>${esc(l.source)}</td>
         <td>${badge(l.status)}${l.rejectReason ? `<br><small style="color:var(--muted)">${esc(l.rejectReason)}</small>` : ''}
           ${l.reversedBy ? `<br><small style="color:var(--muted)">${esc(l.reversedBy.reason)}</small>` : ''}</td>
-        <td>${dmy(l.at)}</td>
+        <td>${l.ufi ? ufiTag(l.ufi) : '<span style="color:var(--muted)">—</span>'}${l.ufiReversal ? '<br>' + ufiTag(l.ufiReversal) + ' <small>reversal</small>' : ''}</td>
+        <td data-v="${esc(l.at)}">${dmy(l.at)}</td>
         ${withActions ? `<td style="white-space:nowrap">${
           l.status === 'Proposed'
             ? (can('recon.confirm')
@@ -282,9 +292,11 @@ function viewReconciliation() {
   const list = recTab === 'All' ? all : all.filter(l => l.status === recTab);
   return shell(crumb('Reconciliation'), `
     <div class="page-head"><div><h1>Reconciliation</h1>
-      <p>The allocation ledger. Payments and disposals write confirmed entries when they settle; knock-off proposals wait for a checker.</p></div></div>
+      <p>The allocation ledger. Payments and disposals write confirmed entries when they settle; knock-off proposals wait for a checker.
+        Every confirmation and reversal is reported to IDPMS (import) or EDPMS (export) through UFI.</p></div>
+      <div class="acts"><button class="btn btn-plain" type="button" data-act="export-ledger">Export CSV</button></div></div>
     <div class="card">
-      <div class="tabs">${['Proposed','Confirmed','Reversed','All'].map(t => `
+      <div class="tabs">${['Proposed','Confirmed','Reversed','Rejected','All'].map(t => `
         <button type="button" data-act="rec-tab" data-t="${t}" aria-selected="${recTab === t}">${t}<span class="n">${t === 'All' ? all.length : all.filter(l => l.status === t).length}</span></button>`).join('')}</div>
       <div class="card-body tight">${list.length ? ledgerTable(list, true) : empty('Nothing here','No allocations in this state.')}</div>
     </div>`);

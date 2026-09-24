@@ -114,10 +114,15 @@
 
   /* Document checklist for a product + purpose code. inrAmount drives the
      threshold rule (Form 146). */
-  function checklist(db, productId, purposeCode, inrAmount) {
+  function checklist(db, productId, purposeCode, inrAmount, opts) {
+    const option = (opts && opts.option) || 'knockoff';
     return (db.docPolicy || []).filter(d => d.product === productId).map(d => {
       let required = d.rule === 'required', note = '';
       if (d.rule === 'optional') note = 'Optional';
+      if (d.rule === 'knockoff') {
+        required = option === 'knockoff';
+        note = required ? 'Required — this instruction knocks off bills' : 'Optional — advance credit, no bill knocked off yet';
+      }
       if (d.rule === 'goods') {
         required = (db.goodsCodes || []).includes(purposeCode);
         note = required ? 'Required — purpose code is an import of goods' : 'Optional — not an import of goods';
@@ -150,11 +155,52 @@
     }));
   }
 
+  /* ---------- compliance scoring ---------------------------------------------
+     Runs on every outward request and disposal instruction at submission.
+     Rules and weights come from the compliance master (Administration).   */
+  const usdEq = (db, amt, cur) => round2(amt * ((currencyOf(db, cur) || {}).refRate || 0) / ((currencyOf(db, 'USD') || {}).refRate || 1));
+  function riskScore(db, facts) {
+    const flags = [];
+    const rule = id => (db.complianceRules || []).find(r => r.id === id && r.enabled);
+    const add = (r, detail) => flags.push({ rule: r.id, label: r.label, weight: r.weight, detail });
+    let r;
+    if ((r = rule('amount')) && facts.usd > Number(r.param || 0)) add(r, `≈ USD ${fmt(facts.usd)} is above USD ${fmt(r.param)}`);
+    if ((r = rule('country'))) {
+      const list = (r.param || []).map(x => String(x).toLowerCase());
+      const hit = (facts.countries || []).find(c => c && list.includes(String(c).toLowerCase()));
+      if (hit) add(r, hit + ' is on the high-risk list');
+    }
+    if ((r = rule('sanctions'))) {
+      const names = (facts.names || []).filter(Boolean).map(n => String(n).toLowerCase());
+      const hit = (r.param || []).find(w => names.some(n => n.includes(String(w).toLowerCase())));
+      if (hit) add(r, `Name matches watchlist entry “${hit}”`);
+    }
+    if ((r = rule('newbene')) && facts.newBene) add(r, 'No earlier payment to this account');
+    if ((r = rule('firsttxn')) && facts.first) add(r, 'First transaction of this kind for the SME');
+    if ((r = rule('capital')) && /^S00\d\d$/.test(facts.purpose || '')) add(r, facts.purpose + ' is a capital-account code');
+    if ((r = rule('docai')) && (facts.files || []).some(f => /mismatch/i.test(f))) add(r, 'Document AI could not match an uploaded document to the transaction');
+    if ((r = rule('bankctry')) && facts.beneCountry && facts.bankCountry && facts.beneCountry !== facts.bankCountry)
+      add(r, `Beneficiary in ${facts.beneCountry}, bank in ${facts.bankCountry}`);
+    if ((r = rule('deal')) && facts.deal) add(r, 'Rate from FX deal reference');
+    const score = Math.min(100, flags.reduce((t, f) => t + f.weight, 0));
+    return { score, level: score >= 60 ? 'High' : score >= 25 ? 'Medium' : 'Low', flags };
+  }
+
   /* A booked rate is recomputed here from the currency master — the client's
      figure is never trusted. A deal reference must sit within 3% of the
      reference rate. */
-  function settleRate(db, s, cur, rate, dir, now) {
-    const m = marginFor(db, s, cur);
+  function settleRate(db, s, cur, rate, dir, now, a) {
+    let m = marginFor(db, s, cur);
+    /* A branch / AD2 user in the assisted journey may adjust the margin within
+       the configured band below the approved margin (and never above +100). */
+    if (rate && rate.margin != null && rate.margin !== '' && Number(rate.margin) !== m) {
+      const want = Math.round(Number(rate.margin));
+      if (!(a && a.actingFor && isAD2(a))) fail('Only AD2 in an assisted journey can change the margin.');
+      const band = Number((db.settings || {}).marginBand ?? 5);
+      if (!isFinite(want) || want < Math.max(0, m - band) || want > m + 100)
+        fail(`Margin must be between ${Math.max(0, m - band)} and ${m + 100} paise (approved ${m}, band ${band}).`);
+      m = want;
+    }
     const ref = (currencyOf(db, cur) || {}).refRate || 0;
     const expect = customerRate(db, cur, dir === 'out' ? m : -m);
     rate = rate || {};
@@ -188,6 +234,7 @@
     if (!who) return null;
     const login = (db.logins || []).find(l => l.domainId === who.domainId && l.loginId === who.loginId);
     if (!login) throw new EngineError('Your session is no longer valid. Sign in again.', 'auth', 401);
+    if (login.active === false) throw new EngineError('This user has been deactivated. Contact your administrator.', 'auth', 401);
     const a = { domainId: login.domainId, loginId: login.loginId, role: login.role, smeId: login.smeId || null,
                 name: login.name || '', actingFor: null };
     if (actingFor) {
@@ -239,10 +286,12 @@
   const stamp = (a, now, verb) => ({ by: actorLabel(a) + (a.actingFor ? ' — assisted' : ''), key: actorKey(a), at: now, verb });
 
   /* ---------- audit and notifications ------------------------------------- */
-  function audit(db, a, now, record, action) {
+  /* internal entries (compliance scores, reviewer reasons, pricing overrides)
+     are never shown to the SME. */
+  function audit(db, a, now, record, action, internal) {
     const who = a ? actorLabel(a) : 'Public';
     const behalf = a && a.actingFor ? ` on behalf of ${(smeOf(db, a.actingFor) || {}).tradingName || a.actingFor}` : '';
-    db.audit.unshift({ id: 'AU-' + seq(db, 'audit'), record, actor: who + behalf, action, at: now });
+    db.audit.unshift({ id: 'AU-' + seq(db, 'audit'), record, actor: who + behalf, action, at: now, ...(internal ? { internal: true } : {}) });
     if (db.audit.length > 3000) db.audit.length = 3000;
   }
   function notify(db, now, { toRole, toSmeId, text, link }) {
@@ -299,30 +348,60 @@
   }
 
   /* ---------- seeding ------------------------------------------------------ */
-  function freshState(SEED) {
+  function freshState(SEED, nowIso) {
     const db = clone(SEED);
+    const now = nowIso || new Date().toISOString();
     db.rev = 0;
+    db.settings = { autoChecker: false, allowUnlinked: false, testLab: true, marginBand: 5, ...(db.settings || {}) };
     /* Seeded transactions carry the documents their policy asked for. */
-    const fill = (rec, product, purpose, inrAmt) => {
+    const fill = (rec, product, purpose, inrAmt, opts) => {
       if (rec.status === 'Draft') return;
       rec.docs = rec.docs && Object.keys(rec.docs).length ? rec.docs : {};
-      checklist(db, product, purpose, inrAmt).forEach(d => {
+      checklist(db, product, purpose, inrAmt, opts).forEach(d => {
         if (d.required || d.rule === 'goods') rec.docs[d.id] = rec.docs[d.id] ||
           { filename: `${rec.id}-${d.id}.pdf`, size: (120 + d.id.length * 37) + ' KB', type: 'application/pdf', at: rec.requestDate || rec.submittedAt };
       });
     };
+    const seedStamp = at => ({ fema: true, ofac: true, at });
     db.outward.forEach(o => {
       fill(o, o.remittanceType, o.purposeCode, o.amount * (o.rate.customerRate || 0));
       if (o.rate.customerRate && o.inrAmount == null) {
         o.inrAmount = round2(o.amount * o.rate.customerRate);
         o.debitInr = round2(o.inrAmount + (o.charges || []).reduce((t, c) => t + c.amount, 0));
       }
+      if (o.status === 'Draft') return;
+      o.declarations = o.declarations || seedStamp(o.requestDate);
+      o.risk = o.risk || riskScore(db, { usd: usdEq(db, o.amount, o.currency), purpose: o.purposeCode, deal: o.rate.mode === 'deal',
+        countries: [o.beneficiaryCountry, o.beneficiaryBankCountry], names: [o.beneficiary, o.beneficiaryBank],
+        beneCountry: o.beneficiaryCountry, bankCountry: o.beneficiaryBankCountry, newBene: !o.beneficiaryId, first: false, files: [] });
     });
-    db.disposals.forEach(d => fill(d, 'TRADE', '', 0));
+    db.disposals.forEach(d => {
+      d.option = d.option || 'knockoff';
+      d.purposeCode = d.purposeCode || 'TRADE';
+      d.creditCurrency = d.creditCurrency || 'INR';
+      d.allocatedTotal = d.allocatedTotal ?? round2((d.allocations || []).reduce((t, x) => t + x.amount, 0));
+      d.unallocated = d.unallocated ?? round2(d.amount - d.allocatedTotal);
+      d.creditFcy = d.creditFcy || 0;
+      fill(d, 'TRADE', d.purposeCode, 0, { option: d.option });
+      d.declarations = d.declarations || seedStamp(d.submittedAt);
+      const i = find(db.inward, d.inwardId) || {};
+      d.risk = d.risk || riskScore(db, { usd: usdEq(db, d.amount, d.currency), purpose: d.purposeCode, deal: d.rate.mode === 'deal',
+        countries: [i.remitterCountry], names: [i.remitter], first: false, files: [] });
+      if (d.status === 'Processed' && !d.fircUfi) d.fircUfi = ufiReport(db, d.wf.processed.at, 'Export', 'FIRC / realisation');
+    });
+    db.inward.forEach(i => { if (i.firc && !i.fircs) i.fircs = [i.firc]; });
+    db.allocations.slice().reverse().forEach(l => {
+      if (l.status !== 'Confirmed' || l.ufi) return;
+      l.ufi = ufiReport(db, l.at, l.side, 'knock-off');
+      const b = find(db.bills, l.billId); if (b) (b.ufi = b.ufi || []).push(l.ufi.ref);
+    });
     db.smes.forEach(s => {
       s.pendingWith = smePendingWith(s.status);
       if (!s.docs) { s.docs = {}; (db.onboardDocs || []).forEach(d => { s.docs[d.id] = { filename: `${s.id}-${d.id}.pdf`, size: '210 KB', type: 'application/pdf', at: s.submittedAt }; }); }
     });
+    /* Ready-to-use test businesses, each with its own accounts, bills and
+       receipts, so every journey can be tried on more than one business. */
+    (db.testSmes || []).forEach(prof => labCreateSme(db, prof, 'approved', now));
     return db;
   }
   const smePendingWith = st => ({ 'Submitted': 'AD2 Maker', 'Under Review': 'AD2 Maker', 'Pending Approval': 'AD2 Checker',
@@ -402,9 +481,14 @@
       }
       const id = nextId(db.smes, 'SME');
       const { banks, ...rest } = app;
+      /* A PAN or GSTIN already on the platform is flagged for the maker, not
+         blocked: a rejected business may apply again. */
+      const dupFlags = db.smes.filter(x => x.pan === app.pan || x.gstin === app.gstin)
+        .map(x => `${x.pan === app.pan ? 'PAN' : 'GSTIN'} matches ${x.id} — ${x.tradingName || x.legalName} (${x.status})`);
       db.smes.push({ ...rest, id, source: offline ? 'Offline' : 'Digital',
         createdBy: offline ? actorLabel(a) : 'SME Applicant', status: 'Submitted', pendingWith: 'AD2 Maker',
-        submittedAt: ctx.now, approvedAt: null, config: null });
+        submittedAt: ctx.now, approvedAt: null, config: null, ...(dupFlags.length ? { dupFlags } : {}) });
+      if (dupFlags.length) audit(db, null, ctx.now, id, 'Duplicate check — ' + dupFlags.join('; '), true);
       banks.forEach((b, i) => db.accounts.push({ id: nextId(db.accounts, 'BA', 3), smeId: id, holder: app.legalName, ...b,
         verifiedOn: b.verified ? ctx.now : null, primary: i === 0, balance: b.currency === 'INR' ? 25000000 : 50000 }));
       db.logins.push({ domainId: app.domainId, loginId, role: 'SME Applicant', smeId: id, name: app.contactName,
@@ -650,11 +734,16 @@
     out.currency = d.currency ? oneOf(d.currency, currencyCodes(db), 'Currency') : '';
     out.amount = forDraft ? (Number(d.amount) > 0 ? round2(Number(d.amount)) : 0) : amount(d.amount, 'Amount');
     out.debitAccountId = d.debitAccountId || '';
+    out.lcNumber = txt(d.lcNumber, 'LC number', { max: 30, required: false });
     if (forDraft) {
       out.docs = docsIn(d.docs);
       return out;
     }
-    need(out.remittanceType, 'Select a product (AIR, DIR or OTT).');
+    need(out.remittanceType, 'Select a product (AIR, DIR, OTT or LC).');
+    if (out.remittanceType === 'LC') need(out.lcNumber, 'Enter the letter of credit number for an LC settlement.');
+    const dec = d.declarations || {};
+    need(bool(dec.fema) && bool(dec.ofac), 'Accept the FEMA and sanctions (OFAC) declarations before submitting.');
+    out.declarations = { fema: true, ofac: true, at: now };
     need(purposesFor(db, out.remittanceType).some(p => p.code === out.purposeCode),
       `Purpose code ${out.purposeCode || '(none)'} is not available under ${out.remittanceType}.`);
     need(out.currency, 'Select a currency.');
@@ -669,7 +758,7 @@
 
   function finishOutward(db, a, s, o, d, now, excludeId) {
     const prod = productOf(db, o.remittanceType);
-    o.rate = settleRate(db, s, o.currency, d.rate, 'out', now);
+    o.rate = settleRate(db, s, o.currency, d.rate, 'out', now, a);
     const inrAmt = round2(o.amount * o.rate.customerRate);
     const list = checklist(db, o.remittanceType, o.purposeCode, inrAmt);
     o.docs = docsIn(d.docs, list.map(x => x.id));
@@ -686,6 +775,21 @@
     o.inrAmount = inrAmt;
     o.charges = chargesFor(s, o.amount, o.rate.customerRate);
     o.debitInr = round2(inrAmt + o.charges.reduce((t, c) => t + c.amount, 0));
+    o.risk = riskScore(db, {
+      usd: usdEq(db, o.amount, o.currency), purpose: o.purposeCode, deal: o.rate.mode === 'deal',
+      countries: [o.beneficiaryCountry, o.beneficiaryBankCountry], names: [o.beneficiary, o.beneficiaryBank],
+      beneCountry: o.beneficiaryCountry, bankCountry: o.beneficiaryBankCountry,
+      newBene: !db.outward.some(x => x.id !== o.id && x.smeId === s.id && x.status === 'Completed' && x.beneficiaryAccount === o.beneficiaryAccount),
+      first: !db.outward.some(x => x.id !== o.id && x.smeId === s.id && x.status === 'Completed'),
+      files: Object.values(o.docs).map(f => f.filename),
+    });
+  }
+
+  /* A High risk score needs a written reason at each approval stage. */
+  function riskNote(rec, p, stage) {
+    const note = txt(p.note, 'Note', { max: 500, required: false });
+    if (rec.risk && rec.risk.level === 'High') need(note, `Risk score is High (${rec.risk.score}). Record your reason for ${stage} it.`);
+    return note;
   }
 
   C['outward.saveDraft'] = {
@@ -740,7 +844,9 @@
       if (!existing) db.outward.unshift(o);
       const b = find(db.beneficiaries, o.beneficiaryId); if (b) b.lastUsed = ctx.now;
       const prod = productOf(db, o.remittanceType);
-      audit(db, a, ctx.now, o.id, `Outward request submitted — ${fmt(o.amount, o.currency)}, ${prod.id} (${prod.label}) under ${o.purposeCode}`);
+      audit(db, a, ctx.now, o.id, `Outward request submitted — ${fmt(o.amount, o.currency)}, ${prod.id} (${prod.label}) under ${o.purposeCode}${o.lcNumber ? ', LC ' + o.lcNumber : ''}`);
+      audit(db, a, ctx.now, o.id, `Compliance check — risk ${o.risk.level} (${o.risk.score})${o.risk.flags.length ? ': ' + o.risk.flags.map(f => f.label).join(', ') : ''}`, true);
+      if (o.rate.margin !== marginFor(db, s, o.currency)) audit(db, a, ctx.now, o.id, `Margin set to ${o.rate.margin} paise by ${a.name || a.role} within the branch band`, true);
       audit(db, a, ctx.now, o.id, o.rate.mode === 'booked'
         ? `Rate booked at ${o.rate.customerRate.toFixed(4)}, locked until ${o.rate.expiresAt.slice(0, 16).replace('T', ' ')} UTC — treasury notified`
         : `FX deal reference ${o.rate.dealRef} applied at ${o.rate.customerRate.toFixed(4)}`);
@@ -762,9 +868,10 @@
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
       distinct(a, [{ key: o.createdByKey, verb: 'raised' }], 'request');
       o.wf = o.wf || {};
-      o.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: txt(p.note, 'Note', { max: 500, required: false }) };
+      o.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(o, p, 'verifying') };
       o.status = 'Verified'; o.pendingWith = 'AD2 Checker';
-      audit(db, a, ctx.now, o.id, 'Verified — documents, sanctions screening, purpose code and beneficiary checked' + (o.wf.verified.note ? ': ' + o.wf.verified.note : ''));
+      audit(db, a, ctx.now, o.id, 'Verified — documents, sanctions screening, purpose code and beneficiary checked');
+      if (o.wf.verified.note) audit(db, a, ctx.now, o.id, 'Maker note: ' + o.wf.verified.note, true);
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Outward ${o.id} verified — ready to authorise`, link: '#/ad2/outward/' + o.id });
       return { message: `${o.id} verified and passed to the checker.` };
     },
@@ -776,9 +883,10 @@
       const o = outwardFor(db, p.id);
       need(o.status === 'Verified', 'Only a verified request can be authorised.');
       distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified], 'request');
-      o.wf.authorised = stamp(a, ctx.now, 'authorised');
+      o.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(o, p, 'authorising') };
       o.status = 'Authorised'; o.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, o.id, 'Authorised for payment');
+      if (o.wf.authorised.note) audit(db, a, ctx.now, o.id, 'Checker note: ' + o.wf.authorised.note, true);
       notify(db, ctx.now, { toRole: 'AD2 Operations', text: `Outward ${o.id} authorised — release the payment`, link: '#/ad2/outward/' + o.id });
       notify(db, ctx.now, { toSmeId: o.smeId, text: `Your payment ${o.id} is authorised and queued for release`, link: '#/sme/outward/' + o.id });
       return { message: `${o.id} authorised. Operations can now release it.` };
@@ -809,8 +917,8 @@
         const b = find(db.bills, x.billId);
         if (!b) return;
         applyToBill(b, x.amount);
-        ledger(db, ctx.now, { smeId: o.smeId, side: 'Import', billId: b.id, remKind: 'outward', remId: o.id, amount: x.amount,
-                             currency: o.currency, source: 'Outward payment', status: 'Confirmed' });
+        confirmLedger(db, ctx.now, { smeId: o.smeId, side: 'Import', billId: b.id, remKind: 'outward', remId: o.id, ref: o.utr, amount: x.amount,
+                                     currency: o.currency, source: 'Outward payment' });
       });
       if (o.remittanceType === 'AIR') o.boeDueDate = addDays(ctx.now, 90).slice(0, 10);
       audit(db, a, ctx.now, o.id, `Payment released over SWIFT — UTR ${o.utr}, ${inr(debit)} debited from ${acc.bank} ${acc.accountNumber}`);
@@ -892,9 +1000,62 @@
     },
   };
 
+  /* A receipt can be disposed of in parts. available is what no instruction
+     covers yet; an instruction may credit the whole amount or only part. */
   function inwardStatus(db, i) {
-    if (i.available > 0) return 'Awaiting Instruction';
-    return db.disposals.some(d => d.inwardId === i.id && OPEN.includes(d.status)) ? 'Instruction Submitted' : 'Processed';
+    const live = db.disposals.filter(d => d.inwardId === i.id && d.status !== 'Rejected');
+    if (i.available > 0) return live.length ? 'Partially Disposed' : 'Awaiting Instruction';
+    return live.some(d => OPEN.includes(d.status)) ? 'Instruction Submitted' : 'Processed';
+  }
+
+  /* What a processed disposal (its FIRC) still has to knock off against
+     export bills: the part not applied to bills, less proposed knock-offs. */
+  function fircAvailable(db, d) {
+    if (!d || d.status !== 'Processed') return 0;
+    const held = (db.allocations || []).filter(l => l.status === 'Proposed' && l.remKind === 'disposal' && l.remId === d.id)
+      .reduce((t, l) => t + l.amount, 0);
+    return round2(Math.max(0, (d.unallocated || 0) - held));
+  }
+
+  /* Reporting to RBI's Unified Portal (UFI), which carries EDPMS (export)
+     and IDPMS (import) knock-offs. Simulated: every confirmed or reversed
+     bill match gets a report reference. */
+  function ufiReport(db, now, side, what) {
+    const n = seq(db, 'ufi');
+    return { ref: `UFI-${side === 'Export' ? 'E' : 'I'}-${now.slice(0, 4)}-${String(n).padStart(6, '0')}`,
+             system: side === 'Export' ? 'EDPMS' : 'IDPMS', status: 'Reported', what, at: now };
+  }
+  function confirmLedger(db, now, entry) {
+    const b = find(db.bills, entry.billId);
+    const id = ledger(db, now, { ...entry, status: 'Confirmed', ufi: ufiReport(db, now, entry.side, 'knock-off') });
+    if (b) { b.ufi = b.ufi || []; b.ufi.push(find(db.allocations, id).ufi.ref); }
+    return id;
+  }
+
+  function readDisposal(db, a, s, i, d, now) {
+    const amt = amount(d.amount == null || d.amount === '' ? i.available : d.amount, 'Amount to dispose');
+    need(amt <= i.available + 0.001, `Only ${fmt(i.available, i.currency)} of this receipt is left to dispose.`);
+    const option = oneOf(d.option || 'knockoff', (db.disposalOptions || []).map(o => o.id), 'Disposal option');
+    const purposeCode = oneOf(d.purposeCode || 'TRADE', (db.inwardPurposes || []).filter(x => !x.disabled).map(x => x.code), 'Purpose');
+    let al = [], total = 0;
+    if (option === 'knockoff') {
+      ({ list: al, total } = allocationsIn(db, s, d.allocations, { type: 'Export', currency: i.currency, cap: amt, label: 'The amount applied to bills' }));
+      need(al.length, 'Apply the amount against at least one accepted export bill, or choose “Credit as advance”.');
+    }
+    const acc = find(db.accounts, d.creditAccountId);
+    need(acc && acc.smeId === s.id, 'Select an account to credit from your account master.');
+    need(acc.verified, `Account ${acc.accountNumber} is not verified yet. Verify it with PennyDrop first.`);
+    need(acc.currency === 'INR' || acc.currency === i.currency,
+      `Credit an INR account (converted at the booked rate) or an EEFC account in ${i.currency}.`);
+    const rate = acc.currency === 'INR' ? settleRate(db, s, i.currency, d.rate, 'in', now, a)
+      : { mode: 'none', refRate: (currencyOf(db, i.currency) || {}).refRate || 0, margin: 0, customerRate: 0, bookedAt: null, expiresAt: null, dealRef: null };
+    const list = checklist(db, 'TRADE', purposeCode, 0, { option });
+    const docs = docsIn(d.docs, list.map(x => x.id));
+    const missingDocs = list.filter(x => x.required && !docs[x.id]).map(x => x.name);
+    need(!missingDocs.length, 'Upload the required documents: ' + missingDocs.join(', ') + '.', missingDocs);
+    const dec = d.declarations || {};
+    need(bool(dec.fema) && bool(dec.ofac), 'Accept the FEMA and sanctions (OFAC) declarations before submitting.');
+    return { amt, option, purposeCode, al, total, acc, rate, docs, declarations: { fema: true, ofac: true, at: now } };
   }
 
   C['disposal.submit'] = {
@@ -906,35 +1067,41 @@
       const i = find(db.inward, d.inwardId);
       if (!i || i.smeId !== s.id) missing('Inward receipt');
       need(i.available > 0, 'Nothing is left to dispose on this receipt.');
-      const { list: al, total } = allocationsIn(db, s, d.allocations, { type: 'Export', currency: i.currency, cap: i.available, label: 'The amount applied' });
-      need(al.length, 'Apply the receipt against at least one accepted export bill.');
-      const acc = find(db.accounts, d.creditAccountId);
-      need(acc && acc.smeId === s.id, 'Select an account to credit from your account master.');
-      need(acc.verified, `Account ${acc.accountNumber} is not verified yet.`);
-      need(acc.currency === 'INR', 'Disposal proceeds are credited to an INR account.');
-      const rate = settleRate(db, s, i.currency, d.rate, 'in', ctx.now);
-      const list = checklist(db, 'TRADE', '', 0);
-      const docs = docsIn(d.docs, list.map(x => x.id));
-      const missingDocs = list.filter(x => x.required && !docs[x.id]).map(x => x.name);
-      need(!missingDocs.length, 'Upload the required documents: ' + missingDocs.join(', ') + '.', missingDocs);
+      const v = readDisposal(db, a, s, i, d, ctx.now);
+      const inrCredit = v.acc.currency === 'INR';
       const id = nextId(db.disposals, 'DI');
-      db.disposals.unshift({ id, inwardId: i.id, smeId: s.id, amount: total, currency: i.currency, creditAccountId: acc.id,
-        allocations: al, rate, purposeCode: '', remittanceType: 'TRADE', docs,
-        creditInr: round2(total * rate.customerRate),
+      const rec = { id, inwardId: i.id, smeId: s.id, amount: v.amt, currency: i.currency, option: v.option,
+        purposeCode: v.purposeCode, remittanceType: 'TRADE', creditAccountId: v.acc.id, creditCurrency: v.acc.currency,
+        allocations: v.al, allocatedTotal: v.total, unallocated: round2(v.amt - v.total), rate: v.rate, docs: v.docs,
+        creditInr: inrCredit ? round2(v.amt * v.rate.customerRate) : 0, creditFcy: inrCredit ? 0 : v.amt,
+        declarations: v.declarations,
         status: 'Submitted', pendingWith: 'AD2 Maker', submittedAt: ctx.now,
         remarks: txt(d.remarks, 'Remarks', { max: 500, required: false }),
         source: a.actingFor ? 'AD2 Assisted' : 'SME', createdBy: a.name || a.role, createdByKey: actorKey(a),
-        wf: { submitted: stamp(a, ctx.now, 'submitted') } });
-      i.available = round2(i.available - total);
+        wf: { submitted: stamp(a, ctx.now, 'submitted') } };
+      rec.risk = riskScore(db, {
+        usd: usdEq(db, v.amt, i.currency), purpose: v.purposeCode, deal: v.rate.mode === 'deal',
+        countries: [i.remitterCountry], names: [i.remitter],
+        first: !db.disposals.some(x => x.smeId === s.id && x.status === 'Processed'),
+        files: Object.values(v.docs).map(f => f.filename),
+      });
+      db.disposals.unshift(rec);
+      i.available = round2(i.available - v.amt);
       i.status = inwardStatus(db, i);
-      audit(db, a, ctx.now, i.id, `Disposal instruction ${id} submitted for ${fmt(total, i.currency)} — TRADE`);
-      audit(db, a, ctx.now, id, `Disposal instruction submitted — ${fmt(total, i.currency)} against ${al.map(x => x.billId).join(', ')}`);
-      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Disposal ${id} from ${s.tradingName} — ${fmt(total, i.currency)} to verify`, link: '#/ad2/disposals/' + id });
-      return { id, message: `Disposal instruction ${id} submitted.` };
+      const what = v.option === 'knockoff'
+        ? `against ${v.al.map(x => x.billId).join(', ')}${rec.unallocated > 0 ? `, ${fmt(rec.unallocated, i.currency)} as advance` : ''}`
+        : 'as an advance — bills to be knocked off later';
+      const to = inrCredit ? `credit INR at ${v.rate.customerRate.toFixed(4)}` : `credit ${v.acc.currency} to EEFC`;
+      audit(db, a, ctx.now, i.id, `Disposal instruction ${id} submitted for ${fmt(v.amt, i.currency)} of ${fmt(i.amount, i.currency)}`);
+      audit(db, a, ctx.now, id, `Disposal instruction submitted — ${fmt(v.amt, i.currency)} under ${v.purposeCode}, ${what}; ${to}`);
+      audit(db, a, ctx.now, id, `Compliance check — risk ${rec.risk.level} (${rec.risk.score})${rec.risk.flags.length ? ': ' + rec.risk.flags.map(f => f.label).join(', ') : ''}`, true);
+      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Disposal ${id} from ${s.tradingName} — ${fmt(v.amt, i.currency)} to verify`, link: '#/ad2/disposals/' + id });
+      return { id, message: `Disposal instruction ${id} submitted.${i.available > 0 ? ` ${fmt(i.available, i.currency)} of the receipt is still to dispose.` : ''}` };
     },
   };
 
   const disposalFor = (db, id) => find(db.disposals, id) || missing('Disposal instruction');
+  const disposalChecks = d => ['documents', 'account', 'sanctions', ...((d.allocations || []).length ? ['bills'] : [])];
 
   C['disposal.verify'] = {
     cap: 'inward.verifyDisposal',
@@ -942,12 +1109,13 @@
       const d = disposalFor(db, p.id);
       need(d.status === 'Submitted', 'Only a submitted instruction can be verified.');
       const checks = p.checks || {};
-      const notDone = ['documents', 'bills', 'account'].filter(k => !bool(checks[k]));
+      const notDone = disposalChecks(d).filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }], 'instruction');
-      d.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: txt(p.note, 'Note', { max: 500, required: false }) };
+      d.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(d, p, 'verifying') };
       d.status = 'Verified'; d.pendingWith = 'AD2 Checker';
-      audit(db, a, ctx.now, d.id, 'Verified — documents, bill match and credit account checked');
+      audit(db, a, ctx.now, d.id, 'Verified — documents, sanctions screening, ' + ((d.allocations || []).length ? 'bill match ' : '') + 'and credit account checked');
+      if (d.wf.verified.note) audit(db, a, ctx.now, d.id, 'Maker note: ' + d.wf.verified.note, true);
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Disposal ${d.id} verified — ready to authorise`, link: '#/ad2/disposals/' + d.id });
       return { message: `${d.id} verified and passed to the checker.` };
     },
@@ -959,9 +1127,10 @@
       const d = disposalFor(db, p.id);
       need(d.status === 'Verified', 'Only a verified instruction can be authorised.');
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified], 'instruction');
-      d.wf.authorised = stamp(a, ctx.now, 'authorised');
+      d.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(d, p, 'authorising') };
       d.status = 'Authorised'; d.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, d.id, 'Authorised for processing');
+      if (d.wf.authorised.note) audit(db, a, ctx.now, d.id, 'Checker note: ' + d.wf.authorised.note, true);
       notify(db, ctx.now, { toRole: 'AD2 Operations', text: `Disposal ${d.id} authorised — process the credit`, link: '#/ad2/disposals/' + d.id });
       return { message: `${d.id} authorised. Operations can now process it.` };
     },
@@ -975,24 +1144,35 @@
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised], 'instruction');
       const acc = find(db.accounts, d.creditAccountId);
       need(acc, 'The credit account no longer exists.');
-      d.creditInr = round2(d.amount * d.rate.customerRate);
-      if (acc.balance != null) acc.balance = round2(acc.balance + d.creditInr);
-      d.allocations.forEach(x => {
+      const fcy = (d.creditCurrency || 'INR') !== 'INR';
+      if (fcy) { d.creditFcy = d.amount; d.creditInr = 0; }
+      else d.creditInr = round2(d.amount * d.rate.customerRate);
+      if (acc.balance != null) acc.balance = round2(acc.balance + (fcy ? d.amount : d.creditInr));
+      d.firc = `FIRC-${ctx.now.slice(0, 4)}-${seq(db, 'firc')}`;
+      let applied = 0;
+      (d.allocations || []).forEach(x => {
         const b = find(db.bills, x.billId);
         if (!b) return;
-        applyToBill(b, x.amount);
-        ledger(db, ctx.now, { smeId: d.smeId, side: 'Export', billId: b.id, remKind: 'inward', remId: d.inwardId, disposalId: d.id,
-                             amount: x.amount, currency: d.currency, source: 'Disposal instruction', status: 'Confirmed' });
+        const amt = Math.min(x.amount, b.outstanding);
+        if (!(amt > 0)) return;
+        applyToBill(b, amt);
+        applied += amt;
+        confirmLedger(db, ctx.now, { smeId: d.smeId, side: 'Export', billId: b.id, remKind: 'disposal', remId: d.id, inwardId: d.inwardId,
+                                     disposalId: d.id, ref: d.firc, amount: amt, currency: d.currency, source: 'Disposal instruction' });
       });
-      d.firc = `FIRC-${ctx.now.slice(0, 4)}-${seq(db, 'firc')}`;
+      d.allocatedTotal = round2(applied);
+      d.unallocated = round2(d.amount - applied);
+      d.fircUfi = ufiReport(db, ctx.now, 'Export', 'FIRC / realisation');
       d.wf.processed = stamp(a, ctx.now, 'processed');
       d.status = 'Processed'; d.pendingWith = '—';
       const i = find(db.inward, d.inwardId);
-      if (i) { i.firc = d.firc; i.status = inwardStatus(db, i); }
-      audit(db, a, ctx.now, d.id, `Processed — ${inr(d.creditInr)} credited to ${acc.bank} ${acc.accountNumber}; ${d.firc} issued`);
+      if (i) { i.firc = d.firc; (i.fircs = i.fircs || []).push(d.firc); i.status = inwardStatus(db, i); }
+      const credited = fcy ? fmt(d.amount, d.currency) : inr(d.creditInr);
+      audit(db, a, ctx.now, d.id, `Processed — ${credited} credited to ${acc.bank} ${acc.accountNumber}; ${d.firc} issued and reported to EDPMS (${d.fircUfi.ref})`);
+      if (d.unallocated > 0) audit(db, a, ctx.now, d.id, `${fmt(d.unallocated, d.currency)} of ${d.firc} is pending knock-off against export bills`);
       if (i) audit(db, a, ctx.now, i.id, `${d.firc} issued against disposal ${d.id}`);
-      notify(db, ctx.now, { toSmeId: d.smeId, text: `${inr(d.creditInr)} credited — ${d.firc} issued for ${d.id}`, link: '#/sme/disposals/' + d.id });
-      return { firc: d.firc, message: `Processed. ${inr(d.creditInr)} credited and ${d.firc} issued.` };
+      notify(db, ctx.now, { toSmeId: d.smeId, text: `${credited} credited — ${d.firc} issued for ${d.id}${d.unallocated > 0 ? ' (knock off the balance against bills)' : ''}`, link: '#/sme/disposals/' + d.id });
+      return { firc: d.firc, message: `Processed. ${credited} credited and ${d.firc} issued.` };
     },
   };
 
@@ -1018,7 +1198,7 @@
       need(d.smeId === s.id, 'This instruction belongs to another SME.');
       need(d.status === 'Clarification Required', 'There is no open query on this instruction.');
       d.query.response = txt(p.response, 'Response', { max: 1000 }); d.query.respondedAt = ctx.now;
-      Object.assign(d.docs = d.docs || {}, docsIn(p.docs, checklist(db, 'TRADE', '', 0).map(x => x.id)));
+      Object.assign(d.docs = d.docs || {}, docsIn(p.docs, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }).map(x => x.id)));
       d.status = 'Submitted'; d.pendingWith = 'AD2 Maker';
       audit(db, a, ctx.now, d.id, 'SME responded to the query — back with the maker');
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `SME responded on disposal ${d.id}`, link: '#/ad2/disposals/' + d.id });
@@ -1174,12 +1354,25 @@
     },
   };
 
-  /* ---------- knock-off and reconciliation ---------------------------------- */
+  /* ---------- knock-off and reconciliation ----------------------------------
+     Import side: a completed outward payment (for example an advance, AIR)
+     is matched to import bills once the Bill of Entry is lodged.
+     Export side: a FIRC with an amount pending knock-off (an advance
+     disposal, or the part of a disposal not applied to bills) is matched to
+     export bills. A proposal holds the amounts until a checker confirms it;
+     confirmation reports the match to IDPMS / EDPMS through UFI.           */
+  function outwardUnapplied(db, o) {
+    const used = (db.allocations || []).filter(l => l.remKind === 'outward' && l.remId === o.id && ['Confirmed', 'Proposed'].includes(l.status))
+      .reduce((t, l) => t + l.amount, 0);
+    return round2(Math.max(0, o.amount - used));
+  }
+
   C['knockoff.propose'] = {
     cap: 'recon.propose',
     run(db, a, p, ctx) {
       const s = ownSme(db, a); requireApproved(s);
       const side = oneOf(p.side, ['Import', 'Export'], 'Side');
+      billSide(s, side);
       const items = Array.isArray(p.items) ? p.items.slice(0, 30) : [];
       need(items.length, 'Add at least one allocation.');
       const made = [];
@@ -1188,23 +1381,23 @@
         const b = find(db.bills, x.billId);
         need(b && b.smeId === s.id && b.type === side && b.review === 'Accepted', `Bill ${x.billId} cannot be knocked off.`);
         need(amt <= billAvailable(db, b) + 0.001, `Bill ${b.id} has only ${fmt(billAvailable(db, b), b.currency)} available.`);
-        let remKind, remId;
+        let remKind, remId, ref;
         if (side === 'Import') {
           const o = find(db.outward, x.remId);
           need(o && o.smeId === s.id && o.status === 'Completed' && o.currency === b.currency, `Payment ${x.remId} is not an eligible completed payment in ${b.currency}.`);
-          const used = (db.allocations || []).filter(l => l.remKind === 'outward' && l.remId === o.id && ['Confirmed', 'Proposed'].includes(l.status))
-            .reduce((t, l) => t + l.amount, 0);
-          need(amt <= o.amount - used + 0.001, `Payment ${o.id} has only ${fmt(o.amount - used, o.currency)} left to apply.`);
-          remKind = 'outward'; remId = o.id;
+          const left = outwardUnapplied(db, o);
+          need(amt <= left + 0.001, `Payment ${o.id} has only ${fmt(left, o.currency)} left to apply.`);
+          remKind = 'outward'; remId = o.id; ref = o.utr || o.id;
         } else {
-          const i = find(db.inward, x.remId);
-          need(i && i.smeId === s.id && i.currency === b.currency && i.available >= amt - 0.001, `Receipt ${x.remId} does not have ${fmt(amt, b.currency)} available.`);
-          i.available = round2(i.available - amt); i.status = inwardStatus(db, i);
-          remKind = 'inward'; remId = i.id;
+          const d = find(db.disposals, x.remId);
+          need(d && d.smeId === s.id && d.status === 'Processed' && d.currency === b.currency, `${x.remId} is not a processed FIRC in ${b.currency}.`);
+          const left = fircAvailable(db, d);
+          need(amt <= left + 0.001, `${d.firc} has only ${fmt(left, d.currency)} pending knock-off.`);
+          remKind = 'disposal'; remId = d.id; ref = d.firc;
         }
-        made.push(ledger(db, ctx.now, { smeId: s.id, side, billId: b.id, remKind, remId, amount: amt, currency: b.currency,
+        made.push(ledger(db, ctx.now, { smeId: s.id, side, billId: b.id, remKind, remId, ref, amount: amt, currency: b.currency,
           source: 'Knock-off', status: 'Proposed', proposedBy: stamp(a, ctx.now, 'proposed') }));
-        audit(db, a, ctx.now, b.id, `Knock-off proposed against ${remId} for ${fmt(amt, b.currency)}`);
+        audit(db, a, ctx.now, b.id, `Knock-off proposed against ${ref} for ${fmt(amt, b.currency)}`);
       });
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `${made.length} knock-off allocation(s) from ${s.tradingName} to confirm`, link: '#/ad2/reconciliation' });
       return { ids: made, message: `${made.length} allocation${made.length === 1 ? '' : 's'} submitted for AD2 confirmation.` };
@@ -1220,12 +1413,21 @@
       distinct(a, [l.proposedBy], 'allocation');
       const b = find(db.bills, l.billId);
       need(b && l.amount <= b.outstanding + 0.001, 'The bill no longer has enough outstanding to confirm this allocation.');
+      if (l.remKind === 'disposal') {
+        const d = find(db.disposals, l.remId);
+        need(d && l.amount <= (d.unallocated || 0) + 0.001, 'The FIRC no longer has enough pending knock-off to confirm this allocation.');
+        d.unallocated = round2(d.unallocated - l.amount);
+        d.allocatedTotal = round2((d.allocatedTotal || 0) + l.amount);
+        (d.knockoffs = d.knockoffs || []).push({ billId: b.id, amount: l.amount, allocationId: l.id, at: ctx.now });
+      }
+      if (l.remKind === 'outward') { const o = find(db.outward, l.remId); if (o) (o.allocations = o.allocations || []).push({ billId: b.id, amount: l.amount, via: 'knock-off' }); }
       applyToBill(b, l.amount);
       l.status = 'Confirmed'; l.confirmedBy = stamp(a, ctx.now, 'confirmed');
-      if (l.remKind === 'outward') { const o = find(db.outward, l.remId); if (o) (o.allocations = o.allocations || []).push({ billId: b.id, amount: l.amount, via: 'knock-off' }); }
-      audit(db, a, ctx.now, b.id, `Knock-off against ${l.remId} confirmed — ${fmt(l.amount, l.currency)}`);
-      notify(db, ctx.now, { toSmeId: l.smeId, text: `Knock-off of ${b.id} against ${l.remId} confirmed`, link: '#/sme/knockoff' });
-      return { message: 'Allocation confirmed. Bill balance updated.' };
+      l.ufi = ufiReport(db, ctx.now, l.side, 'knock-off');
+      (b.ufi = b.ufi || []).push(l.ufi.ref);
+      audit(db, a, ctx.now, b.id, `Knock-off against ${l.ref || l.remId} confirmed — ${fmt(l.amount, l.currency)}; reported to ${l.ufi.system} (${l.ufi.ref})`);
+      notify(db, ctx.now, { toSmeId: l.smeId, text: `Knock-off of ${b.id} against ${l.ref || l.remId} confirmed`, link: '#/sme/knockoff' });
+      return { message: `Allocation confirmed. Bill balance updated and reported to ${l.ufi.system} through UFI.` };
     },
   };
   C['recon.reject'] = {
@@ -1234,10 +1436,10 @@
       const l = allocFor(db, p.id);
       need(l.status === 'Proposed', 'Only a proposed allocation can be rejected.');
       const r = txt(p.reason, 'Reason', { max: 300 });
-      l.status = 'Rejected'; l.rejectReason = r;
-      if (l.remKind === 'inward') { const i = find(db.inward, l.remId); if (i) { i.available = round2(i.available + l.amount); i.status = inwardStatus(db, i); } }
-      audit(db, a, ctx.now, l.billId, `Knock-off against ${l.remId} rejected: ${r}`);
-      return { message: 'Allocation rejected.' };
+      l.status = 'Rejected'; l.rejectReason = r; l.rejectedBy = stamp(a, ctx.now, 'rejected');
+      audit(db, a, ctx.now, l.billId, `Knock-off against ${l.ref || l.remId} rejected: ${r}`);
+      notify(db, ctx.now, { toSmeId: l.smeId, text: `Knock-off of ${l.billId} against ${l.ref || l.remId} was rejected: ${r}`, link: '#/sme/knockoff' });
+      return { message: 'Allocation rejected. The amounts are free to allocate again.' };
     },
   };
   C['recon.reverse'] = {
@@ -1249,11 +1451,14 @@
       const b = find(db.bills, l.billId);
       if (b) applyToBill(b, -l.amount);
       l.status = 'Reversed'; l.reversedBy = { ...stamp(a, ctx.now, 'reversed'), reason: r };
-      if (l.source === 'Knock-off' && l.remKind === 'inward') {
-        const i = find(db.inward, l.remId); if (i) { i.available = round2(i.available + l.amount); i.status = inwardStatus(db, i); }
-      }
-      audit(db, a, ctx.now, l.billId, `Allocation against ${l.remId} reversed: ${r}`);
-      return { message: 'Allocation reversed. The bill is outstanding again.' };
+      l.ufiReversal = ufiReport(db, ctx.now, l.side, 'reversal');
+      /* The money stays credited; the FIRC amount is pending knock-off again. */
+      const d = find(db.disposals, l.remKind === 'disposal' ? l.remId : l.disposalId);
+      if (d && l.side === 'Export') { d.unallocated = round2((d.unallocated || 0) + l.amount); d.allocatedTotal = round2(Math.max(0, (d.allocatedTotal || 0) - l.amount)); }
+      if (l.remKind === 'outward') { const o = find(db.outward, l.remId); if (o && o.allocations) { const k = o.allocations.findIndex(x => x.billId === l.billId && x.amount === l.amount); if (k >= 0) o.allocations.splice(k, 1); } }
+      audit(db, a, ctx.now, l.billId, `Allocation against ${l.ref || l.remId} reversed: ${r}; reversal reported to ${l.ufiReversal.system} (${l.ufiReversal.ref})`);
+      notify(db, ctx.now, { toSmeId: l.smeId, text: `Allocation of ${l.billId} against ${l.ref || l.remId} was reversed: ${r}`, link: '#/sme/knockoff' });
+      return { message: 'Allocation reversed and reported. The bill is outstanding again.' };
     },
   };
 
@@ -1275,25 +1480,63 @@
     cap: 'admin.settings',
     run(db, a, p, ctx) {
       const changes = [];
-      ['autoChecker', 'allowUnlinked'].forEach(k => {
+      ['autoChecker', 'allowUnlinked', 'testLab'].forEach(k => {
         if (p[k] === undefined) return;
         db.settings[k] = bool(p[k]);
         changes.push(`${k} ${db.settings[k] ? 'on' : 'off'}`);
       });
+      if (p.marginBand !== undefined) {
+        const v = Number(p.marginBand);
+        need(isFinite(v) && v >= 0 && v <= 50, 'The margin band must be between 0 and 50 paise.');
+        db.settings.marginBand = Math.round(v);
+        changes.push(`marginBand ${db.settings.marginBand}p`);
+      }
       need(changes.length, 'Nothing to change.');
       audit(db, a, ctx.now, 'SETTINGS', 'Settings changed: ' + changes.join(', '));
       return { message: 'Settings saved.' };
     },
   };
+  const RULES = ['required', 'optional', 'goods', 'threshold', 'knockoff'];
   C['policy.setRule'] = {
     cap: 'admin.masters',
     run(db, a, p, ctx) {
       const d = (db.docPolicy || []).find(x => x.product === p.product && x.id === p.docId) || missing('Document rule');
-      const rule = oneOf(p.rule, ['required', 'optional', 'goods', 'threshold'], 'Rule');
-      if (rule === 'threshold' && !d.threshold) d.threshold = 500000;
+      const rule = oneOf(p.rule, RULES, 'Rule');
+      if (rule === 'knockoff') need(d.product === 'TRADE', 'The knock-off rule applies to disposal (TRADE) documents only.');
+      if (rule === 'threshold') {
+        const t = p.threshold != null && p.threshold !== '' ? Number(p.threshold) : (d.threshold || 500000);
+        need(isFinite(t) && t > 0, 'The threshold must be a positive INR amount.');
+        d.threshold = round2(t);
+      }
       const was = d.rule; d.rule = rule;
-      audit(db, a, ctx.now, 'POLICY', `${d.product} · ${d.name}: ${was} → ${rule}`);
+      audit(db, a, ctx.now, 'POLICY', `${d.product} · ${d.name}: ${was} → ${rule}${rule === 'threshold' ? ' above ' + inr(d.threshold) : ''}`);
       return { message: `${d.name} under ${d.product} is now ${rule}.` };
+    },
+  };
+  C['policy.addDoc'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const prod = productOf(db, p.product) || missing('Product');
+      const name = txt(p.name, 'Document name', { max: 80 });
+      const rule = oneOf(p.rule || 'required', RULES, 'Rule');
+      if (rule === 'knockoff') need(prod.id === 'TRADE', 'The knock-off rule applies to disposal (TRADE) documents only.');
+      const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12) || 'doc';
+      let id = base, k = 1;
+      while (db.docPolicy.some(x => x.product === prod.id && x.id === id)) id = base + (++k);
+      need(!db.docPolicy.some(x => x.product === prod.id && x.name.toLowerCase() === name.toLowerCase()), `${name} is already on the ${prod.id} checklist.`);
+      db.docPolicy.push({ product: prod.id, id, name, rule, ...(rule === 'threshold' ? { threshold: 500000 } : {}), added: true });
+      audit(db, a, ctx.now, 'POLICY', `${prod.id} · ${name} added as ${rule}`);
+      return { message: `${name} added to the ${prod.id} checklist.` };
+    },
+  };
+  C['policy.removeDoc'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const d = (db.docPolicy || []).find(x => x.product === p.product && x.id === p.docId) || missing('Document rule');
+      need(db.docPolicy.filter(x => x.product === d.product).length > 1, 'Keep at least one document on each product checklist.');
+      db.docPolicy = db.docPolicy.filter(x => x !== d);
+      audit(db, a, ctx.now, 'POLICY', `${d.product} · ${d.name} removed from the checklist`);
+      return { message: `${d.name} removed from the ${d.product} checklist.` };
     },
   };
   C['purpose.setEnabled'] = {
@@ -1303,9 +1546,352 @@
       need(prod.purposes.includes(p.code), `${p.code} is not mapped to ${prod.id}.`);
       const off = new Set(prod.disabled || []);
       bool(p.enabled) ? off.delete(p.code) : off.add(p.code);
+      need(prod.purposes.some(c => !off.has(c)), `Keep at least one purpose code enabled under ${prod.id}.`);
       prod.disabled = [...off];
       audit(db, a, ctx.now, 'POLICY', `${prod.id} · ${p.code} ${bool(p.enabled) ? 'enabled' : 'disabled'}`);
       return { message: `${p.code} ${bool(p.enabled) ? 'enabled' : 'disabled'} under ${prod.id}.` };
+    },
+  };
+  C['purpose.addInward'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const code = txt(String(p.code || '').toUpperCase(), 'Code', { max: 10, pattern: /^[A-Z0-9]{3,10}$/, patternMsg: 'Code must be 3–10 capital letters or digits.' });
+      const label = txt(p.label, 'Description', { max: 120 });
+      need(!(db.inwardPurposes || []).some(x => x.code === code), `${code} is already an inward purpose.`);
+      (db.inwardPurposes = db.inwardPurposes || []).push({ code, label, added: true });
+      audit(db, a, ctx.now, 'POLICY', `Inward purpose ${code} added — ${label}`);
+      return { message: `${code} added. SMEs can choose it on a disposal instruction.` };
+    },
+  };
+  C['purpose.setInwardEnabled'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const x = (db.inwardPurposes || []).find(y => y.code === p.code) || missing('Inward purpose');
+      x.disabled = !bool(p.enabled);
+      need(db.inwardPurposes.some(y => !y.disabled), 'Keep at least one inward purpose enabled.');
+      audit(db, a, ctx.now, 'POLICY', `Inward purpose ${x.code} ${x.disabled ? 'disabled' : 'enabled'}`);
+      return { message: `${x.code} ${x.disabled ? 'disabled' : 'enabled'}.` };
+    },
+  };
+  C['compliance.setRule'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const r = (db.complianceRules || []).find(x => x.id === p.id) || missing('Compliance rule');
+      const changes = [];
+      if (p.enabled !== undefined) { r.enabled = bool(p.enabled); changes.push(r.enabled ? 'switched on' : 'switched off'); }
+      if (p.weight !== undefined && p.weight !== '') {
+        const w = Number(p.weight);
+        need(isFinite(w) && w >= 0 && w <= 100, 'A weight must be between 0 and 100.');
+        r.weight = Math.round(w); changes.push('weight ' + r.weight);
+      }
+      if (p.param !== undefined && p.param !== '') {
+        if (Array.isArray(r.param)) {
+          const list = (Array.isArray(p.param) ? p.param : String(p.param).split(/[,\n]/)).map(x => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 60);
+          need(list.length, 'Enter at least one entry.');
+          r.param = list; changes.push(list.length + ' entries');
+        } else if (r.param != null) {
+          const v = Number(p.param);
+          need(isFinite(v) && v > 0, 'The threshold must be a positive number.');
+          r.param = round2(v); changes.push('threshold ' + fmt(r.param));
+        }
+      }
+      need(changes.length, 'Nothing to change.');
+      audit(db, a, ctx.now, 'COMPLIANCE', `${r.label}: ${changes.join(', ')}`);
+      return { message: `${r.label} updated. New submissions are scored with it.` };
+    },
+  };
+
+  /* ---------- users ------------------------------------------------------------ */
+  const loginOf = (db, d, l) => (db.logins || []).find(x => x.domainId === String(d || '').trim().toUpperCase() && x.loginId === String(l || '').trim().toUpperCase());
+  function readPassword(raw) {
+    raw = String(raw || '');
+    need(raw.length >= 8 && raw.length <= 72, 'Choose a password of at least 8 characters.');
+    need(/[A-Za-z]/.test(raw) && /[0-9]/.test(raw), 'Use at least one letter and one digit in the password.');
+    return raw;
+  }
+  C['user.add'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const u = p.user || {};
+      const domainId = txt(String(u.domainId || '').toUpperCase(), 'Domain ID', { max: 12, pattern: /^[A-Z0-9]{2,12}$/, patternMsg: 'Domain ID must be 2–12 capital letters or digits.' });
+      const loginId = txt(String(u.loginId || '').toUpperCase(), 'Login ID', { max: 20, pattern: /^[A-Z0-9]{3,20}$/, patternMsg: 'Login ID must be 3–20 capital letters or digits.' });
+      need(!loginOf(db, domainId, loginId), `${domainId}/${loginId} already exists.`);
+      const name = txt(u.name, 'Name', { max: 100 });
+      let role, smeId = null;
+      if (domainId === 'AD2') role = oneOf(u.role, db.roles.filter(r => r.portal === 'AD2').map(r => r.id), 'Role');
+      else {
+        const s = db.smes.find(x => x.domainId === domainId);
+        need(s, `No SME uses Domain ID ${domainId}.`);
+        need(s.status === 'Approved', 'SME users can be added once the SME is approved.');
+        role = 'SME User'; smeId = s.id;
+      }
+      const pw = u.password && ctx.hashPassword ? ctx.hashPassword(readPassword(u.password)) : null;
+      db.logins.push({ domainId, loginId, role, smeId, name, demo: !pw, ...(pw ? { pw } : {}), active: true, addedBy: actorLabel(a), addedAt: ctx.now });
+      audit(db, a, ctx.now, 'USERS', `User ${domainId}/${loginId} (${name}) added as ${role}`);
+      return { message: `${domainId}/${loginId} added as ${role}. ${pw ? 'They sign in with the password you set.' : 'They sign in with the demo passcode.'}` };
+    },
+  };
+  C['user.setActive'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const l = loginOf(db, p.domainId, p.loginId) || missing('User');
+      const on = bool(p.active);
+      need(!(l.domainId === a.domainId && l.loginId === a.loginId) || on, 'You cannot deactivate your own user.');
+      if (!on && l.role === 'AD2 Administrator')
+        need(db.logins.some(x => x !== l && x.role === 'AD2 Administrator' && x.active !== false), 'Keep at least one active Administrator.');
+      l.active = on;
+      audit(db, a, ctx.now, 'USERS', `User ${l.domainId}/${l.loginId} ${on ? 'reactivated' : 'deactivated'}`);
+      return { message: `${l.domainId}/${l.loginId} ${on ? 'can sign in again' : 'is deactivated and cannot sign in'}.` };
+    },
+  };
+  C['user.setRole'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const l = loginOf(db, p.domainId, p.loginId) || missing('User');
+      need(l.domainId === 'AD2', 'Only AD2 users change role here. SME roles follow the application status.');
+      need(!(l.domainId === a.domainId && l.loginId === a.loginId), 'You cannot change your own role.');
+      const role = oneOf(p.role, db.roles.filter(r => r.portal === 'AD2').map(r => r.id), 'Role');
+      if (l.role === 'AD2 Administrator' && role !== l.role)
+        need(db.logins.some(x => x !== l && x.role === 'AD2 Administrator' && x.active !== false), 'Keep at least one active Administrator.');
+      const was = l.role; l.role = role;
+      audit(db, a, ctx.now, 'USERS', `User ${l.domainId}/${l.loginId} role changed: ${was} → ${role}`);
+      return { message: `${l.domainId}/${l.loginId} is now ${role}. It takes effect on their next action.` };
+    },
+  };
+  C['user.resetPassword'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const l = loginOf(db, p.domainId, p.loginId) || missing('User');
+      delete l.pw; l.demo = true;
+      audit(db, a, ctx.now, 'USERS', `Password reset for ${l.domainId}/${l.loginId} — signs in with the demo passcode`);
+      return { message: `${l.domainId}/${l.loginId} now signs in with the demo passcode.` };
+    },
+  };
+
+  /* ---------- test data lab ------------------------------------------------------
+     Makes fresh, realistic data on demand so any flow can be run again once
+     the seeded items are used up: whole new businesses (approved, or as an
+     application waiting for review), more accepted bills and receipts for a
+     business, and requests parked at each workflow stage. Everything it
+     creates is marked test:true and is stamped as coming from the lab.     */
+  const LAB_PARTIES = {
+    USD: { supplier: ['Pacific Rim Components Inc', 'United States', 'Bank of America', 'BOFAUS3N'], buyer: ['Atlantic Home Stores Inc', 'United States'] },
+    EUR: { supplier: ['Rheinwerk Maschinen GmbH', 'Germany', 'Deutsche Bank', 'DEUTDEFF'], buyer: ['Maison Durand SARL', 'France'] },
+    GBP: { supplier: ['Thames Industrial Supplies Ltd', 'United Kingdom', 'HSBC UK', 'HBUKGB4B'], buyer: ['Halden Retail plc', 'United Kingdom'] },
+    AED: { supplier: ['Emirates Trade Hub FZE', 'United Arab Emirates', 'Emirates NBD', 'EBILAEAD'], buyer: ['Gulf Retail LLC', 'United Arab Emirates'] },
+    SGD: { supplier: ['Lion City Logistics Pte Ltd', 'Singapore', 'DBS Bank', 'DBSSSGSG'], buyer: ['Straits Merchants Pte Ltd', 'Singapore'] },
+    JPY: { supplier: ['Osaka Seimitsu KK', 'Japan', 'MUFG Bank', 'BOTKJPJT'], buyer: ['Kyoto Trading Co', 'Japan'] },
+    CHF: { supplier: ['Basel Chem Supplies AG', 'Switzerland', 'UBS Switzerland', 'UBSWCHZH80A'], buyer: ['Alpine Pharma AG', 'Switzerland'] },
+    AUD: { supplier: ['Southern Cross Traders Pty Ltd', 'Australia', 'ANZ', 'ANZBAU3M'], buyer: ['Koala Living Pty Ltd', 'Australia'] },
+  };
+  const party = cur => LAB_PARTIES[cur] || LAB_PARTIES.USD;
+  const ymd = iso => iso.slice(0, 10);
+  const labStamp = (now, verb) => ({ by: 'Test data lab', key: 'LAB/DATA', at: now, verb: verb || 'generated' });
+  const LAB = {
+    sme: { domainId: 'LAB', loginId: 'SME', role: 'SME User', name: 'Test data lab', actingFor: null },
+    maker: { domainId: 'LAB', loginId: 'MAKER', role: 'AD2 Maker', name: 'Test data lab', smeId: null, actingFor: null },
+    checker: { domainId: 'LAB', loginId: 'CHECKER', role: 'AD2 Checker', name: 'Test data lab', smeId: null, actingFor: null },
+  };
+  function labAmount(db, cur, usd) {
+    const r = ((currencyOf(db, 'USD') || {}).refRate || 88) / ((currencyOf(db, cur) || {}).refRate || 88);
+    const v = usd * r;
+    const step = v > 1e6 ? 10000 : 100;
+    return Math.max(step, Math.round(v / step) * step);
+  }
+  const labDoc = (name, now) => ({ filename: name, size: (140 + name.length * 7) + ' KB', type: 'application/pdf', at: now });
+
+  function labBills(db, s, now, type, count, opts) {
+    const ids = [];
+    const curs = (s.config.currencies || ['USD']).slice(0, 2);
+    const k = seq(db, 'lab');
+    for (let j = 0; j < count; j++) {
+      const cur = curs[j % curs.length];
+      const [cp, cc] = type === 'Export' ? party(cur).buyer : party(cur).supplier;
+      const usd = [18000, 42000, 26500, 61000, 9500][(j + k) % 5] * (1 + (k % 5) * 0.04);
+      const amt = labAmount(db, cur, usd);
+      const n = seq(db, 'lab');
+      const accepted = !(opts && opts.pendingLast && j === count - 1);
+      const id = nextId(db.bills, 'BL', 5);
+      db.bills.unshift({ id, smeId: s.id, type, invoiceNumber: `${s.domainId.slice(0, 4)}/${type === 'Export' ? 'EXP' : 'IMP'}/${now.slice(2, 4)}/${String(n).padStart(4, '0')}`,
+        invoiceDate: ymd(addDays(now, -12 - j * 3)), counterparty: cp, counterpartyCountry: cc, currency: cur, amount: amt, adjusted: 0, outstanding: amt,
+        dueDate: ymd(addDays(now, 60 + j * 10)), orderRef: `PO-${String(40000 + n)}`, shipmentRef: `${type === 'Export' ? 'SB' : 'BOE'}-${String(7800000 + n * 13)}`,
+        source: 'Test data lab', review: accepted ? 'Accepted' : 'Submitted', settlement: 'Unsettled',
+        docs: { invoice: labDoc(`${type.toLowerCase()}-invoice-${n}.pdf`, now) }, lodgedBy: labStamp(now, 'lodged'),
+        ...(accepted ? { acceptedBy: labStamp(now, 'accepted') } : {}), test: true });
+      ids.push(id);
+    }
+    return ids;
+  }
+  function labReceipt(db, s, now, cur, amt, remark) {
+    const [rm, rc] = party(cur).buyer;
+    const id = nextId(db.inward, 'IR');
+    db.inward.unshift({ id, smeId: s.id, reference: `SWF-INW-${seq(db, 'inw')}`, valueDate: ymd(now), remitter: rm, remitterCountry: rc,
+      currency: cur, amount: amt, available: amt, status: 'Awaiting Instruction', remittanceType: 'TRADE', purposeCode: '',
+      remarks: remark || '', firc: null, recordedBy: labStamp(now, 'recorded'), test: true });
+    return id;
+  }
+  /* A set of accepted bills and matching receipts for one business. */
+  function labTopUp(db, s, now) {
+    const pm = perm(s), made = { bills: [], receipts: [] };
+    if (pm.importSide) made.bills.push(...labBills(db, s, now, 'Import', 4, { pendingLast: true }));
+    if (pm.exportSide) {
+      const ex = labBills(db, s, now, 'Export', 4, { pendingLast: true });
+      made.bills.push(...ex);
+      const [b1, b2] = ex.map(id => find(db.bills, id));
+      made.receipts.push(labReceipt(db, s, now, b1.currency, b1.amount, `Full settlement of ${b1.invoiceNumber}`));
+      made.receipts.push(labReceipt(db, s, now, b2.currency, round2(Math.round(b2.amount * 1.4 / 100) * 100), `Against ${b2.invoiceNumber} plus advance for the next order`));
+      const c2 = (s.config.currencies || [])[1] || b1.currency;
+      made.receipts.push(labReceipt(db, s, now, c2, labAmount(db, c2, 15000), 'Advance for an order not yet shipped'));
+    }
+    db.accounts.filter(x => x.smeId === s.id && x.currency === 'INR' && x.verified).forEach(x => { x.balance = Math.max(x.balance || 0, 50000000); });
+    return made;
+  }
+  function labDomain(db, key) {
+    const taken = d => d === 'AD2' || db.smes.some(s => s.domainId === d) || db.logins.some(l => l.domainId === d);
+    if (!taken(key)) return key;
+    for (let k = 2; k < 1000; k++) { const d = key.slice(0, 12 - String(k).length) + k; if (!taken(d)) return d; }
+    fail('No free Domain ID for this profile.');
+  }
+  function labCreateSme(db, prof, stage, now) {
+    const domainId = labDomain(db, prof.key);
+    const n = seq(db, 'lab');
+    const suffix = domainId === prof.key ? '' : ' ' + domainId.replace(/^[A-Z]+/, '#');
+    const letters = (prof.key + 'XXXX').replace(/[^A-Z]/g, '');
+    const kind = prof.constitution === 'Proprietorship' ? 'P' : prof.constitution === 'Partnership' ? 'F' : 'C';
+    const pan = letters.slice(0, 3) + kind + letters[3] + String(1000 + (n * 37) % 9000).padStart(4, '0') + 'Z';
+    const id = nextId(db.smes, 'SME');
+    const approved = stage !== 'applicant';
+    const cur0 = prof.currencies[0];
+    const docs = {}; (db.onboardDocs || []).forEach(d => { docs[d.id] = labDoc(`${domainId}-${d.id}.pdf`, now); });
+    const s = { id, legalName: prof.legalName + suffix, tradingName: prof.tradingName + suffix, constitution: prof.constitution,
+      incorporationDate: '2017-06-15', regNumber: `U${String(10000 + n)}${prof.state}2017PTC${String(100000 + n * 7)}`, country: 'India',
+      address: `Plot ${10 + (n % 80)}, Industrial Area, ${prof.city}`, domainId, ad2Name: 'AD2 Trade Services', category: 'SME',
+      pan, gstin: prof.state + pan + '1Z' + String(n % 10), iec: pan,
+      contactName: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`,
+      industry: prof.industry, description: `Test business — ${prof.industry}.`, expectedVolume: 'USD 2,500,000',
+      requestedCurrencies: prof.currencies.slice(), service: prof.permission, source: 'Test data lab', createdBy: 'Test data lab',
+      status: approved ? 'Approved' : 'Submitted', pendingWith: approved ? '—' : 'AD2 Maker', submittedAt: now, approvedAt: approved ? now : null,
+      docs, config: null, test: true, profile: prof.key };
+    if (approved) {
+      const margins = {}; prof.currencies.forEach((c, j) => { margins[c] = Math.round(45 * ((currencyOf(db, c) || {}).marginMultiplier ?? 1)) + j; });
+      s.config = { permission: prof.permission, currencies: prof.currencies.slice(), margins, marginBasis: 'paise',
+        charges: [{ category: 'txn', name: 'Transaction handling fee', basis: 'Fixed', value: 500, currency: 'INR', frequency: 'Per transaction' },
+                  { category: 'swift', name: 'SWIFT charge', basis: 'Fixed', value: 750, currency: 'INR', frequency: 'Per transaction' }],
+        effectiveDate: ymd(now), remarks: 'Test data pricing.' };
+      s.approvedBy = labStamp(now, 'approved');
+    }
+    db.smes.push(s);
+    const acct = (bank, ifsc, cur, type, verified, balance, primary) => db.accounts.push({ id: nextId(db.accounts, 'BA', 3), smeId: id, holder: s.legalName, bank,
+      branch: prof.city, accountNumber: String(50200000000000 + n * 1000 + db.accounts.length), ifsc, currency: cur, type, verified,
+      verifiedOn: verified ? now : null, primary, balance, test: true });
+    acct('HDFC Bank', 'HDFC0001234', 'INR', 'Current', approved, 50000000, true);
+    acct('ICICI Bank', 'ICIC0004321', 'INR', 'Current', false, 2000000, false);
+    if (prof.permission !== 'Import') acct('HDFC Bank', 'HDFC0001234', cur0, 'EEFC', approved, labAmount(db, cur0, 5000), false);
+    db.logins.push({ domainId, loginId: approved ? 'SMEUSER' : 'APPLICANT', role: approved ? 'SME User' : 'SME Applicant', smeId: id,
+      name: prof.contact, demo: true, test: true });
+    if (approved && perm(s).importSide) {
+      prof.currencies.slice(0, 3).forEach(c => {
+        const [nm, ct, bk, sw] = party(c).supplier;
+        db.beneficiaries.push({ id: nextId(db.beneficiaries, 'BEN', 3), smeId: id, name: nm, country: ct, bank: bk, bankCountry: ct, swift: sw,
+          accountNumber: `${ct.slice(0, 2).toUpperCase()}${String(7700000000 + n * 10 + db.beneficiaries.length)}`, currency: c,
+          relationship: 'Supplier', address: ct, addedBy: 'Test data lab', addedOn: now, lastUsed: null, test: true });
+      });
+      db.beneficiaries.push({ id: nextId(db.beneficiaries, 'BEN', 3), smeId: id, name: 'Blocked Trading LLC', country: 'Iran', bank: 'Bank Melli Iran',
+        bankCountry: 'Iran', swift: 'MELIIRTH', accountNumber: `IR${String(8800000000 + n)}`, currency: 'USD',
+        relationship: 'Test only — watchlist and high-risk country, scores High', address: 'Tehran', addedBy: 'Test data lab', addedOn: now, lastUsed: null, test: true });
+    }
+    if (approved) labTopUp(db, s, now);
+    return s;
+  }
+  function labActorOk(db, a, s) {
+    need(db.settings.testLab !== false, 'The test data lab is switched off in Administration → Settings.');
+    if (!isAD2(a)) need(a.smeId === s.id, 'You can generate test data only for your own business.');
+  }
+  C['lab.createSme'] = {
+    cap: 'lab.use',
+    run(db, a, p, ctx) {
+      need(db.settings.testLab !== false, 'The test data lab is switched off in Administration → Settings.');
+      need(isAD2(a), 'New test businesses are created from the AD2 portal.');
+      const prof = (db.testSmes || []).find(x => x.key === p.profile) || missing('Test profile');
+      const stage = oneOf(p.stage || 'approved', ['approved', 'applicant'], 'Stage');
+      const s = labCreateSme(db, prof, stage, ctx.now);
+      const login = db.logins.find(l => l.smeId === s.id);
+      audit(db, a, ctx.now, s.id, `Test business created from the ${prof.key} profile — ${stage === 'approved' ? 'approved with accounts, beneficiaries, bills and receipts' : 'application submitted for review'}`);
+      if (stage === 'applicant') notify(db, ctx.now, { toRole: 'AD2 Maker', text: `New test application ${s.id} — ${s.legalName}`, link: '#/ad2/applications/' + s.id });
+      return { smeId: s.id, domainId: login.domainId, loginId: login.loginId,
+               message: `${s.tradingName} created (${s.id}). Sign in as ${login.domainId} / ${login.loginId} with the demo passcode.` };
+    },
+  };
+  C['lab.topUp'] = {
+    cap: 'lab.use',
+    run(db, a, p, ctx) {
+      const s = smeOf(db, p.smeId || a.smeId) || missing('SME');
+      labActorOk(db, a, s);
+      need(s.status === 'Approved', 'Only an approved business can receive test bills and receipts.');
+      const made = labTopUp(db, s, ctx.now);
+      audit(db, a, ctx.now, s.id, `Test data added — ${made.bills.length} bill(s), ${made.receipts.length} receipt(s); INR balances topped up`);
+      if (made.receipts.length) notify(db, ctx.now, { toSmeId: s.id, text: `${made.receipts.length} test receipt(s) waiting for a disposal instruction`, link: '#/sme/inward' });
+      return { ...made, message: `Added ${made.bills.length} bill${made.bills.length === 1 ? '' : 's'}${made.receipts.length ? ` and ${made.receipts.length} receipts` : ''} for ${s.tradingName}.` };
+    },
+  };
+  /* Parks real requests at each stage by running the real commands as lab
+     users, so every check (documents, rates, reservations) still applies. */
+  C['lab.queue'] = {
+    cap: 'lab.use',
+    run(db, a, p, ctx) {
+      const s = smeOf(db, p.smeId || a.smeId) || missing('SME');
+      labActorOk(db, a, s);
+      need(s.status === 'Approved', 'Only an approved business can have requests generated.');
+      const pm = perm(s), out = [], now = ctx.now;
+      const sme = { ...LAB.sme, smeId: s.id };
+      const acc = db.accounts.find(x => x.smeId === s.id && x.currency === 'INR' && x.verified);
+      need(acc, `${s.tradingName} has no verified INR account.`);
+      const docsFor = (prod, purpose, inrAmt, opts) => {
+        const d = {}; checklist(db, prod, purpose, inrAmt, opts).forEach(x => { d[x.id] = labDoc(`${x.id}-${seq(db, 'lab')}.pdf`, now); }); return d;
+      };
+      const dec = { fema: true, ofac: true };
+      const run = (cmd, actor, payload) => C[cmd].run(db, actor, payload, ctx);
+      if (pm.importSide) {
+        const freeBills = () => db.bills.filter(b => b.smeId === s.id && b.test && b.type === 'Import' && b.review === 'Accepted' && billAvailable(db, b) > 0);
+        if (freeBills().length < 2) labBills(db, s, now, 'Import', 3);
+        const outward = (prod, purpose, bill, stages) => {
+          const bene = db.beneficiaries.find(b => b.smeId === s.id && b.currency === (bill ? bill.currency : s.config.currencies[0]) && b.name !== 'Blocked Trading LLC')
+                    || db.beneficiaries.find(b => b.smeId === s.id && b.name !== 'Blocked Trading LLC');
+          need(bene, `${s.tradingName} has no beneficiary to pay.`);
+          const cur = bill ? bill.currency : (bene.currency || s.config.currencies[0]);
+          const amt = bill ? billAvailable(db, bill) : labAmount(db, cur, 12000);
+          const rate = customerRate(db, cur, marginFor(db, s, cur));
+          const r = run('outward.submit', sme, { draft: {
+            beneficiaryId: bene.id, beneficiary: bene.name, beneficiaryCountry: bene.country, beneficiaryBank: bene.bank,
+            beneficiaryBankCountry: bene.bankCountry, beneficiaryAccount: bene.accountNumber, swift: bene.swift,
+            referenceNumber: 'LAB-' + seq(db, 'lab'), executionDate: ymd(addDays(now, 2)), remittanceType: prod, purposeCode: purpose,
+            currency: cur, amount: amt, debitAccountId: acc.id, rate: { mode: 'booked', bookedAt: now },
+            lcNumber: prod === 'LC' ? 'LC/' + now.slice(2, 4) + '/' + seq(db, 'lab') : '',
+            docs: docsFor(prod, purpose, amt * rate), allocations: bill ? [{ billId: bill.id, amount: amt }] : [], declarations: dec } });
+          const note = { note: 'Generated by the test data lab' };
+          if (stages > 1) run('outward.verify', LAB.maker, { id: r.id, checks: { documents: true, sanctions: true, purpose: true, beneficiary: true }, ...note });
+          if (stages > 2) run('outward.authorise', LAB.checker, { id: r.id, ...note });
+          out.push(r.id);
+        };
+        const fb = freeBills();
+        outward('DIR', 'S0102', fb[0], 1);
+        outward('LC', 'S0101', fb[1], 2);
+        outward('AIR', 'S0101', null, 3);
+      }
+      if (pm.exportSide) {
+        const freeReceipt = () => db.inward.find(i => i.smeId === s.id && i.test && i.available > 0);
+        if (!freeReceipt()) labTopUp(db, s, now);
+        const rc = freeReceipt();
+        const bill = db.bills.find(b => b.smeId === s.id && b.test && b.type === 'Export' && b.review === 'Accepted' && b.currency === rc.currency && billAvailable(db, b) > 0);
+        const applied = bill ? Math.min(billAvailable(db, bill), rc.available) : 0;
+        const option = applied > 0 ? 'knockoff' : 'advance';
+        const r = run('disposal.submit', sme, { draft: { inwardId: rc.id, amount: rc.available, option, purposeCode: 'TRADE', creditAccountId: acc.id,
+          rate: { mode: 'booked', bookedAt: now }, allocations: applied > 0 ? [{ billId: bill.id, amount: applied }] : [],
+          docs: docsFor('TRADE', 'TRADE', 0, { option }), declarations: dec, remarks: 'Generated by the test data lab' } });
+        out.push(r.id);
+      }
+      audit(db, a, ctx.now, s.id, `Test requests generated for ${s.tradingName}: ${out.join(', ')}`);
+      return { ids: out, message: `Generated ${out.join(', ')} — parked at submitted, verified and authorised stages.` };
     },
   };
   C['assist.open'] = {
@@ -1338,29 +1924,33 @@
 
   /* ---------- what each user may see -------------------------------------- */
   const publicLogin = db => l => ({ domainId: l.domainId, loginId: l.loginId, role: l.role, smeId: l.smeId, name: l.name,
-    demo: !!l.demo, tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
+    demo: !!l.demo, active: l.active !== false, test: !!l.test, addedAt: l.addedAt || null,
+    tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
-    'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings'];
+    'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings'];
   const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications'];
 
   function scopeState(db, who) {
     const out = {};
     MASTER_KEYS.forEach(k => { out[k] = clone(db[k]); });
-    out.logins = db.logins.map(publicLogin(db));
     let a = null;
     try { a = resolveActor(db, who, null); } catch (e) { a = null; }
+    /* Sign-in shortcuts list the shared demo accounts; a password account is
+       visible only to AD2 and to its own business. */
+    out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || l.smeId === a.smeId))).map(publicLogin(db));
     if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); out.scope = 'public'; return out; }
     if (isAD2(a)) {
       BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
+      out.complianceRules = clone(db.complianceRules || []);
       out.notifications = out.notifications.filter(n => n.toRole === a.role);
       out.scope = 'ad2';
       return out;
     }
     const sid = a.smeId;
     const mine = r => r.smeId === sid;
-    const strip = r => { delete r.notes; return r; };
+    const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return r; };
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
-      delete s.notes; delete s.pendingConfig; delete s.reviewedBy;
+      delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
       if (s.config) delete s.config.remarks;
       return s;
     });
@@ -1369,7 +1959,7 @@
     out.disposals = clone(db.disposals.filter(mine)).map(strip);
     const ids = new Set([sid, ...out.outward.map(x => x.id), ...out.inward.map(x => x.id), ...out.disposals.map(x => x.id),
                          ...out.bills.map(x => x.id), ...out.jobs.map(x => x.id)]);
-    out.audit = clone(db.audit.filter(x => ids.has(x.record)));
+    out.audit = clone(db.audit.filter(x => ids.has(x.record) && !x.internal));
     out.notifications = clone((db.notifications || []).filter(n => n.toSmeId === sid));
     out.scope = 'sme';
     return out;

@@ -106,9 +106,12 @@
       <tr><td>10</td><td>AD2 Operations</td><td>Releases</td><td><i>Completed</i>: INR debited, UTR and MT103, bill settled</td></tr>
       <tr><td>11–12</td><td>SME, Checker</td><td>Export bill lodged and accepted</td><td>Bill payable against receipts</td></tr>
       <tr><td>13</td><td>AD2 Operations</td><td>Records the incoming SWIFT credit</td><td>Receipt <i>Awaiting Instruction</i>; SME notified</td></tr>
-      <tr><td>14</td><td>SME</td><td>Submits the disposal: bills, credit account, rate, TRADE documents</td><td>Disposal <i>Submitted</i></td></tr>
-      <tr><td>15–17</td><td>Maker, Checker, Operations</td><td>Verify, authorise, process</td><td><i>Processed</i>: INR credited, bill knocked off, FIRC issued</td></tr>
+      <tr><td>14</td><td>SME</td><td>Submits the disposal: amount, purpose, knock-off or advance, credit account, rate, documents, declarations</td><td>Disposal <i>Submitted</i></td></tr>
+      <tr><td>15–17</td><td>Maker, Checker, Operations</td><td>Verify, authorise, process</td><td><i>Processed</i>: account credited, bill knocked off, FIRC issued and reported to EDPMS</td></tr>
     </tbody></table></div></div></div>
+  <p style="font-size:var(--fs-sm);color:var(--muted)">Beyond the guide: partial and advance disposals, EEFC credit, FIRC knock-off, LC settlement,
+    AIR knock-off, High-risk payments, queries and returns, the assisted journey and user administration — all runnable again and again
+    from the <b>Test data lab</b>, which makes new businesses, bills, receipts and parked requests on demand.</p>
 </section>
 
 <section id="states">
@@ -131,12 +134,14 @@
       <div class="flow"><span class="st">Submitted<small>maker</small></span><span class="sep">→</span><span class="st">Verified<small>checker</small></span><span class="sep">→</span>
         <span class="st">Authorised<small>operations</small></span><span class="sep">→</span><span class="st go">Processed<small>FIRC</small></span></div>
       <div class="flow"><span class="st hold">Clarification Required</span><span class="sep">·</span><span class="st no">Rejected<small>amount returns to the receipt</small></span></div>
-      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Receipt: Awaiting Instruction → Instruction Submitted → Processed. Partial disposal leaves the balance available.</p></div></div>
+      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Receipt: Awaiting Instruction → Partially Disposed → Instruction Submitted → Processed.
+        Each instruction takes any part of the receipt and gets its own FIRC; any part not applied to bills stays pending knock-off.</p></div></div>
     <div class="card"><div class="card-head"><h2>Bills and knock-off</h2></div><div class="card-body">
       <div class="flow"><span class="st">Submitted</span><span class="sep">→</span><span class="st go">Accepted<small>checker</small></span></div>
       <div class="flow"><span class="st hold">Query Raised</span><span class="sep">→</span><span class="st">Resubmitted</span><span class="sep">→</span><span class="st go">Accepted</span></div>
-      <div class="flow"><span class="st">Knock-off Proposed<small>SME</small></span><span class="sep">→</span><span class="st go">Confirmed<small>checker</small></span><span class="sep">→</span><span class="st">Reversed<small>operations</small></span></div>
-      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Settlement follows the ledger: Unsettled → Partially Settled → Settled.</p></div></div>
+      <div class="flow"><span class="st">Knock-off Proposed<small>SME</small></span><span class="sep">→</span><span class="st go">Confirmed<small>checker · UFI report</small></span><span class="sep">→</span><span class="st">Reversed<small>operations · UFI reversal</small></span></div>
+      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Import: unmatched payment → import bill. Export: FIRC pending knock-off → export bill.
+        Settlement follows the ledger: Unsettled → Partially Settled → Settled.</p></div></div>
   </div>
 </section>
 
@@ -149,11 +154,12 @@
     <tbody>
       <tr><td><b>AIR</b> — Advance Import Remittance</td><td>4 · S0101, S0104, S0109, S1505</td><td>Proforma Invoice</td><td>None yet — Bill of Entry due in 90 days, knocked off later</td></tr>
       <tr><td><b>DIR</b> — Direct Import Remittance</td><td>6 · S0101, S0102, S0104, S0109, S0501, S1505</td><td>Transport Document · Commercial Invoice · Bill of Entry</td><td>Settles an accepted import bill (required)</td></tr>
+      <tr><td><b>LC</b> — Letter of Credit Settlement <small>added on review</small></td><td>5 · S0101, S0102, S0104, S0109, S1505</td><td>LC copy · Commercial Invoice · Transport Document · Bill of Entry <small>optional</small></td><td>Settles an accepted import bill (required)</td></tr>
       <tr><td><b>OTT</b> — Miscellaneous Remittance</td><td>110 services and current-account codes</td><td>Invoice · Form 145 (was 15CA) · Transport Document <small>required for goods-import codes, else optional</small> · Form 146 (was 15CB) <small>required above ₹5,00,000</small></td><td>Optional</td></tr>
-      <tr><td><b>TRADE</b> — disposal instructions</td><td>—</td><td>Disposal Instruction Letter · Commercial Export Invoice · Shipping Bill</td><td>Applied to accepted export bills (required)</td></tr>
+      <tr><td><b>TRADE</b> — disposal instructions</td><td>Inward purpose TRADE</td><td>Disposal Instruction Letter · Commercial Export Invoice and Shipping Bill <small>when knocking off bills</small></td><td>Knocked off now, or credited as an advance and knocked off later</td></tr>
     </tbody></table></div></div></div>
   <p style="font-size:var(--fs-sm);color:var(--muted)">The Administrator can stop a purpose code being offered and change any document rule
-    (required, optional, goods-only, above threshold) under Administration.</p>
+    (required, optional, goods-only, above threshold, when knocking off bills), add documents and inward purposes, and tune the compliance rules under Administration.</p>
 </section>
 
 <section id="roles">
@@ -165,10 +171,11 @@
     <tbody>
       <tr><td>SME Applicant</td><td>Submits the application, answers queries</td><td>All transactions until approved</td></tr>
       <tr><td>SME User</td><td>Payments, disposals, bills, knock-off proposals, masters</td><td>Approving its own work</td></tr>
+      <tr><td>AD2 Sales</td><td>Offline applications; transacts for its customers (assisted journey)</td><td>Verify, authorise, release, confirm</td></tr>
       <tr><td>AD2 Maker</td><td>Prices applications; verifies payments and disposals; assisted journey</td><td>Approve, authorise, release, confirm</td></tr>
       <tr><td>AD2 Checker</td><td>Approves applications; authorises; accepts bills; confirms knock-offs</td><td>Preparing, verifying or releasing</td></tr>
       <tr><td>AD2 Operations</td><td>Records inward credits; releases payments; processes disposals; reverses</td><td>Approving, verifying, authorising</td></tr>
-      <tr><td>AD2 Administrator</td><td>Purpose codes, document policy, settings</td><td>All transaction authority</td></tr>
+      <tr><td>AD2 Administrator</td><td>Purpose codes, document policy, compliance rules, users, settings, audit</td><td>All transaction authority</td></tr>
     </tbody></table></div></div></div>
 </section>
 
@@ -181,7 +188,10 @@
       <tr><td>Authorisation</td><td>Role and business re-read from the stored login on every request — an approval or role change applies at once and a token can never grant more than its login holds.</td></tr>
       <tr><td>Data isolation</td><td>An SME's session receives only its own records; AD2 internal notes and pricing remarks never leave the server for SME users; password hashes never leave the server.</td></tr>
       <tr><td>Rates</td><td>A booked rate is recalculated on the server from the approved margin and expires after 48 hours. A deal rate must sit within 3% of the reference rate.</td></tr>
-      <tr><td>Bills</td><td>Allocations are capped at what is left after other open payments, disposals and proposals reserve their share — a bill cannot be paid twice.</td></tr>
+      <tr><td>Bills and FIRCs</td><td>Allocations are capped at what is left after other open payments, disposals and proposals reserve their share — a bill cannot be paid twice, and a FIRC cannot be knocked off twice.</td></tr>
+      <tr><td>Compliance</td><td>Every outward request and disposal is scored on configurable rules at submission; High needs a reason from the maker and the checker. FEMA and sanctions declarations are required. The SME never sees scores or reasons.</td></tr>
+      <tr><td>Workspaces</td><td>Each role has its own sidebar; a role cannot open another role's screens by URL, and the API refuses anything outside its capabilities. Deactivated users are refused at sign-in and on their next action.</td></tr>
+      <tr><td>Assisted margin</td><td>AD2 may price an assisted request only within the configured band below the approved margin; the override is audited.</td></tr>
       <tr><td>Balances</td><td>Release debits the INR account and is refused if funds are short; processing a disposal credits it.</td></tr>
       <tr><td>Input</td><td>Every field is type-, length- and format-checked on the server (PAN, GSTIN, IEC, IFSC, SWIFT, dates, amounts); request bodies are capped.</td></tr>
       <tr><td>Browser</td><td>Content Security Policy (no inline or third-party script), frame-ancestors self, nosniff, strict referrer, HSTS; every value rendered is escaped.</td></tr>
@@ -199,8 +209,9 @@
       <tr><td class="mono">accounts · beneficiaries</td><td>Account master with balances and PennyDrop status; overseas payees</td></tr>
       <tr><td class="mono">bills</td><td>Import and export bills with review status and settlement</td></tr>
       <tr><td class="mono">outward</td><td>Payments with product, purpose, rate, charges, documents, allocations, <i>wf</i> (who did each stage), UTR</td></tr>
-      <tr><td class="mono">inward · disposals</td><td>Receipts and the instructions against them, with FIRCs</td></tr>
-      <tr><td class="mono">allocations</td><td>The ledger of every remittance applied to a bill — confirmed, proposed or reversed</td></tr>
+      <tr><td class="mono">inward · disposals</td><td>Receipts and the instructions against them — amount, purpose, option, credit account, FIRC and amount pending knock-off</td></tr>
+      <tr><td class="mono">allocations</td><td>The ledger of every remittance applied to a bill — proposed, confirmed, rejected or reversed — with its UFI report</td></tr>
+      <tr><td class="mono">complianceRules · inwardPurposes · testSmes</td><td>Scoring rules; disposal purposes; test data profiles</td></tr>
       <tr><td class="mono">audit · notifications</td><td>Who did what; what each role or business needs to know</td></tr>
     </tbody></table></div></div></div>
 </section>
