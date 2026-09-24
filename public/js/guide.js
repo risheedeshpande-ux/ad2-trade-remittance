@@ -15,7 +15,7 @@ function guideTarget() {
   if (!DB.smes.length) return null;
   /* otherwise the newest business registered after the seed */
   const seeded = new Set(SEED.smes.map(s => s.id));
-  const fresh = DB.smes.filter(s => !seeded.has(s.id));
+  const fresh = DB.smes.filter(s => !seeded.has(s.id) && !s.test);
   if (fresh.length) return fresh[fresh.length - 1];
   return null;
 }
@@ -55,7 +55,7 @@ function guideSteps() {
       done: !!imp, acct:smeAcct, dest:'#/sme/bills/import', tab:'form', skip: s && !pm.importSide },
     { who:'AD2 Checker', title:'Accept the import bill', hint:'Bills → To accept → Accept.',
       done: imp && imp.review === 'Accepted', acct:CHECKER, dest:'#/ad2/bills/import', skip: s && !pm.importSide },
-    { who:'SME', title:'Raise a DIR payment against the bill', hint:'Choose DIR, purpose S0102, book the rate, allocate the bill, upload the three documents.',
+    { who:'SME', title:'Raise a DIR payment against the bill', hint:'Choose DIR, purpose S0102, book the rate, allocate the bill, upload the three documents and accept the declarations.',
       done: !!o, acct:smeAcct, dest:'#/sme/outward/new', skip: s && !pm.importSide },
     { who:'AD2 Maker', title:'Verify the payment', hint:'Tick the document, sanctions, purpose and beneficiary checks.',
       done: at(o, ['Verified','Authorised','Completed']), acct:MAKER, dest: o && '#/ad2/outward/' + o.id, skip: s && !pm.importSide },
@@ -71,13 +71,13 @@ function guideSteps() {
       done: exp && exp.review === 'Accepted', acct:CHECKER, dest:'#/ad2/bills/export', skip: s && !pm.exportSide },
     { who:'AD2 Operations', title:'Record the incoming SWIFT credit', hint:'Inward & Disposal → Record incoming remittance → “Fill from an outstanding export bill”.',
       done: !!i, acct:OPS, dest:'#/ad2/inward', open:'in-record', skip: s && !pm.exportSide },
-    { who:'SME', title:'Submit the disposal instruction', hint:'Apply the receipt to the export bill, book the rate, upload the TRADE documents.',
+    { who:'SME', title:'Submit the disposal instruction', hint:'Keep the full amount, choose “Knock off against export bills”, apply it to the bill, pick the INR account, book the rate, upload the documents and accept the declarations.',
       done: !!d, acct:smeAcct, dest: i ? '#/sme/inward/' + i.id + '/dispose' : '#/sme/inward', skip: s && !pm.exportSide },
-    { who:'AD2 Maker', title:'Verify the disposal', hint:'Documents, bill match and credit account.',
+    { who:'AD2 Maker', title:'Verify the disposal', hint:'Documents, remitter screening, bill match and credit account.',
       done: at(d, ['Verified','Authorised','Processed']), acct:MAKER, dest: d && '#/ad2/disposals/' + d.id, skip: s && !pm.exportSide },
     { who:'AD2 Checker', title:'Authorise the disposal', hint:'',
       done: at(d, ['Authorised','Processed']), acct:CHECKER, dest: d && '#/ad2/disposals/' + d.id, skip: s && !pm.exportSide },
-    { who:'AD2 Operations', title:'Credit the account and issue the FIRC', hint:'Knocks off the export bill and credits INR.',
+    { who:'AD2 Operations', title:'Credit the account and issue the FIRC', hint:'Knocks off the export bill, credits INR and reports the FIRC to EDPMS through UFI.',
       done: at(d, ['Processed']), acct:OPS, dest: d && '#/ad2/disposals/' + d.id, skip: s && !pm.exportSide },
   ];
 }

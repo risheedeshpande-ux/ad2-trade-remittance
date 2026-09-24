@@ -125,6 +125,7 @@ async function startServer() {
       await page.selectOption('#or-debit', acctOpt); await page.waitForTimeout(250);
       await click('[data-act="or-book-rate"]');
       while (await page.locator('[data-act="doc-sample"][data-scope="or"]').count()) await click('[data-act="doc-sample"][data-scope="or"]');
+      await page.check('[data-act="or-dec"][data-dk="fema"]'); await page.check('[data-act="or-dec"][data-dk="ofac"]');
       await click('[data-act="or-submit"]'); await idle();
       await page.waitForSelector('h1:has-text("Submitted")');
     });
@@ -179,6 +180,7 @@ async function startServer() {
       await page.selectOption('#di-acct', acctOpt);
       await click('[data-act="di-book-rate"]');
       while (await page.locator('[data-act="doc-sample"][data-scope="di"]').count()) await click('[data-act="doc-sample"][data-scope="di"]');
+      await page.check('[data-act="di-dec"][data-dk="fema"]'); await page.check('[data-act="di-dec"][data-dk="ofac"]');
       await click('[data-act="di-submit"]'); await idle();
       await page.waitForSelector('h1:has-text("Submitted")');
     });
@@ -206,7 +208,7 @@ async function startServer() {
 
     await step('18 refusals hold in the browser', async () => {
       /* the maker cannot authorise, even by calling the API directly */
-      await page.selectOption('#roleswitch', 'AD2|MAKER'); await idle(); await page.waitForTimeout(600);
+      await page.evaluate(() => switchTo('AD2', 'MAKER')); await idle(); await page.waitForTimeout(600);
       const res = await page.evaluate(async () => {
         try { await send('outward.authorise', { id: 'OR-5103' }); return 'allowed'; } catch (e) { return e.status + ' ' + e.message; }
       });

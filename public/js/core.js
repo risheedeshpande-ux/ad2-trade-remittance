@@ -358,6 +358,7 @@ function toast(msg, kind = '') {
   el.className = 'toast ' + kind;
   el.textContent = msg;
   host.appendChild(el);
+  while (host.children.length > 3) host.firstChild.remove();
   setTimeout(() => el.remove(), kind === 'err' ? 6000 : 4200);
 }
 
@@ -396,14 +397,14 @@ const BADGE = {
   'Draft':'b-grey','Submitted':'b-blue','Under Review':'b-blue','Pending Approval':'b-purple','Clarification Required':'b-amber',
   'Query Raised':'b-amber','Resubmitted':'b-blue','Verified':'b-purple','Authorised':'b-teal','Processing':'b-purple',
   'Completed':'b-green','Processed':'b-green','Approved':'b-green','Accepted':'b-green','Rejected':'b-red','Failed':'b-red',
-  'Awaiting Instruction':'b-amber','Instruction Submitted':'b-blue',
+  'Awaiting Instruction':'b-amber','Instruction Submitted':'b-blue','Partially Disposed':'b-amber',
   'Unsettled':'b-grey','Partially Settled':'b-amber','Settled':'b-green',
   'Proposed':'b-amber','Confirmed':'b-green','Reversed':'b-grey',
 };
 const badge = s => `<span class="badge ${BADGE[s] || 'b-grey'}">${esc(s)}</span>`;
 
 const kpi = (label, value, opts = {}) => `
-  <button class="kpi ${opts.tone || ''}" type="button" ${opts.go ? `data-act="go" data-href="${opts.go}"` : ''}>
+  <button class="kpi ${opts.tone || ''}" type="button" ${opts.go && navAllows(opts.go) ? `data-act="go" data-href="${opts.go}"` : ''}>
     <div class="lbl">${esc(label)}</div>
     <div class="val">${value}${opts.unit ? `<small>${esc(opts.unit)}</small>` : ''}</div>
     ${opts.delta ? `<div class="delta ${opts.deltaTone || ''}">${esc(opts.delta)}</div>` : ''}
@@ -484,61 +485,113 @@ function docRows(list, docs, scope, { readonly = false } = {}) {
     </div>`; }).join('')}</div>`;
 }
 
-/* ---------- 7. navigation ------------------------------------------------- */
-const SME_NAV = [
-  { grp:'Transact' },
-  { href:'#/sme/dashboard',    label:'Dashboard',             chip:'DB', tone:'--chip-db' },
-  { href:'#/sme/outward',      label:'Outward Remittance',    chip:'OR', tone:'--chip-or', side:'import' },
-  { href:'#/sme/inward',       label:'Inward Remittance',     chip:'IR', tone:'--chip-ir', side:'export' },
-  { grp:'Bill Lodgement' },
-  { href:'#/sme/bills/export', label:'Export Bill Lodgement', chip:'EB', tone:'--chip-im', sub:true, side:'export' },
-  { href:'#/sme/bills/import', label:'Import Bill Lodgement', chip:'IB', tone:'--chip-er', sub:true, side:'import' },
-  { href:'#/sme/knockoff',     label:'Bill Knock-off',        chip:'KO', tone:'--chip-di' },
-  { grp:'Insight' },
-  { href:'#/sme/reports',      label:'Reports',               chip:'RP', tone:'--chip-rp' },
-  { href:'#/sme/integrations', label:'Integrations',          chip:'UP', tone:'--chip-up' },
-  { href:'#/sme/profile',      label:'Profile',               chip:'PR', tone:'--chip-pr' },
-];
-
-const AD2_NAV = [
-  { grp:'Operations' },
-  { href:'#/ad2/dashboard',      label:'Dashboard',          chip:'DB', tone:'--chip-db' },
-  { href:'#/ad2/queue',          label:'My work queue',      chip:'WQ', tone:'--chip-di', count:true },
-  { href:'#/ad2/applications',   label:'SME Applications',   chip:'SA', tone:'--chip-or' },
-  { href:'#/ad2/directory',      label:'SME Directory',      chip:'SD', tone:'--chip-pr' },
-  { grp:'Transactions' },
-  { href:'#/ad2/outward',        label:'Outward Requests',   chip:'OR', tone:'--chip-or' },
-  { href:'#/ad2/inward',         label:'Inward & Disposal',  chip:'IR', tone:'--chip-ir' },
-  { href:'#/ad2/bills',          label:'Bills',              chip:'BL', tone:'--chip-bl' },
-  { href:'#/ad2/reconciliation', label:'Reconciliation',     chip:'RC', tone:'--chip-rc' },
-  { grp:'Administration' },
-  { href:'#/ad2/reports',        label:'Reports',            chip:'RP', tone:'--chip-rp' },
-  { href:'#/ad2/admin',          label:'Administration',     chip:'AD', tone:'--chip-ad' },
-];
+/* ---------- 7. navigation -------------------------------------------------
+   Each role gets its own sidebar, grouped around the work that role does.
+   The sidebar collapses to an icon rail (remembered per browser).          */
+const NI = {
+  /* SME portal */
+  smeDash:   { href:'#/sme/dashboard',    label:'Dashboard',              chip:'DB', tone:'--chip-db' },
+  smeOut:    { href:'#/sme/outward',      label:'Outward remittance',     chip:'OR', tone:'--chip-or', side:'import' },
+  smeIn:     { href:'#/sme/inward',       label:'Inward & disposal',      chip:'IR', tone:'--chip-ir', side:'export' },
+  smeExp:    { href:'#/sme/bills/export', label:'Export bills',           chip:'EB', tone:'--chip-im', side:'export' },
+  smeImp:    { href:'#/sme/bills/import', label:'Import bills',           chip:'IB', tone:'--chip-er', side:'import' },
+  smeKo:     { href:'#/sme/knockoff',     label:'Knock-off',              chip:'KO', tone:'--chip-di' },
+  smeRep:    { href:'#/sme/reports',      label:'Reports',                chip:'RP', tone:'--chip-rp' },
+  smeInt:    { href:'#/sme/integrations', label:'Integrations',           chip:'UP', tone:'--chip-up' },
+  smeProf:   { href:'#/sme/profile',      label:'Accounts & beneficiaries', chip:'PR', tone:'--chip-pr' },
+  smeLab:    { href:'#/sme/lab',          label:'Test data',              chip:'TD', tone:'--chip-ad', lab:true },
+  /* AD2 portal */
+  dash:      { href:'#/ad2/dashboard',      label:'Dashboard',            chip:'DB', tone:'--chip-db' },
+  queue:     { href:'#/ad2/queue',          label:'My work queue',        chip:'WQ', tone:'--chip-di', count:true },
+  apps:      { href:'#/ad2/applications',   label:'SME applications',     chip:'SA', tone:'--chip-or' },
+  dir:       { href:'#/ad2/directory',      label:'SME directory',        chip:'SD', tone:'--chip-pr' },
+  out:       { href:'#/ad2/outward',        label:'Outward requests',     chip:'OR', tone:'--chip-or' },
+  inw:       { href:'#/ad2/inward',         label:'Inward & disposal',    chip:'IR', tone:'--chip-ir' },
+  bills:     { href:'#/ad2/bills',          label:'Bills',                chip:'BL', tone:'--chip-bl' },
+  recon:     { href:'#/ad2/reconciliation', label:'Reconciliation',       chip:'RC', tone:'--chip-rc' },
+  reports:   { href:'#/ad2/reports',        label:'Reports',              chip:'RP', tone:'--chip-rp' },
+  lab:       { href:'#/ad2/lab',            label:'Test data lab',        chip:'TL', tone:'--chip-ad', lab:true },
+  aPurpose:  { href:'#/ad2/admin/purpose',    label:'Purpose codes',      chip:'PC', tone:'--chip-or' },
+  aDocs:     { href:'#/ad2/admin/docs',       label:'Document policy',    chip:'DP', tone:'--chip-bl' },
+  aComp:     { href:'#/ad2/admin/compliance', label:'Compliance rules',   chip:'CR', tone:'--chip-er' },
+  aMasters:  { href:'#/ad2/admin/masters',    label:'Currencies & checklists', chip:'CM', tone:'--chip-ir' },
+  aSettings: { href:'#/ad2/admin/settings',   label:'Platform settings',  chip:'ST', tone:'--chip-ad' },
+  aUsers:    { href:'#/ad2/admin/users',      label:'Users',              chip:'US', tone:'--chip-pr' },
+  aRoles:    { href:'#/ad2/admin/roles',      label:'Roles & permissions', chip:'RL', tone:'--chip-di' },
+  aAudit:    { href:'#/ad2/admin/audit',      label:'Audit log',          chip:'AL', tone:'--chip-rc' },
+};
+const NAV_BY_ROLE = {
+  'SME User':         [['Home', 'smeDash'], ['Transact', 'smeOut', 'smeIn'], ['Bills', 'smeExp', 'smeImp', 'smeKo'],
+                       ['Records', 'smeRep', 'smeInt'], ['Settings', 'smeProf', 'smeLab']],
+  'SME Applicant':    [['Application', 'smeDash']],
+  'AD2 Sales':        [['Home', 'dash'], ['My customers', 'dir', 'apps'], ['Track', 'out', 'inw', 'bills'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Maker':        [['Home', 'dash', 'queue'], ['Onboarding', 'apps', 'dir'], ['Transactions', 'out', 'inw', 'bills', 'recon'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Checker':      [['Home', 'dash', 'queue'], ['Approvals', 'apps', 'out', 'inw', 'bills', 'recon'], ['Customers', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Operations':   [['Home', 'dash', 'queue'], ['Settlement', 'out', 'inw', 'recon'], ['Records', 'bills', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
+                       ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Tools', 'lab']],
+};
+/* Routes each AD2 role may open (anything in its sidebar, plus detail pages under them). */
+function navAllows(hash) {
+  if (!S || !isAD2() || acting()) return true;
+  const groups = NAV_BY_ROLE[S.role] || [];
+  const hrefs = groups.flatMap(g => g.slice(1).map(k => NI[k].href));
+  const base = hash.split('/').slice(0, 3).join('/');
+  if (base === '#/ad2/disposals') return hrefs.includes('#/ad2/inward');
+  if (base === '#/ad2/admin') return hrefs.some(h => h.startsWith('#/ad2/admin'));
+  return hrefs.some(h => h.split('/').slice(0, 3).join('/') === base);
+}
+const navMini = () => document.body.classList.contains('nav-mini');
+function setNavMini(on) { document.body.classList.toggle('nav-mini', on); localSet('ad2-nav-mini', on ? 1 : null); }
 
 function navHTML() {
   const ad2Home = isAD2() && !acting();
   const me = !ad2Home ? sme(ctxSmeId()) : null;
-  let items = ad2Home ? AD2_NAV : SME_NAV;
-  if (me && me.status !== 'Approved') items = [{ grp:'Application' }, SME_NAV[1]];
-  else if (me) items = items.filter(it => !it.side || (it.side === 'import' ? perm(me).importSide : perm(me).exportSide));
+  const role = ad2Home ? S.role : (me && me.status !== 'Approved' ? 'SME Applicant' : 'SME User');
+  const groups = NAV_BY_ROLE[role] || NAV_BY_ROLE['SME User'];
   const hash = location.hash || '';
   const qn = ad2Home ? myQueue().length : 0;
-  const rows = items.map(it => {
-    if (it.grp) return `<div class="grp">${esc(it.grp)}</div>`;
-    const on = hash.startsWith(it.href) ? 'on' : '';
-    return `<a href="${it.href}" class="${on} ${it.sub ? 'sub-item' : ''}">
-      <span class="ic" style="background:var(${it.tone})">${esc(it.chip)}</span>${esc(it.label)}
-      ${it.count && qn ? `<span class="navcount">${qn}</span>` : ''}</a>`;
+  const show = it => (!it.side || !me || (it.side === 'import' ? perm(me).importSide : perm(me).exportSide))
+    && (!it.lab || DB.settings.testLab !== false);
+  const rows = groups.map(([grp, ...keys]) => {
+    const items = keys.map(k => NI[k]).filter(show);
+    if (!items.length) return '';
+    return `<div class="grp"><span>${esc(grp)}</span></div>` + items.map(it => {
+      const on = hash === it.href || hash.startsWith(it.href + '/') ? 'on' : '';
+      return `<a href="${it.href}" class="${on}" title="${esc(it.label)}">
+        <span class="ic" style="background:var(${it.tone})">${esc(it.chip)}</span><span class="lbl">${esc(it.label)}</span>
+        ${it.count && qn ? `<span class="navcount">${qn}</span>` : ''}</a>`;
+    }).join('');
   }).join('');
   const title = ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
-  const sub = ad2Home ? 'Trade remittance operations' : (me?.tradingName || me?.legalName || 'Trade services');
+  const sub = ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
   return `<nav class="nav" aria-label="Main">
     <div class="brand"><span class="mark">◈</span>
-      <span><span class="name">${esc(title)}</span><span class="mod">${esc(sub)}</span></span></div>
+      <span class="bt"><span class="name">${esc(title)}</span><span class="mod">${esc(sub)}</span></span></div>
     ${rows}
-    <div class="navfoot">AD2 Trade Remittance · ${API.mode === 'server' ? 'live demo' : 'local demo'}</div>
+    <div class="navfoot">
+      <button type="button" class="navmin" data-act="nav-mini" aria-label="${navMini() ? 'Expand' : 'Collapse'} sidebar" title="${navMini() ? 'Expand' : 'Collapse'} sidebar">${navMini() ? '»' : '«'}</button>
+      <span class="lbl">AD2 Trade Remittance · ${API.mode === 'server' ? 'live' : 'local'}</span></div>
   </nav>`;
+}
+
+/* Switch between accounts: grouped, searchable, and quicker than a long list. */
+function switchUserModal() {
+  const staff = DB.logins.filter(l => l.domainId === 'AD2' && l.active !== false);
+  const biz = DB.logins.filter(l => l.domainId !== 'AD2' && l.active !== false);
+  const row = l => `<button type="button" class="swrow ${S.domainId === l.domainId && S.loginId === l.loginId ? 'me' : ''}" data-act="switch-user"
+      data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" data-q="${esc((l.domainId + ' ' + l.loginId + ' ' + l.role + ' ' + (l.name || '') + ' ' + (l.tradingName || '')).toLowerCase())}">
+      <b>${esc(l.name || l.loginId)}</b><span>${esc(l.role)}${l.tradingName ? ' · ' + esc(l.tradingName) : ''}</span>
+      <small>${esc(l.domainId)} / ${esc(l.loginId)}${l.test ? ' · test' : ''}${l.demo ? '' : ' · own password'}</small></button>`;
+  const roles = [...new Set(staff.map(l => l.role))].sort((a, b) => (roleDef(a)?.order || 0) - (roleDef(b)?.order || 0));
+  modal({ title:'Switch user', wide:true, body:`
+    <input type="search" id="sw-q" data-act="sw-filter" placeholder="Search by name, role, business or Domain ID" aria-label="Search users" style="width:100%;margin-bottom:14px">
+    <div class="swgrid">
+      <div><h3 class="swh">AD2 staff</h3>${roles.map(r => `<div class="swgrp">${staff.filter(l => l.role === r).map(row).join('')}</div>`).join('')}</div>
+      <div><h3 class="swh">Businesses</h3>${biz.map(row).join('') || '<p style="color:var(--muted)">No business users.</p>'}</div>
+    </div>
+    <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:12px">Four-eyes still applies: whoever raised or verified a request cannot take the next step on it.</p>` });
+  setTimeout(() => $('#sw-q')?.focus(), 30);
 }
 
 /* Notifications addressed to this user since they last looked. */
@@ -553,16 +606,13 @@ function unreadCount() {
 }
 
 function topHTML(crumb) {
-  const opts = DB.logins.map(a =>
-    `<option value="${esc(a.domainId)}|${esc(a.loginId)}" ${S.domainId === a.domainId && S.loginId === a.loginId ? 'selected' : ''}>
-       ${esc(a.role)}${a.tradingName ? ' — ' + esc(a.tradingName) : (a.name ? ' — ' + esc(a.name) : '')}</option>`).join('');
   const initials = (S.name || S.role).split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
   const n = unreadCount();
   return `<div class="top">
+    <button class="ibtn-plain" type="button" data-act="nav-mini" aria-label="Toggle sidebar" title="Collapse or expand the sidebar">☰</button>
     <div class="crumb">${crumb}</div>
     <div class="spacer"></div>
-    <div class="rolepick"><label for="roleswitch">Demo role</label>
-      <select id="roleswitch" data-act="switch-role">${opts}</select></div>
+    <button class="btn btn-plain btn-sm" type="button" data-act="switch-open" title="Sign in as another demo user">Switch user</button>
     <button class="bell" type="button" data-act="notifications" aria-label="Notifications${n ? ', ' + n + ' new' : ''}">🔔${n ? `<span>${n}</span>` : ''}</button>
     <div class="who"><span class="av">${esc(initials)}</span>
       <span class="meta"><b>${esc(S.name || '')}</b><span>${esc(S.role)}</span></span></div>
@@ -615,7 +665,11 @@ const publicTop = back => `<div class="appbar"><span class="wordmark">Remit<i>4<
 
 /* ---------- 8. drafts shared across views --------------------------------- */
 let DRAFT = null, OR_DRAFT = null, DI_DRAFT = null, BILL_DRAFT = null, REVIEW = null, RESP = null;
-function resetDrafts() { DRAFT = null; OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null; REVIEW = null; RESP = null; }
+function resetDrafts() {
+  DRAFT = null; OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null; REVIEW = null; RESP = null;
+  /* list tabs and filters belong to the person who set them */
+  try { recTab = 'Proposed'; KO = { side:'Import', currency:'', allocations:[], focus:'' }; outTab = 'All'; outSearch = ''; billSearch = ''; } catch (e) {}
+}
 
 function markField(key, ok) {
   const el = document.querySelector(`[data-fld="${key}"]`);

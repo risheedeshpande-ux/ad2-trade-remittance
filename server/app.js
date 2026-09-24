@@ -89,6 +89,7 @@ async function handle({ method, route, query, headers, body, ip }) {
         return json(401, { error: 'Domain ID, Login ID or password is incorrect.', code: 'auth' });
       }
       auth.clearFailures(ip);
+      if (login.active === false) return json(403, { error: 'This user has been deactivated. Contact your administrator.', code: 'forbidden' });
       const sme = login.smeId && state.smes.find(s => s.id === login.smeId);
       if (sme && sme.status === 'Rejected') return json(403, { error: 'This application was rejected. Access is not available.', code: 'forbidden' });
       return json(200, { token: auth.issueToken(login), user: publicUser(state, login) });

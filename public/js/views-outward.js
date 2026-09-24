@@ -64,10 +64,12 @@ function newOutwardDraft(from) {
     id:null, smeId:ctxSmeId(), beneficiaryId:'', beneficiary:'', beneficiaryCountry:'', beneficiaryAccount:'',
     beneficiaryBank:'', beneficiaryBankCountry:'', swift:'',
     currency:'', amount:'', remittanceType:'', purposeCode:'', executionDate:'', debitAccountId:'',
-    referenceNumber:'', allocations:[], docs:{}, rate:RATE_NONE(), purposeFilter:'',
+    referenceNumber:'', lcNumber:'', allocations:[], docs:{}, rate:RATE_NONE(), purposeFilter:'',
+    declarations:{ fema:false, ofac:false }, marginOverride:null,
   };
   if (!from) return base;
-  return { ...base, ...clone(from), rate:RATE_NONE(), purposeFilter:'', allocations:clone(from.allocations || []), docs:clone(from.docs || {}) };
+  return { ...base, ...clone(from), rate:RATE_NONE(), purposeFilter:'', allocations:clone(from.allocations || []), docs:clone(from.docs || {}),
+           declarations:{ fema:false, ofac:false } };
 }
 function availableCurrencies(smeRec) {
   if (isAD2()) return DB.currencies.map(c => c.code);
@@ -88,7 +90,9 @@ function viewOutwardNew() {
   const selBene = bene(d.beneficiaryId);
   const beneCurWarn = !!(selBene && d.currency && selBene.currency && selBene.currency !== d.currency);
 
-  const margin = d.currency ? marginFor(me, d.currency) : 0;
+  const approvedMargin = d.currency ? marginFor(me, d.currency) : 0;
+  const margin = d.rate.mode !== 'none' ? d.rate.margin
+    : (acting() && isAD2() && d.marginOverride != null && d.marginOverride !== '' ? Number(d.marginOverride) : approvedMargin);
   const rate = d.rate.mode === 'none' ? customerRate(d.currency, margin) : d.rate.customerRate;
   const amt = Number(d.amount) || 0;
   const charges = me?.config?.charges || [];
@@ -103,38 +107,9 @@ function viewOutwardNew() {
   const shown = q ? allPurposes.filter(x => (x.code + ' ' + x.label).toLowerCase().includes(q)) : allPurposes;
   if (p && !shown.some(x => x.code === p.code)) shown.unshift(p);
 
-  let rateBox;
-  if (d.rate.mode === 'booked') {
-    const left = Math.max(0, Math.round((new Date(d.rate.expiresAt) - Date.now()) / 3600000));
-    rateBox = `<div class="ratebox locked"><div class="row">
-        <div><div class="k" style="font-size:var(--fs-xs);text-transform:uppercase;color:#14663a">Booked rate</div>
-          <div class="live">1 ${esc(d.currency)} = ₹ ${d.rate.customerRate.toFixed(4)}</div>
-          <div class="tick">Locked ${dmyt(d.rate.bookedAt)} · expires in ${left} hours · treasury notified</div></div>
-        <div class="spacer"></div>
-        <button class="btn btn-plain btn-sm" type="button" data-act="or-rate-clear">Release rate</button>
-      </div></div>`;
-  } else if (d.rate.mode === 'deal') {
-    rateBox = `<div class="ratebox locked"><div class="row">
-        <div><div class="k" style="font-size:var(--fs-xs);text-transform:uppercase;color:#14663a">Negotiated deal</div>
-          <div class="live">Deal ${esc(d.rate.dealRef)} · ₹ ${Number(d.rate.customerRate).toFixed(4)}</div>
-          <div class="tick">Rate agreed with the treasury desk. It must be within 3% of the reference rate.</div></div>
-        <div class="spacer"></div>
-        <button class="btn btn-plain btn-sm" type="button" data-act="or-rate-clear">Clear</button>
-      </div></div>`;
-  } else if (!d.currency) {
-    rateBox = `<div class="note note-info"><span>Select a currency to see the live rate.</span></div>`;
-  } else {
-    rateBox = `<div class="ratebox"><div class="row">
-        <div><div class="k" style="font-size:var(--fs-xs);text-transform:uppercase;color:#0b5f61">Live rate (simulated feed)</div>
-          <div class="live">1 ${esc(d.currency)} = ₹ ${rate.toFixed(4)}</div>
-          <div class="tick">Reference ₹${currency(d.currency).refRate.toFixed(4)} + your margin ${margin} paise</div></div>
-        <div class="spacer"></div>
-        <button class="btn btn-primary" type="button" data-act="or-book-rate">Book rate</button>
-        <button class="btn btn-ghost" type="button" data-act="or-deal-ref">Enter FX deal reference</button>
-      </div>
-      <p style="margin:10px 0 0;font-size:var(--fs-xs);color:#0b5f61">
-        Booking locks the rate for 48 hours and notifies treasury. The server recalculates it from your approved margin on submission.</p></div>`;
-  }
+  const rateBox = !d.currency ? `<div class="note note-info"><span>Select a currency to see the live rate.</span></div>`
+    : rateBoxHTML(d, d.currency, me, 'out', 'or') + (d.rate.mode === 'none' ? `<p style="margin:10px 0 0;font-size:var(--fs-xs);color:#0b5f61">
+        Booking locks the rate for 48 hours and notifies treasury. The server recalculates it from the approved margin on submission.</p>` : '');
 
   const openBills = DB.bills.filter(b =>
     b.smeId === d.smeId && b.type === 'Import' && b.outstanding > 0 &&
@@ -208,8 +183,11 @@ function viewOutwardNew() {
               <div class="prodpick">${productsFor('outward').map(x => `
                 <button type="button" class="prod ${d.remittanceType === x.id ? 'on' : ''}" data-act="or-product" data-id="${x.id}" aria-pressed="${d.remittanceType === x.id}">
                   <b>${esc(x.id)}</b><span>${esc(x.label)}</span><small>${plural(purposesFor(x.id).length, 'purpose code')}</small></button>`).join('')}</div>
-              <div class="hint">${prod ? esc(prod.hint) : 'From the purpose and document policy: AIR, DIR and OTT.'}</div>
+              <div class="hint">${prod ? esc(prod.hint) : 'From the purpose and document policy: AIR, DIR and OTT, plus LC.'}</div>
               <div class="err">Select a product.</div></div>
+            ${prod && prod.id === 'LC' ? `<div class="f span2" data-fld="lcNumber"><label for="or-lcNumber">Letter of credit number<span class="req">*</span></label>
+              <input id="or-lcNumber" data-ork="lcNumber" type="text" maxlength="30" value="${esc(d.lcNumber || '')}" placeholder="e.g. ILC/2026/0457">
+              <div class="hint">The import LC this payment settles. Attach the LC copy below.</div><div class="err">Enter the LC number.</div></div>` : ''}
             <div class="f span2" data-fld="purposeCode"><label for="or-purpose">Purpose of remittance<span class="req">*</span></label>
               ${prod && allPurposes.length > 8 ? `<input type="search" class="purpose-search" data-act="purpose-filter" value="${esc(d.purposeFilter || '')}"
                   placeholder="Search ${allPurposes.length} purpose codes by code or description" aria-label="Search purpose codes">` : ''}
@@ -250,6 +228,9 @@ function viewOutwardNew() {
             : `<div class="note note-info" style="margin-bottom:14px"><span>Document policy for <b>${esc(prod.id)} — ${esc(prod.label)}</b>.
                 ${checklist.some(x => x.rule === 'threshold' || x.rule === 'goods') ? 'Some documents depend on the purpose code or the INR amount — the list updates as you type.' : ''}</span></div>
                ${docRows(checklist, d.docs, 'or')}`}</div></div>
+
+        <div class="card"><div class="card-head"><h2>Declarations<span class="req">*</span></h2></div><div class="card-body">
+          ${declarationsHTML(d, 'or')}</div></div>
       </div>
 
       <div class="card" style="position:sticky;top:130px"><div class="card-head"><h2>Pricing</h2></div>
@@ -257,7 +238,7 @@ function viewOutwardNew() {
           <div class="calc">
             <div class="line"><span>Amount</span><b>${d.currency ? money(amt, d.currency) : '—'}</b></div>
             <div class="line"><span>Reference rate</span><b>${d.currency ? '₹ ' + currency(d.currency).refRate.toFixed(4) : '—'}</b></div>
-            <div class="line"><span>Margin</span><b>${margin} paise</b></div>
+            <div class="line"><span>Margin</span><b>${margin} paise${margin !== approvedMargin ? ' (assisted)' : ''}</b></div>
             <div class="line"><span>Customer rate</span><b>${d.currency ? '₹ ' + Number(rate).toFixed(4) : '—'}</b></div>
             <div class="line"><span>INR equivalent</span><b>${inr(inrAmt)}</b></div>
             ${charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100)}</b></div>`).join('')}
@@ -289,7 +270,9 @@ const fldOR = (id, label, val, opts = {}) => `
 function outwardMissing(d) {
   const m = [];
   if (!d.beneficiary) m.push('Beneficiary');
-  if (!d.remittanceType) m.push('Product (AIR, DIR or OTT)');
+  if (!d.remittanceType) m.push('Product (AIR, DIR, OTT or LC)');
+  if (d.remittanceType === 'LC' && !String(d.lcNumber || '').trim()) m.push('Letter of credit number');
+  if (!d.declarations || !d.declarations.fema || !d.declarations.ofac) m.push('FEMA and sanctions declarations');
   if (!d.purposeCode) m.push('Purpose code');
   if (!d.currency) m.push('Currency');
   if (!(Number(d.amount) > 0)) m.push('Amount');
@@ -302,7 +285,7 @@ function outwardMissing(d) {
     checklistFor(prod.id, d.purposeCode, inrAmt).filter(x => x.required && !d.docs[x.id]).forEach(x => m.push('Document: ' + x.name));
     const allocated = d.allocations.reduce((s, a) => s + a.amount, 0);
     if (allocated > Number(d.amount)) m.push('Allocations exceed the remittance amount');
-    if (prod.bills === 'required' && !allocated && !DB.settings.allowUnlinked) m.push('At least one accepted import bill (DIR settles a lodged bill)');
+    if (prod.bills === 'required' && !allocated && !DB.settings.allowUnlinked) m.push(`At least one accepted import bill (${prod.id} settles a lodged bill)`);
   }
   return m;
 }
@@ -384,7 +367,7 @@ function viewOutwardDetail(id) {
         <div class="card"><div class="card-head"><h2>Remittance</h2></div><div class="card-body"><div class="kv">
           <div><div class="k">Currency</div><div class="v">${esc(o.currency || '—')}</div></div>
           <div><div class="k">Amount</div><div class="v big">${money(o.amount)}</div></div>
-          <div><div class="k">Product</div><div class="v">${esc(productLabel(o.remittanceType))}</div></div>
+          <div><div class="k">Product</div><div class="v">${esc(productLabel(o.remittanceType))}${o.lcNumber ? '<br><small>LC ' + esc(o.lcNumber) + '</small>' : ''}</div></div>
           <div class="span2"><div class="k">Purpose of remittance</div><div class="v">${esc(purposeLabel(o.purposeCode))}</div></div>
           <div><div class="k">Execution date</div><div class="v">${dmy(o.executionDate)}</div></div>
           <div><div class="k">Remitter account</div><div class="v">${a ? esc(a.bank + ' · ' + a.accountNumber) : '—'}</div></div>
@@ -399,10 +382,12 @@ function viewOutwardDetail(id) {
 
         <div class="card"><div class="card-head"><h2>Bill allocation</h2></div><div class="card-body tight">
           ${o.allocations && o.allocations.length ? `<div class="tablewrap"><table class="dt">
-            <thead><tr><th>Bill</th><th>Invoice</th><th class="num">Allocated</th><th>Bill settlement</th></tr></thead>
+            <thead><tr><th>Bill</th><th>Invoice</th><th class="num">Allocated</th><th>Bill settlement</th><th>Reported</th></tr></thead>
             <tbody>${o.allocations.map(al => { const b = bill(al.billId);
+              const l = DB.allocations.find(y => y.remKind === 'outward' && y.remId === o.id && y.billId === al.billId && y.status === 'Confirmed');
               return `<tr><td class="id">${esc(al.billId)}</td><td>${esc(b?.invoiceNumber || '—')}</td>
-                <td class="num">${money(al.amount, o.currency)}${al.via ? '<br><small style="color:var(--muted)">via knock-off</small>' : ''}</td><td>${badge(b?.settlement || 'Unsettled')}</td></tr>`;
+                <td class="num">${money(al.amount, o.currency)}${al.via ? '<br><small style="color:var(--muted)">via knock-off</small>' : ''}</td><td>${badge(b?.settlement || 'Unsettled')}</td>
+                <td>${l ? ufiTag(l.ufi) : '<span style="color:var(--muted)">On release</span>'}</td></tr>`;
             }).join('')}</tbody></table></div>`
             : empty(prod?.bills === 'none' ? 'Advance payment' : 'Unlinked request',
                     prod?.bills === 'none' ? 'AIR payments are made before the import bill exists.' : 'No import bills are linked to this remittance.')}</div></div>
@@ -424,6 +409,7 @@ function viewOutwardDetail(id) {
             ${(o.charges || []).map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
             <div class="line total"><span>${o.status === 'Completed' ? 'Debited' : 'Debit amount'}</span><b>${inr(debit)}</b></div>
           </div></div></div>
+        ${riskPanel(o)}
         ${ad2 ? notesCard('outward', o) : ''}
       </div>
     </div>`);
@@ -456,7 +442,7 @@ function mt103(o) {
     ':59:/' + (o.beneficiaryAccount || ''),
     (o.beneficiary || '').toUpperCase().slice(0, 35),
     (o.beneficiaryCountry || '').toUpperCase().slice(0, 35),
-    ':70:/PURP/' + o.purposeCode + ' ' + o.remittanceType + (o.referenceNumber ? ' REF ' + o.referenceNumber.toUpperCase() : ''),
+    ':70:/PURP/' + o.purposeCode + ' ' + o.remittanceType + (o.lcNumber ? ' LC ' + o.lcNumber.toUpperCase() : '') + (o.referenceNumber ? ' REF ' + o.referenceNumber.toUpperCase() : ''),
     ':71A:OUR',
     ':72:/IEC/' + (s?.iec || '') + ' /RATE/' + (o.rate.customerRate || 0).toFixed(4),
     '-}',

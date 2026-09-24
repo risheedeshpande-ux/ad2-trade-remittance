@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v5';
+const SEED_VERSION = 'ad2-trade-v6';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -164,9 +164,74 @@ const PRODUCTS = [
   { id:'OTT', direction:'outward', label:'Miscellaneous Remittance',
     hint:'Services, fees and other current-account payments.',
     bills:'optional', purposes:['S0001','S0003','S0005','S0007','S0009','S0011','S0012','S0014','S0020','S0092','S0093','S0101','S0102','S0103','S0109','S0201','S0202','S0203','S0204','S0205','S0206','S0207','S0208','S0209','S0210','S0211','S0212','S0214','S0215','S0216','S0217','S0218','S0219','S0220','S0221','S0222','S0223','S0224','S0301','S0303','S0304','S0305','S0306','S0501','S0502','S0601','S0602','S0603','S0605','S0607','S0608','S0609','S0610','S0611','S0612','S0701','S0702','S0703','S0801','S0802','S0803','S0804','S0805','S0806','S0807','S0808','S0809','S0901','S0902','S1002','S1003','S1004','S1005','S1006','S1007','S1008','S1009','S1010','S1011','S1013','S1014','S1015','S1016','S1017','S1018','S1020','S1021','S1022','S1023','S1101','S1103','S1104','S1105','S1106','S1107','S1108','S1109','S1201','S1202','S1306','S1401','S1402','S1501','S1502','S1503','S1504','S1505','S1601','S1602','S1701'] },
+  /* Added on review (22 Sep): LC settlement as a remittance type. Not in the
+     workbook, so the Administrator can switch its codes off. */
+  { id:'LC', direction:'outward', label:'Letter of Credit Settlement',
+    hint:'Payment under an import letter of credit, against the documents presented under the LC. Settles a lodged import bill.',
+    bills:'required', purposes:['S0101','S0102','S0104','S0109','S1505'], added:true },
   { id:'TRADE', direction:'inward', label:'Trade',
-    hint:'Export proceeds applied against lodged export bills and credited to your account.',
-    bills:'required', purposes:[] },
+    hint:'Export proceeds: knock off lodged export bills, or credit now as an advance and knock off later.',
+    bills:'optional', purposes:[] },
+];
+
+/* --- inward purpose and disposal options -------------------------------------
+   The workbook's disposal sheet names one purpose, TRADE. The Administrator
+   can add more. Disposal options are the BRD's "AD2-configured list".      */
+const INWARD_PURPOSES = [
+  { code:'TRADE', label:'Proceeds against export of goods and services' },
+];
+const DISPOSAL_OPTIONS = [
+  { id:'knockoff', label:'Knock off against export bills',
+    hint:'Apply the amount to lodged export bills. Any part not applied is credited and tracked as a FIRC pending knock-off.' },
+  { id:'advance',  label:'Credit as advance — knock off later',
+    hint:'Credit the whole amount now (advance receipt before shipment, or bill not yet lodged). The FIRC is knocked off against bills later.' },
+];
+
+/* --- compliance rules ---------------------------------------------------------
+   Every outward request and disposal instruction is scored when submitted.
+   Score >= 60 is High (maker and checker must record a reason to pass it),
+   >= 25 Medium, otherwise Low. The Administrator can switch rules on or off
+   and change weights and thresholds. The watchlist holds test names only.  */
+const COMPLIANCE_RULES = [
+  { id:'amount',    label:'Large transaction',            weight:30, enabled:true, param:100000,
+    help:'USD-equivalent amount above the threshold.' },
+  { id:'country',   label:'High-risk jurisdiction',       weight:60, enabled:true,
+    param:['Iran','North Korea','Syria','Myanmar','Afghanistan','Cuba'],
+    help:'Beneficiary, bank or remitter country on the list.' },
+  { id:'sanctions', label:'Watchlist name match',         weight:100, enabled:true,
+    param:['Test Sanctioned Entity','Blocked Trading LLC','Kim Il Exports'],
+    help:'Counterparty name matches a watchlist entry (test names only).' },
+  { id:'newbene',   label:'New beneficiary',              weight:10, enabled:true,
+    help:'First payment to this beneficiary account.' },
+  { id:'firsttxn',  label:'First transaction for the SME', weight:10, enabled:true,
+    help:'The SME has no completed transaction in this direction.' },
+  { id:'capital',   label:'Capital-account purpose code', weight:25, enabled:true,
+    help:'Purpose codes S0001–S0099 (investment, loans, deposits).' },
+  { id:'docai',     label:'Document AI mismatch',         weight:25, enabled:true,
+    help:'Simulated: any uploaded file whose name contains “mismatch”.' },
+  { id:'bankctry',  label:'Bank outside beneficiary country', weight:10, enabled:true,
+    help:'Beneficiary bank country differs from the beneficiary country.' },
+  { id:'deal',      label:'Rate by offline deal',         weight:5,  enabled:true,
+    help:'Rate taken from an FX deal reference rather than booked on the platform.' },
+];
+
+/* --- test-data profiles ---------------------------------------------------------
+   Ready-to-transact businesses created at seed time and from the Test data
+   lab, each with verified accounts, beneficiaries, several accepted bills
+   and receipts waiting for disposal — so every flow can be run many times.  */
+const TEST_SMES = [
+  { key:'COASTALCASH', legalName:'Coastal Cashew Exports Private Limited', tradingName:'Coastal Cashew', constitution:'Private Limited',
+    permission:'Export', currencies:['USD','EUR','AED'], city:'Kollam', state:'32', contact:'Maya Menon', industry:'Agri commodities' },
+  { key:'PUNEAUTO', legalName:'Pune Auto Components LLP', tradingName:'Pune Auto Components', constitution:'Partnership',
+    permission:'Import', currencies:['USD','EUR','JPY'], city:'Pune', state:'27', contact:'Sameer Joshi', industry:'Automotive parts' },
+  { key:'MYSOREMACH', legalName:'Mysore Machine Works Private Limited', tradingName:'Mysore Machine Works', constitution:'Private Limited',
+    permission:'Both', currencies:['USD','EUR','GBP'], city:'Mysuru', state:'29', contact:'Pradeep Hegde', industry:'Machine tools' },
+  { key:'KERALACOIR', legalName:'Kerala Coir Craft', tradingName:'Kerala Coir Craft', constitution:'Proprietorship',
+    permission:'Export', currencies:['USD','GBP','AUD'], city:'Alappuzha', state:'32', contact:'Joseph Mathew', industry:'Home furnishings' },
+  { key:'HYDPHARMA', legalName:'Hyderabad Pharma Inputs Limited', tradingName:'Hyderabad Pharma Inputs', constitution:'Public Limited',
+    permission:'Both', currencies:['USD','EUR','CHF'], city:'Hyderabad', state:'36', contact:'Lakshmi Rao', industry:'Pharmaceutical intermediates' },
+  { key:'DELHIDECOR', legalName:'Delhi Home Decor Private Limited', tradingName:'Delhi Home Decor', constitution:'Private Limited',
+    permission:'Both', currencies:['USD','GBP','AED','SGD'], city:'New Delhi', state:'07', contact:'Ritu Arora', industry:'Handicrafts and decor' },
 ];
 
 /* --- document policy ---------------------------------------------------------
@@ -176,6 +241,7 @@ const PRODUCTS = [
      optional   collected if available
      goods      required when the purpose code is for import of goods (GOODS_CODES)
      threshold  required above `threshold` in INR equivalent, optional below
+     knockoff   required when a disposal knocks off bills, optional for an advance
    Form 145 and Form 146 are the Income-tax Act 2025 successors to Form 15CA
    and Form 15CB. The Administrator can change any rule.                     */
 const GOODS_CODES = ['S0101','S0102','S0103','S0104','S0109','S1505','S0501'];
@@ -192,9 +258,14 @@ const DOC_POLICY = [
   { product:'OTT',   id:'form145',   name:'Form 145 (formerly Form 15CA)', rule:'required' },
   { product:'OTT',   id:'form146',   name:'Form 146 (formerly Form 15CB — CA certificate)', rule:'threshold', threshold:500000 },
 
+  { product:'LC',    id:'lccopy',    name:'Letter of Credit copy',       rule:'required' },
+  { product:'LC',    id:'invoice',   name:'Commercial Invoice',          rule:'required' },
+  { product:'LC',    id:'transport', name:'Transport Document',          rule:'required' },
+  { product:'LC',    id:'boe',       name:'Bill of Entry',               rule:'optional' },
+
   { product:'TRADE', id:'dil',       name:'Disposal Instruction Letter', rule:'required' },
-  { product:'TRADE', id:'expinv',    name:'Commercial Export Invoice',   rule:'required' },
-  { product:'TRADE', id:'sb',        name:'Shipping Bill',               rule:'required' },
+  { product:'TRADE', id:'expinv',    name:'Commercial Export Invoice',   rule:'knockoff' },
+  { product:'TRADE', id:'sb',        name:'Shipping Bill',               rule:'knockoff' },
 ];
 
 /* --- onboarding document checklist ----------------------------------------- */
@@ -259,8 +330,9 @@ const CAPABILITIES = [
   { id:'masters.beneficiary',  group:'Masters',        label:'Maintain the beneficiary and account masters' },
   { id:'assist.transact',      group:'Assisted',       label:'Transact on behalf of an SME' },
   { id:'reports.view',         group:'Reports',        label:'View and export reports' },
+  { id:'lab.use',              group:'Test data',      label:'Generate test businesses, bills, receipts and requests' },
 
-  { id:'admin.masters',        group:'Administration', label:'Maintain purpose codes, products and document policy' },
+  { id:'admin.masters',        group:'Administration', label:'Maintain purpose codes, document policy and compliance rules' },
   { id:'admin.users',          group:'Administration', label:'Manage users and roles' },
   { id:'admin.settings',       group:'Administration', label:'Change platform settings' },
 ];
@@ -273,36 +345,44 @@ const ROLES = [
   { id:'SME User', portal:'SME', order:2,
     summary:'The day-to-day user at an approved SME. Raises outward requests, disposes of inward receipts, lodges bills and proposes knock-offs — within the service permission and currencies AD2 approved, and only for its own SME.',
     can:['outward.create','outward.viewOwn','inward.viewOwn','inward.dispose','bills.lodge',
-         'recon.propose','masters.beneficiary','reports.view'],
+         'recon.propose','masters.beneficiary','reports.view','lab.use'],
     segregated:['outward.approve','recon.confirm'],
     note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition.' },
 
-  { id:'AD2 Maker', portal:'AD2', order:3,
+  { id:'AD2 Sales', portal:'AD2', order:3,
+    summary:'Branch or sales assist. Captures offline applications and transacts on behalf of the SMEs it looks after — which then go to a maker to verify and a checker to authorise.',
+    can:['onboard.createOffline','outward.viewAll','inward.viewAll','bills.viewAll','bills.lodge','recon.propose',
+         'assist.transact','masters.beneficiary','reports.view','lab.use'],
+    segregated:['onboard.review','onboard.approve','outward.verify','outward.approve','outward.complete',
+                'inward.verifyDisposal','inward.approveDisposal','inward.processDisposal','recon.confirm'],
+    note:'Sales assist → maker → checker: whatever this role raises is verified and authorised by other people.' },
+
+  { id:'AD2 Maker', portal:'AD2', order:4,
     summary:'First line at AD2. Reviews and prices applications, verifies documents on outward requests and disposal instructions, and can transact on behalf of an SME — but never authorises or releases its own work.',
     can:['onboard.createOffline','onboard.review','onboard.query','outward.viewAll','outward.verify','outward.query',
          'inward.viewAll','inward.verifyDisposal','bills.viewAll','bills.lodge','recon.propose','assist.transact',
-         'masters.beneficiary','reports.view'],
+         'masters.beneficiary','reports.view','lab.use'],
     segregated:['onboard.approve','outward.approve','outward.reject','outward.complete','inward.approveDisposal',
                 'inward.processDisposal','recon.confirm'],
     note:'With AutoChecker on, a maker\u2019s onboarding review and bill lodgements commit without a checker. Outward and disposal always need a checker.' },
 
-  { id:'AD2 Checker', portal:'AD2', order:4,
+  { id:'AD2 Checker', portal:'AD2', order:5,
     summary:'The second pair of eyes. Approves applications, authorises what a maker verified, accepts bills and confirms knock-offs — and cannot originate or verify the work it approves.',
     can:['onboard.approve','onboard.query','outward.viewAll','outward.approve','outward.query','outward.reject',
-         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept','recon.confirm','reports.view'],
+         'inward.viewAll','inward.approveDisposal','bills.viewAll','bills.accept','recon.confirm','reports.view','lab.use'],
     segregated:['onboard.createOffline','onboard.review','outward.create','outward.verify','outward.complete',
                 'inward.verifyDisposal','inward.processDisposal','bills.lodge','recon.propose'] },
 
-  { id:'AD2 Operations', portal:'AD2', order:5,
+  { id:'AD2 Operations', portal:'AD2', order:6,
     summary:'Runs settlement. Records incoming remittances, executes authorised outward payments over SWIFT, processes authorised disposals and issues FIRCs, and reverses allocations when needed.',
     can:['outward.viewAll','outward.complete','outward.reject','inward.viewAll','inward.record',
-         'inward.processDisposal','bills.viewAll','recon.reverse','assist.transact','reports.view'],
+         'inward.processDisposal','bills.viewAll','recon.reverse','assist.transact','reports.view','lab.use'],
     segregated:['onboard.approve','outward.approve','outward.verify','inward.approveDisposal','inward.verifyDisposal'] },
 
-  { id:'AD2 Administrator', portal:'AD2', order:6,
+  { id:'AD2 Administrator', portal:'AD2', order:7,
     summary:'Maintains the platform rather than the book: purpose codes, document policy, users, roles and settings. Deliberately holds no transaction authority.',
     can:['admin.masters','admin.users','admin.settings','outward.viewAll','inward.viewAll',
-         'bills.viewAll','reports.view'],
+         'bills.viewAll','reports.view','lab.use'],
     segregated:['onboard.approve','outward.approve','recon.confirm','inward.dispose'],
     note:'Kept out of the transaction path on purpose: whoever configures the controls should not also be able to transact through them.' },
 ];
@@ -491,6 +571,8 @@ const BILLS = [
     query:{ question:'Bill of Entry reference is missing. Add it and resubmit.', raisedBy:'AD2 Checker (Shalini Nair)', raisedAt:'2026-09-18T12:10:00' } },
   { id:'BL-24009', smeId:'SME-1003', type:'Export', invoiceNumber:'NSE/EX/2026/318', invoiceDate:'2026-08-29', counterparty:'Gulf Spice Trading LLC', counterpartyCountry:'United Arab Emirates', currency:'AED', amount:412000, adjusted:180000, outstanding:232000, dueDate:'2026-11-27', orderRef:'GST-PO-1190', shipmentRef:'SB-2290117', source:'Form fill', review:'Accepted', settlement:'Partially Settled' },
   { id:'BL-24010', smeId:'SME-1003', type:'Export', invoiceNumber:'NSE/EX/2026/324', invoiceDate:'2026-09-11', counterparty:'Aroma Europe BV', counterpartyCountry:'Netherlands', currency:'USD', amount:88600, adjusted:0, outstanding:88600, dueDate:'2026-12-10', orderRef:'AEB-PO-556', shipmentRef:'SB-2298820', source:'CSV upload', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24012', smeId:'SME-1001', type:'Export', invoiceNumber:'MTX/EXP/2026/0171', invoiceDate:'2026-09-08', counterparty:'Halstead Retail Group', counterpartyCountry:'United Kingdom', currency:'GBP', amount:60000, adjusted:0, outstanding:60000, dueDate:'2026-12-07', orderRef:'PO-HRG-88512', shipmentRef:'SB-2294471', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
+  { id:'BL-24013', smeId:'SME-1002', type:'Import', invoiceNumber:'ACX-IMP-5547', invoiceDate:'2026-09-20', counterparty:'Shenzhen Ruiyang Electronics', counterpartyCountry:'China', currency:'USD', amount:30000, adjusted:0, outstanding:30000, dueDate:'2026-11-19', orderRef:'ARC-PO-796', shipmentRef:'BOE-7760043', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
   { id:'BL-24011', smeId:'SME-1003', type:'Export', invoiceNumber:'NSE/EX/2026/331', invoiceDate:'2026-09-19', counterparty:'Gulf Spice Trading LLC', counterpartyCountry:'United Arab Emirates', currency:'AED', amount:156400, adjusted:0, outstanding:156400, dueDate:'2026-12-18', orderRef:'GST-PO-1204', shipmentRef:'SB-2301770', source:'Form fill', review:'Accepted', settlement:'Unsettled' },
 ];
 
@@ -558,6 +640,18 @@ const OUTWARD = [
     wf:{ submitted:{ by:'SME User (Kavita Raghunathan)', at:'2026-09-09T13:00:00' }, verified:{ by:'AD2 Maker (Rohit Iyer)', at:'2026-09-10T10:00:00' },
          rejected:{ by:'AD2 Checker (Shalini Nair)', at:'2026-09-10T15:30:00' } },
     rejectReason:'Freight invoice does not match the transport document reference. Resubmit with matching documents.' },
+  /* An advance paid before shipment: the Bill of Entry (BL-24013) has since
+     been lodged, so the payment is waiting to be knocked off against it. */
+  { id:'OR-5108', beneficiaryId:'BEN-005', smeId:'SME-1002', beneficiary:'Shenzhen Ruiyang Electronics', beneficiaryCountry:'China',
+    beneficiaryAccount:'6222021001128845', beneficiaryBank:'Bank of China', beneficiaryBankCountry:'China', swift:'BKCHCNBJ',
+    currency:'USD', amount:30000, purposeCode:'S0101', remittanceType:'AIR', executionDate:'2026-09-12', debitAccountId:'BA-004',
+    referenceNumber:'ARC-ADV-0009', status:'Completed', requestDate:'2026-09-10T10:05:00',
+    rate:{ mode:'booked', refRate:88.20, margin:55, customerRate:88.75, bookedAt:'2026-09-10T10:00:00', expiresAt:'2026-09-12T10:00:00', dealRef:null },
+    charges:[{name:'Transaction handling fee',amount:450},{name:'Document handling fee',amount:300}],
+    allocations:[], pendingWith:'—', createdBy:'Devansh Mehta', source:'SME', boeDueDate:'2026-12-11',
+    utr:'AD2O26091200116', swiftRef:'MT103-AD2-2609120116',
+    wf:{ submitted:{ by:'SME User (Devansh Mehta)', at:'2026-09-10T10:05:00' }, verified:{ by:'AD2 Maker (Rohit Iyer)', at:'2026-09-10T13:20:00' },
+         authorised:{ by:'AD2 Checker (Shalini Nair)', at:'2026-09-11T11:00:00' }, executed:{ by:'AD2 Operations (Farhan Qureshi)', at:'2026-09-12T09:40:00' } } },
 ];
 
 /* --- inward remittances ----------------------------------------------------
@@ -582,6 +676,9 @@ const INWARD = [
   { id:'IR-3306', smeId:'SME-1003', reference:'SWF-INW-778990', valueDate:'2026-09-22', remitter:'Gulf Spice Trading LLC',
     remitterCountry:'United Arab Emirates', currency:'AED', amount:232000, available:112000, status:'Awaiting Instruction',
     remittanceType:'TRADE', purposeCode:'', remarks:'Balance against NSE/EX/2026/318', firc:null },
+  { id:'IR-3307', smeId:'SME-1001', reference:'SWF-INW-774420', valueDate:'2026-09-15', remitter:'Halstead Retail Group',
+    remitterCountry:'United Kingdom', currency:'GBP', amount:40000, available:0, status:'Processed',
+    remittanceType:'TRADE', purposeCode:'', remarks:'Advance against order PO-HRG-88512', firc:'FIRC-2026-119121' },
 ];
 
 /* --- disposal instructions ------------------------------------------------ */
@@ -613,6 +710,15 @@ const DISPOSALS = [
     purposeCode:'', remittanceType:'TRADE', status:'Submitted', submittedAt:'2026-09-23T09:45:00', remarks:'Partial disposal; balance to follow.',
     createdBy:'Suresh Palaniappan', source:'SME', pendingWith:'AD2 Maker',
     wf:{ submitted:{ by:'SME User (Suresh Palaniappan)', at:'2026-09-23T09:45:00' } } },
+  /* Credited as an advance before the goods shipped. The FIRC is pending
+     knock-off until the SME matches it to export bill BL-24012. */
+  { id:'DI-9004', inwardId:'IR-3307', smeId:'SME-1001', amount:40000, currency:'GBP', option:'advance',
+    creditAccountId:'BA-001', allocations:[], unallocated:40000,
+    rate:{ mode:'booked', refRate:112.50, margin:68, customerRate:111.82, bookedAt:'2026-09-15T11:00:00', dealRef:null },
+    purposeCode:'TRADE', remittanceType:'TRADE', status:'Processed', submittedAt:'2026-09-15T10:30:00', remarks:'Advance — shipment due end of September.',
+    creditInr:4472800, firc:'FIRC-2026-119121', createdBy:'Kavita Raghunathan', source:'SME', pendingWith:'—',
+    wf:{ submitted:{ by:'SME User (Kavita Raghunathan)', at:'2026-09-15T10:30:00' }, verified:{ by:'AD2 Maker (Rohit Iyer)', at:'2026-09-15T12:00:00' },
+         authorised:{ by:'AD2 Checker (Shalini Nair)', at:'2026-09-15T14:20:00' }, processed:{ by:'AD2 Operations (Farhan Qureshi)', at:'2026-09-15T16:05:00' } } },
 ];
 
 /* --- allocation ledger -------------------------------------------------------
@@ -620,10 +726,10 @@ const DISPOSALS = [
    instructions write Confirmed entries when they settle; a knock-off proposal
    is Proposed until a checker confirms it.                                  */
 const ALLOCATIONS = [
-  { id:'AL-0001', smeId:'SME-1002', side:'Import', billId:'BL-24006', remKind:'outward', remId:'OR-5101', amount:142300, currency:'USD', source:'Outward payment', status:'Confirmed', at:'2026-09-08T09:30:00' },
-  { id:'AL-0002', smeId:'SME-1003', side:'Export', billId:'BL-24009', remKind:'inward', remId:'IR-3304', disposalId:'DI-9000', amount:180000, currency:'AED', source:'Disposal instruction', status:'Confirmed', at:'2026-09-19T16:30:00' },
-  { id:'AL-0003', smeId:'SME-1001', side:'Export', billId:'BL-24001', remKind:'inward', remId:'IR-3301', disposalId:'DI-9001', amount:184500, currency:'GBP', source:'Disposal instruction', status:'Confirmed', at:'2026-09-03T17:45:00' },
-  { id:'AL-0004', smeId:'SME-1001', side:'Export', billId:'BL-24002', remKind:'inward', remId:'IR-3302', disposalId:'DI-9002', amount:120000, currency:'EUR', source:'Disposal instruction', status:'Confirmed', at:'2026-09-11T12:15:00' },
+  { id:'AL-0001', smeId:'SME-1002', side:'Import', billId:'BL-24006', remKind:'outward', remId:'OR-5101', ref:'AD2O26090800117', amount:142300, currency:'USD', source:'Outward payment', status:'Confirmed', at:'2026-09-08T09:30:00' },
+  { id:'AL-0002', smeId:'SME-1003', side:'Export', billId:'BL-24009', remKind:'disposal', remId:'DI-9000', inwardId:'IR-3304', disposalId:'DI-9000', ref:'FIRC-2026-119204', amount:180000, currency:'AED', source:'Disposal instruction', status:'Confirmed', at:'2026-09-19T16:30:00' },
+  { id:'AL-0003', smeId:'SME-1001', side:'Export', billId:'BL-24001', remKind:'disposal', remId:'DI-9001', inwardId:'IR-3301', disposalId:'DI-9001', ref:'FIRC-2026-118842', amount:184500, currency:'GBP', source:'Disposal instruction', status:'Confirmed', at:'2026-09-03T17:45:00' },
+  { id:'AL-0004', smeId:'SME-1001', side:'Export', billId:'BL-24002', remKind:'disposal', remId:'DI-9002', inwardId:'IR-3302', disposalId:'DI-9002', ref:'FIRC-2026-119017', amount:120000, currency:'EUR', source:'Disposal instruction', status:'Confirmed', at:'2026-09-11T12:15:00' },
 ];
 
 /* --- integration jobs ----------------------------------------------------- */
@@ -663,10 +769,13 @@ const ACCOUNTS = [
   { domainId:'NILGIRISPICE',loginId:'SMEUSER',  role:'SME User',           smeId:'SME-1003', name:'Suresh Palaniappan', demo:true },
   { domainId:'HKTRADING',   loginId:'APPLICANT',role:'SME Applicant',      smeId:'SME-1004', name:'Harikrishna Patel',  demo:true },
   { domainId:'ISHANICONS',  loginId:'APPLICANT',role:'SME Applicant',      smeId:'SME-1005', name:'Ishani Bhattacharya',demo:true },
+  { domainId:'AD2',         loginId:'SALES',    role:'AD2 Sales',          smeId:null,       name:'Karan Malhotra',     demo:true },
   { domainId:'AD2',         loginId:'MAKER',    role:'AD2 Maker',          smeId:null,       name:'Rohit Iyer',         demo:true },
   { domainId:'AD2',         loginId:'MAKER2',   role:'AD2 Maker',          smeId:null,       name:'Priya Menon',        demo:true },
   { domainId:'AD2',         loginId:'CHECKER',  role:'AD2 Checker',        smeId:null,       name:'Shalini Nair',       demo:true },
+  { domainId:'AD2',         loginId:'CHECKER2', role:'AD2 Checker',        smeId:null,       name:'Vikram Sethi',       demo:true },
   { domainId:'AD2',         loginId:'OPS',      role:'AD2 Operations',     smeId:null,       name:'Farhan Qureshi',     demo:true },
+  { domainId:'AD2',         loginId:'OPS2',     role:'AD2 Operations',     smeId:null,       name:'Neha Kapoor',        demo:true },
   { domainId:'AD2',         loginId:'ADMIN',    role:'AD2 Administrator',  smeId:null,       name:'Anita Desai',        demo:true },
 ];
 
@@ -674,12 +783,13 @@ const SEED = {
   version:SEED_VERSION,
   currencies:CURRENCIES, constitutions:CONSTITUTIONS, purposeCodes:PURPOSE_CODES,
   products:PRODUCTS, docPolicy:DOC_POLICY, goodsCodes:GOODS_CODES,
+  inwardPurposes:INWARD_PURPOSES, disposalOptions:DISPOSAL_OPTIONS, complianceRules:COMPLIANCE_RULES, testSmes:TEST_SMES,
   capabilities:CAPABILITIES, roles:ROLES, chargeCategories:CHARGE_CATEGORIES, onboardDocs:ONBOARD_DOCS,
   smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,
   disposals:DISPOSALS, allocations:ALLOCATIONS, jobs:JOBS, audit:AUDIT, logins:ACCOUNTS,
   notifications:[],
-  settings:{ autoChecker:false, allowUnlinked:false },
-  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1 },
+  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5 },
+  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, ufi:4100, lab:0 },
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { SEED };
