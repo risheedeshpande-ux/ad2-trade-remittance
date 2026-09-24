@@ -47,9 +47,9 @@ Two further decisions carry into the build:
 |---|---|---|
 | SME Applicant | SME | Onboarding, document upload, query response, application status. No transaction access until approved. |
 | SME User | SME | Outward requests, inward disposal instructions, bill lodgement, knock-off proposals, reports — for its own SME only, within approved permissions. |
-| AD2 Maker | AD2 | Creates offline applications, reviews business details and documents, prepares approvals and pricing. |
-| AD2 Checker | AD2 | Approves or rejects SMEs and allocations, raises queries, commits pricing configuration. |
-| AD2 Operations | AD2 | Reviews remittances, disposal instructions, bills and reconciliations; manages queries and pendency. |
+| AD2 Maker | AD2 | Creates offline applications, reviews and prices applications, **verifies** outward requests and disposal instructions. |
+| AD2 Checker | AD2 | Approves or rejects applications, **authorises** verified outward requests and disposals, accepts bills, confirms knock-offs. |
+| AD2 Operations | AD2 | Records incoming SWIFT credits, **releases** authorised payments, **processes** authorised disposals and issues FIRCs, reverses allocations. |
 | AD2 (assisted) | SME portal | Any AD2 maker or operations user may act inside an approved SME's portal on its behalf. Covered in §7A. |
 | AD2 Administrator | AD2 | Users, roles, currencies, charge categories, document checklists, purpose-code to document mapping. |
 
@@ -57,7 +57,7 @@ An SME user may submit without a second SME approver. SME-side maker-checker is 
 
 ### 3.1 Capabilities and segregation
 
-Each role holds a set of named capabilities, and the interface is built from them: an action a role cannot perform is not rendered, rather than shown and refused. A capability can also be **withheld by design** — marked *segregated* — meaning the role is deliberately kept from it so that whoever prepares work is not whoever approves it.
+Each role holds a set of named capabilities, and the interface is built from them: an action a role cannot perform is not rendered. The API enforces the same capabilities on every action, so calling it directly does not get round them. A capability can also be **withheld by design** — marked *segregated* — meaning the role is deliberately kept from it so that whoever prepares work is not whoever approves it.
 
 | Role | Holds | Withheld by design |
 |---|---|---|
@@ -162,34 +162,30 @@ The request **snapshots** the beneficiary details it was sent with, so later edi
 
 The master is per SME and is maintained on Profile → Beneficiary master. It records who added each payee and when it was last used. An AD2 user in the assisted journey sees and adds to that SME's master, and additions are stamped as made on the SME's behalf.
 
-**Remittance** — currency (enabled currencies only), amount, **remittance type**, **purpose of remittance**, requested execution date, **remitter account** (selected from the account master), and an optional free-text **Reference Number**.
+**Remittance** — **product** (AIR, DIR or OTT), **purpose of remittance**, currency (enabled currencies only), amount, requested execution date, **remitter account** (a verified INR account from the account master), and an optional free-text **Reference Number**.
 
-**Remittance type** is the settlement method, held separately from the RBI purpose code. Selecting a type narrows the purpose codes on offer and may add documents of its own; changing it clears a purpose that is no longer valid for the pair.
+**Product and purpose code** come from the business team's *Purpose / Doc Policy* workbook, which replaces the provisional mapping in earlier drafts. Only the codes AD2 is approved to handle are offered: 111 unique codes (the workbook's two duplicated OTT rows, S0801 and S0802, are merged, and descriptions are tidied — "slews" → "news", "lostel" → "hostel", spacing). Selecting a product narrows the purpose codes; OTT's 110 codes are searchable. A code may sit under more than one product (S0101 appears under AIR, DIR and OTT).
 
-| Outward type | Purpose codes | Documents it adds |
+| Product | Purpose codes | Bills |
 |---|---|---|
-| Advance payment | S0101, S0104 | Advance payment undertaking |
-| Payment against documents (collection) | S0102, S0104 | Collection schedule / bank covering letter |
-| Open account / direct payment | S0102, S0190 | — |
-| Merchanting / intermediary trade | S0104 | Merchanting trade declaration |
-| Services, fees and other current account | S0301, S0501, S0601 | — |
-
-Letter-of-credit settlement is deliberately absent: the call put trade-finance instruments out of scope for this journey. Add a type to the master when that changes.
+| AIR — Advance Import Remittance | S0101, S0104, S0109, S1505 | None at payment. The Bill of Entry is due within 90 days; the payment is knocked off against the import bill once lodged |
+| DIR — Direct Import Remittance | S0101, S0102, S0104, S0109, S0501, S1505 | Settles an accepted import bill — at least one allocation is required |
+| OTT — Miscellaneous Remittance | 110 services and current-account codes (S0001–S1701) | Optional |
 
 Principal Debit Account, Fee Account, Transport Document Number and Transfer Reference are not collected.
 
-**Documents** — the checklist is resolved from the selected purpose code **plus anything the remittance type adds**. Changing either replaces the checklist. This is the correction to the current behaviour, where every purpose code presents the same list and, for example, Business Travel asks for a Bill of Entry.
+**Documents** — resolved from the product, per the workbook's Document Policy sheet. Changing the product replaces the checklist.
 
-Provisional mapping, pending the full purpose-code workbook:
+| Product | Document | Rule |
+|---|---|---|
+| AIR | Proforma Invoice | Required |
+| DIR | Transport Document, Commercial Invoice, Bill of Entry | Required |
+| OTT | Invoice | Required |
+| OTT | Form 145 (formerly Form 15CA) | Required |
+| OTT | Transport Document | Required when the purpose code is an import of goods (S0101, S0102, S0103, S0104, S0109, S1505, S0501); optional otherwise |
+| OTT | Form 146 (formerly Form 15CB, CA certificate) | Required above ₹5,00,000 INR equivalent; optional below |
 
-| Purpose code | Documents required |
-|---|---|
-| S0101 Advance payment against imports | Proforma invoice, purchase order, Form A1, advance-payment undertaking |
-| S0102 Payment towards imports — settlement of invoice | Commercial invoice, Bill of Entry, transport document, Form A1 |
-| S0104 Intermediary trade | Sale and purchase contracts, invoice, Form A1 |
-| S0301 Business travel | Passport copy, visa, travel itinerary, employer declaration, Form A2 |
-| S0501 Professional and consultancy fees | Service agreement, invoice, Form 15CA/15CB, Form A2 |
-| S0601 Freight and logistics | Freight invoice, transport document, Form A2 |
+FORM_145 and FORM146 in the workbook are the Income-tax Act 2025 successors to Form 15CA and 15CB. The Administrator can change any rule (required, optional, goods-only, above threshold) and stop any purpose code being offered.
 
 **Rate** — a live reference rate is displayed with a countdown. **Book Rate** locks the customer rate for 48 hours and notifies treasury; no bank approval step. Where the rate has been negotiated offline, the customer enters the **FX Deal Reference** instead. A request cannot be submitted without either a booked rate or a deal reference.
 
@@ -197,7 +193,15 @@ Provisional mapping, pending the full purpose-code workbook:
 
 **Pricing** — reference rate, margin, customer rate, charges, estimated debit amount, quote timestamp.
 
-**Status flow:** Draft → Submitted → Under Review → Clarification Required → Processing → Completed or Rejected.
+**Approval chain.** Every outward request passes three AD2 stages, each by a different person:
+
+1. **AD2 Maker verifies** — documents against the policy, sanctions screening, purpose code, beneficiary details. The maker may raise a query.
+2. **AD2 Checker authorises** — may also query or reject. The checker cannot be the maker who verified.
+3. **AD2 Operations releases** — debits the INR account (refused if funds are short), generates the UTR and the SWIFT MT103, settles the linked bills and issues the payment advice. Operations cannot be the maker or checker on the same request.
+
+Whoever raised a request (including an AD2 user in the assisted journey) cannot verify, authorise or release it.
+
+**Status flow:** Draft → Submitted → Verified → Authorised → Completed. Clarification Required returns the request to the SME; the response sends it back to the maker to verify again. Rejected releases any bill reservation.
 
 ---
 
@@ -235,23 +239,17 @@ AD2 records the inward receipt. The SME views it and disposes of it.
 1. Select the outstanding **export bill** to knock off, and the amount applied per bill.
 2. Select the **bank account to credit**, from the account master.
 
-Alongside those two decisions the instruction captures the **remittance type** and **purpose of remittance** for the receipt. Both pre-fill from the classification AD2 recorded on the receipt and can be corrected, because a receipt is often classified before the underlying trade is known. The instruction is the authoritative classification and writes back to the receipt on submission.
-
-| Inward type | Purpose codes | Documents it adds |
-|---|---|---|
-| Advance receipt against export order | P0101 | Advance receipt declaration |
-| Realisation against documents (collection) | P0102, P0103 | Collection advice |
-| Open account receipt | P0102 | — |
-| Merchanting / intermediary trade receipt | P0108 | Merchanting trade declaration |
-| Services, fees and other current account | P0802 | — |
+The instruction is classified under the **TRADE** product from the workbook, whose document policy requires the **Disposal Instruction Letter**, the **Commercial Export Invoice** and the **Shipping Bill**. The workbook defines no inward purpose codes, so none are collected.
 
 Supporting fields: amount to dispose, conversion currency where applicable, remarks, supporting documents per the resolved checklist. Partial disposal is supported and the remaining balance is shown. Amounts already disposed cannot be re-allocated.
 
 Rate handling matches outward: **Book Rate** for a 48-hour lock, or enter an **FX Deal Reference** for a negotiated deal.
 
-**Status flow:** Awaiting Instruction → Instruction Submitted → Under Review → Clarification Required → Processed or Rejected.
+**Approval chain.** As for outward: AD2 Maker verifies (documents, bill match, credit account), AD2 Checker authorises, AD2 Operations processes — credits the INR account at the booked rate, knocks off the export bills and issues the FIRC.
 
-On processing, AD1 issues the FIRC, which is delivered to the customer and attached to the remittance record.
+**Status flow:** receipt Awaiting Instruction → Instruction Submitted → Processed; instruction Submitted → Verified → Authorised → Processed. Clarification Required returns it to the SME; Rejected returns the amount to the receipt.
+
+AD2 Operations records each incoming SWIFT credit against the exporter, and the SME is notified to submit an instruction.
 
 Trade-finance disposal options (LC, documentary collections) are not in scope.
 
@@ -393,7 +391,7 @@ Outstanding balances derive from confirmed transactions and approved allocations
 
 | Item | Owner | Blocking |
 |---|---|---|
-| Full purpose code to document mapping workbook | Business team | Replaces the provisional mapping in §7 |
+| ~~Full purpose code to document mapping workbook~~ | Business team | **Resolved** — the Purpose / Doc Policy workbook is loaded (§7, §8) |
 | FX quotation direction, rounding and final pricing formula | Treasury | Live rate display and booked-rate arithmetic |
 | Disposal option list beyond bill knock-off and account credit | Operations | §8 scope |
 | Transaction limits per SME and per currency | Risk | Validation on outward and disposal |

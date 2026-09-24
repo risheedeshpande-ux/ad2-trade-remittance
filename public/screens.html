@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<title>AD2 Trade Remittance — All screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=10">
+<style>
+  .wrap{max-width:1320px;margin:0 auto;padding:var(--s6) var(--s5) 80px}
+  .ctl{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;margin-bottom:var(--s5)}
+  .ctl input[type=search]{min-width:260px;border:1px solid var(--r4m-input-border);border-radius:var(--radius-pill);
+    padding:9px var(--s4);font-family:inherit;font-size:var(--fs-base)}
+  .seg2{display:flex;background:#eef1f3;border-radius:var(--radius-pill);padding:3px}
+  .seg2 button{border:0;background:transparent;padding:7px 16px;border-radius:var(--radius-pill);
+    font-family:inherit;font-size:var(--fs-sm);color:var(--ink-soft);cursor:pointer}
+  .seg2 button[aria-pressed=true]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow)}
+  .grp{margin:var(--s7) 0 var(--s4);display:flex;align-items:baseline;gap:var(--s3)}
+  .grp h2{font-size:var(--fs-lg)}
+  .grp span{font-size:var(--fs-sm);color:var(--muted)}
+
+  /* grid view */
+  .tiles{display:grid;gap:var(--s5);grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+  .tile{background:var(--surface);border:1px solid var(--r4m-border);border-radius:var(--radius);
+    box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .tile:hover{border-color:var(--r4m-primary-300)}
+  .shot{position:relative;height:210px;background:var(--surface-alt);border-bottom:1px solid var(--r4m-border);overflow:hidden}
+  .shot iframe{position:absolute;top:0;left:0;width:1280px;height:840px;border:0;
+    transform:scale(.258);transform-origin:top left;pointer-events:none;background:#fff}
+  .shot .veil{position:absolute;inset:0;cursor:pointer}
+  .shot .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:var(--fs-sm)}
+  .meta{padding:var(--s4);display:flex;flex-direction:column;gap:6px;flex:1}
+  .meta .top{display:flex;align-items:center;gap:var(--s2)}
+  .sid{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-xs);font-weight:600;
+    color:var(--r4m-primary-600);background:var(--r4m-primary-50);border-radius:4px;padding:2px 7px}
+  .meta h3{font-size:var(--fs-md);font-weight:600}
+  .meta p{font-size:var(--fs-sm);color:var(--muted);margin:0;flex:1}
+  .rt{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-xs);color:var(--ink-soft);
+    background:var(--surface-alt);border:1px solid var(--r4m-border);border-radius:4px;padding:2px 6px;
+    display:inline-block;word-break:break-all}
+  .meta .foot{display:flex;align-items:center;gap:var(--s2);margin-top:var(--s2)}
+
+  /* list view */
+  .listview{display:none}
+  body.list .tiles{display:none}
+  body.list .listview{display:block}
+  table.dt td .sid{white-space:nowrap}
+  .hidden{display:none !important}
+  .count{color:var(--muted);font-size:var(--fs-sm)}
+  @media (max-width:760px){ .wrap{padding:var(--s4)} .tiles{grid-template-columns:1fr} }
+  @media print{ .appbar,.ctl{display:none} }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="wordmark">Remit<i>4</i>Me</span>
+  <div class="spacer"></div>
+  <div class="icons" style="gap:8px">
+    <a class="btn btn-sm" href="index.html" style="background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff">Home</a>
+    <a class="btn btn-sm" href="map.html" style="background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff">How it works</a>
+    <a class="btn btn-sm" href="app.html" style="background:#fff;color:var(--r4m-primary-600)">Open the demo</a>
+  </div>
+</div>
+
+<div class="sim-bar">
+  <b>All screens</b>
+  <span>Every screen in the demo, each opening directly and already signed in as the right role. Fictional data throughout.</span>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <h1>Screen index</h1>
+      <p>Click any tile to open that screen in the live demo, signed in as the listed account.
+         Previews run the real app on the seeded demo data.</p>
+    </div>
+  </div>
+
+  <div class="ctl">
+    <input type="search" id="q" placeholder="Filter by name, ID or route" aria-label="Filter screens">
+    <div class="seg2" role="group" aria-label="View">
+      <button id="v-grid" aria-pressed="true">Grid</button>
+      <button id="v-list" aria-pressed="false">List</button>
+    </div>
+    <label class="chk" style="font-size:var(--fs-sm)"><input type="checkbox" id="previews" checked> <span>Live previews</span></label>
+    <div style="flex:1"></div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div id="out"></div>
+  <div class="listview" id="outlist"></div>
+</div>
+
+<script src="screens.js"></script>
+</body>
+</html>
