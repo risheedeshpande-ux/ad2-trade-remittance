@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<title>AD2 Trade Remittance — Prototype Packet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=10">
+<style>
+  .wrap{max-width:1080px;margin:0 auto;padding:var(--s7) var(--s5) 80px}
+  .hero{display:grid;gap:var(--s4);margin-bottom:var(--s8)}
+  .hero h1{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1.12}
+  .hero p{font-size:var(--fs-lg);color:var(--ink-soft);max-width:60ch;margin:0}
+  .cards{display:grid;gap:var(--s4);grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-bottom:var(--s8)}
+  .nav-card{background:var(--surface);border:1px solid var(--r4m-border);border-radius:var(--radius);
+    padding:var(--s5);box-shadow:var(--shadow);text-decoration:none;display:flex;flex-direction:column;gap:6px;color:inherit}
+  .nav-card:hover{border-color:var(--r4m-primary-400);text-decoration:none;transform:translateY(-1px)}
+  .nav-card .ic{width:36px;height:36px;border-radius:10px;background:var(--r4m-primary-50);
+    color:var(--r4m-primary-600);display:grid;place-items:center;font-size:18px;margin-bottom:var(--s2)}
+  .nav-card h2{font-size:var(--fs-lg)}
+  .nav-card p{font-size:var(--fs-sm);color:var(--muted);margin:0;flex:1}
+  .nav-card .go{font-size:var(--fs-sm);color:var(--r4m-primary-600);font-weight:500;margin-top:var(--s2)}
+  section{margin-bottom:var(--s7)}
+  section h2{font-size:var(--fs-xl);margin-bottom:var(--s3)}
+  section p{color:var(--ink-soft);max-width:72ch}
+  .acct{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-sm)}
+  @media (max-width:760px){ .wrap{padding:var(--s5) var(--s4)} .hero h1{font-size:26px} }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="wordmark">Remit<i>4</i>Me</span>
+  <div class="spacer"></div>
+  <a class="btn btn-sm" href="app.html" style="background:#fff;color:var(--r4m-primary-600)">Open the demo</a>
+</div>
+
+<div class="sim-bar">
+  <b>Demo</b>
+  <span>Every business and transaction is fictional. FX rates, SWIFT, PennyDrop, sanctions screening, SFTP, SAP and document AI are simulated. Nothing here touches a real bank system.</span>
+</div>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>AD2 Trade Remittance</h1>
+    <p>A working demo of the SME trade-remittance portal and the AD2 operations portal behind it. Onboard a partner,
+       then take a payment and an export receipt all the way through maker, checker and operations to a UTR and a FIRC.</p>
+  </div>
+
+  <div class="cards">
+    <a class="nav-card" href="app.html">
+      <span class="ic">▶</span>
+      <h2>Live demo</h2>
+      <p>Both portals on a shared server. Open the <b>Demo guide</b> in the yellow bar to be walked through the whole journey.</p>
+      <span class="go">Open →</span>
+    </a>
+    <a class="nav-card" href="screens.html">
+      <span class="ic">▤</span>
+      <h2>All screens</h2>
+      <p>Every screen with a live preview and a direct link that opens it already signed in.</p>
+      <span class="go">Browse →</span>
+    </a>
+    <a class="nav-card" href="map.html">
+      <span class="ic">◈</span>
+      <h2>How it works</h2>
+      <p>Architecture, the partner journey, status machines, the purpose and document policy, and the controls.</p>
+      <span class="go">Read →</span>
+    </a>
+    <a class="nav-card" href="docs/">
+      <span class="ic">▤</span>
+      <h2>Documents</h2>
+      <p>The source BRD and the PRD that reconciles it with the requirements call.</p>
+      <span class="go">Read →</span>
+    </a>
+  </div>
+
+  <section>
+    <h2>Run the demo</h2>
+    <p>Open the demo and click <b>Demo guide</b>. It walks one new business through 17 steps — registration, maker review, checker
+       approval, an import bill, a DIR payment verified, authorised and released, then an export receipt disposed and a FIRC issued.
+       Each step signs in as the right person with one click, so you can watch the work move from role to role.</p>
+  </section>
+
+  <section>
+    <h2>Signing in</h2>
+    <p>Demo accounts use the demo passcode (<b>demo</b> unless the deployment sets its own). A business that registers through the
+       portal chooses its own Login ID and password. The <b>Demo role</b> switcher in the top bar moves between accounts.</p>
+    <div class="card" style="margin-top:var(--s4)"><div class="card-body tight"><div class="tablewrap">
+      <table class="dt">
+        <thead><tr><th>Domain ID</th><th>Login ID</th><th>Role</th><th>What they see</th></tr></thead>
+        <tbody>
+          <tr><td class="acct">MERIDIANTEX</td><td class="acct">SMEUSER</td><td>SME User</td><td>Meridian Textiles — Import and Export, USD/EUR/GBP</td></tr>
+          <tr><td class="acct">ARCADIACOMP</td><td class="acct">SMEUSER</td><td>SME User</td><td>Arcadia Components — Import only</td></tr>
+          <tr><td class="acct">NILGIRISPICE</td><td class="acct">SMEUSER</td><td>SME User</td><td>Nilgiri Spice — Export only</td></tr>
+          <tr><td class="acct">HKTRADING</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application waiting on the applicant to supply its IEC</td></tr>
+          <tr><td class="acct">ISHANICONS</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application priced by the maker, waiting on the checker</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">MAKER · MAKER2</td><td>AD2 Maker</td><td>Prices applications; verifies payments and disposals</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">CHECKER</td><td>AD2 Checker</td><td>Approves, authorises, accepts bills, confirms knock-offs</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">OPS</td><td>AD2 Operations</td><td>Records inward credits, releases payments, issues FIRCs</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">ADMIN</td><td>AD2 Administrator</td><td>Purpose codes, document policy and settings</td></tr>
+        </tbody>
+      </table>
+    </div></div></div>
+  </section>
+
+  <section>
+    <h2>Worth showing</h2>
+    <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <thead><tr><th style="width:230px">Where</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td><b>Outward → New request</b></td>
+          <td>Switch between <b>AIR</b>, <b>DIR</b> and <b>OTT</b>: the purpose codes and documents follow the business team's workbook. Under OTT,
+            type a large amount and Form 146 becomes required; pick a goods code and the transport document does too.</td></tr>
+        <tr><td><b>Any approval</b></td>
+          <td>Try to authorise as the maker who verified — the button is not there, and the API refuses it even if called directly.</td></tr>
+        <tr><td><b>Release a payment</b></td>
+          <td>Operations sees the account balance, releases, and gets a UTR, a SWIFT MT103 and a printable payment advice. The linked bill settles.</td></tr>
+        <tr><td><b>Two browsers</b></td>
+          <td>Open the demo in two windows as different roles. Act in one; the other's queue updates within seconds.</td></tr>
+        <tr><td><b>Administration</b></td>
+          <td>Stop a purpose code being offered, or make a document optional, and the next request reflects it.</td></tr>
+      </tbody>
+    </table></div></div></div>
+  </section>
+
+  <section>
+    <h2>Resetting</h2>
+    <p>The demo keeps one shared state on the server, so everyone using the link sees the same data. <b>Reset demo data</b> in the
+       yellow bar restores the starting data for everyone (it asks for the passcode where one is set).</p>
+  </section>
+
+  <section>
+    <h2>Scope</h2>
+    <p>Enforced for real: authentication, roles, four-eyes, the purpose and document policy, rates, balances, bill reservation and the audit trail.
+       Simulated: the FX feed, SWIFT, PennyDrop, sanctions screening, SFTP, SAP and document AI. Before production: the FX quotation formula from treasury,
+       transaction limits from risk, the SFTP/SAP contracts, document storage and retention, and a relational database in place of the demo store.</p>
+  </section>
+
+</div>
+</body>
+</html>
