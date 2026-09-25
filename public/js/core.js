@@ -55,6 +55,7 @@ const API = {
 const LOCAL_KEY = 'ad2-trade-state';
 let DB = null;              // what the signed-in user may see
 let S = null;               // { domainId, loginId, role, smeId, name, actingFor, token }
+let MASTER = null;          // the master test user behind this session, while testing: { domainId, loginId, name, focus }
 
 const sessGet = k => { if (EMBEDDED) return null; try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } };
 const sessSet = (k, v) => { if (EMBEDDED) return; try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -64,6 +65,7 @@ const localSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); }
 function setSession(v) {
   S = v;
   sessSet('ad2-session', v);
+  if (v && v.role === MASTER_ROLE) { MASTER = { domainId:v.domainId, loginId:v.loginId, name:v.name, focus:(MASTER && MASTER.focus) || null }; sessSet('ad2-master', MASTER); }
   if (v && v.token) { API.tokens[v.domainId + '/' + v.loginId] = v.token; sessSet('ad2-tokens', API.tokens); }
 }
 
@@ -188,7 +190,7 @@ async function run(cmd, payload, { success, after, keepScroll = true, quiet = fa
 
 function showError(e) {
   if (e.status === 401) {
-    setSession(null); closeModal();
+    setSession(null); endMaster(); closeModal();
     toast(e.message || 'Sign in again.', 'err');
     location.hash = '#/login'; render();
     return;
@@ -261,10 +263,13 @@ async function switchTo(domainId, loginId, { dest } = {}) {
   });
 }
 function afterSignIn(dest) {
-  const home = S.role.startsWith('AD2') ? '#/ad2/dashboard' : '#/sme/dashboard';
-  location.hash = dest || home;
+  location.hash = dest || homeHash();
   render();
 }
+/* Where each user starts: the master test user on its console, AD2 on its
+   dashboard, a business on its portal. */
+const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
+function endMaster() { MASTER = null; sessSet('ad2-master', null); }
 
 /* Poll for changes other users make, so a checker sees the maker's work
    arrive without reloading. Re-render only when it will not disturb input. */
@@ -303,7 +308,7 @@ async function resetDemo() {
         applyServer(r);
       }
       API.tokens = {}; sessSet('ad2-tokens', null); localSet('ad2-guide', null);
-      setSession(null); resetDrafts(); closeModal();
+      setSession(null); endMaster(); resetDrafts(); closeModal();
       await pull();
       toast('Demo data reset.', 'ok');
       location.hash = '#/login'; render();
@@ -359,7 +364,9 @@ const seesMargin = () => isAD2();
 const purposeLabel = code => { const p = purpose(code); return p ? `${p.code} — ${p.label}` : (code || '—'); };
 
 /* ---------- 4. session and capabilities ----------------------------------- */
+const MASTER_ROLE = 'Master Tester';
 const isAD2 = () => !!S && S.role.startsWith('AD2');
+const isMaster = () => !!S && S.role === MASTER_ROLE;
 const isSME = () => !!S && S.role.startsWith('SME');
 const acting = () => !!(S && S.actingFor);
 const asSme  = () => isSME() || acting();
@@ -561,6 +568,7 @@ const NI = {
   reconConfirm:{ href:'#/ad2/reconciliation?s=Proposed', label:'Confirm knock-offs', chip:'CK', tone:'--chip-rc', n:'reconConfirm' },
   reports:   { href:'#/ad2/reports',        label:'Reports',              chip:'RP', tone:'--chip-rp' },
   lab:       { href:'#/ad2/lab',            label:'Test data lab',        chip:'TL', tone:'--chip-ad', lab:true },
+  console:   { href:'#/test',               label:'Test console',         chip:'MT', tone:'--chip-ad' },
   aPurpose:  { href:'#/ad2/admin/purpose',    label:'Purpose codes',      chip:'PC', tone:'--chip-or' },
   aDocs:     { href:'#/ad2/admin/docs',       label:'Document policy',    chip:'DP', tone:'--chip-bl' },
   aComp:     { href:'#/ad2/admin/compliance', label:'Compliance rules',   chip:'CR', tone:'--chip-er' },
@@ -586,6 +594,7 @@ const NAV_BY_ROLE = {
                        ['Records', 'out', 'inw', 'bills', 'recon', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
   'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
                        ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Tools', 'lab']],
+  'Master Tester':    [['Testing', 'console']],
 };
 /* How many items wait behind a filtered menu entry. */
 function navCount(key) {
@@ -623,9 +632,9 @@ const navMini = () => document.body.classList.contains('nav-mini');
 function setNavMini(on) { document.body.classList.toggle('nav-mini', on); localSet('ad2-nav-mini', on ? 1 : null); }
 
 function navHTML() {
-  const ad2Home = isAD2() && !acting();
-  const me = !ad2Home ? sme(ctxSmeId()) : null;
-  const role = ad2Home ? S.role : (me && me.status !== 'Approved' ? 'SME Applicant' : 'SME User');
+  const ad2Home = isAD2() && !acting(), master = isMaster();
+  const me = !ad2Home && !master ? sme(ctxSmeId()) : null;
+  const role = master ? MASTER_ROLE : ad2Home ? S.role : (me && me.status !== 'Approved' ? 'SME Applicant' : 'SME User');
   const groups = NAV_BY_ROLE[role] || NAV_BY_ROLE['SME User'];
   const hash = location.hash || '';
   const qn = ad2Home ? myQueue().length : 0;
@@ -642,8 +651,8 @@ function navHTML() {
         ${n ? `<span class="navcount">${n}</span>` : ''}</a>`;
     }).join('');
   }).join('');
-  const title = ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
-  const sub = ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
+  const title = master ? 'Test console' : ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
+  const sub = master ? 'Master test user' : ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
   return `<nav class="nav" aria-label="Main">
     <div class="brand"><span class="mark">◈</span>
       <span class="bt"><span class="name">${esc(title)}</span><span class="mod">${esc(sub)}</span></span></div>
@@ -657,14 +666,16 @@ function navHTML() {
 /* Switch between accounts: grouped, searchable, and quicker than a long list. */
 function switchUserModal() {
   const staff = DB.logins.filter(l => l.domainId === 'AD2' && l.active !== false);
-  const biz = DB.logins.filter(l => l.domainId !== 'AD2' && l.active !== false);
+  const biz = DB.logins.filter(l => l.domainId !== 'AD2' && l.role !== MASTER_ROLE && l.active !== false);
+  const masters = DB.logins.filter(l => l.role === MASTER_ROLE && l.active !== false);
   const row = l => `<button type="button" class="swrow ${S.domainId === l.domainId && S.loginId === l.loginId ? 'me' : ''}" data-act="switch-user"
       data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" data-q="${esc((l.domainId + ' ' + l.loginId + ' ' + l.role + ' ' + (l.name || '') + ' ' + (l.tradingName || '')).toLowerCase())}">
       <b>${esc(l.name || l.loginId)}</b><span>${esc(l.role)}${l.tradingName ? ' · ' + esc(l.tradingName) : ''}</span>
-      <small>${esc(l.domainId)} / ${esc(l.loginId)}${l.test ? ' · test' : ''}${l.demo ? '' : ' · own password'}</small></button>`;
+      <small>${esc(l.domainId)} / ${esc(l.loginId)}${l.test ? ' · test' : ''}${l.demo || MASTER ? '' : ' · own password'}</small></button>`;
   const roles = [...new Set(staff.map(l => l.role))].sort((a, b) => (roleDef(a)?.order || 0) - (roleDef(b)?.order || 0));
   modal({ title:'Switch user', wide:true, body:`
     <input type="search" id="sw-q" data-act="sw-filter" placeholder="Search by name, role, business or Domain ID" aria-label="Search users" style="width:100%;margin-bottom:14px">
+    ${masters.length ? `<div class="swgrp" style="margin-bottom:14px"><h3 class="swh">Master test user — open anyone, run a journey end to end</h3>${masters.map(row).join('')}</div>` : ''}
     <div class="swgrid">
       <div><h3 class="swh">AD2 staff</h3>${roles.map(r => `<div class="swgrp">${staff.filter(l => l.role === r).map(row).join('')}</div>`).join('')}</div>
       <div><h3 class="swh">Businesses</h3>${biz.map(row).join('') || '<p style="color:var(--muted)">No business users.</p>'}</div>
@@ -712,11 +723,12 @@ function shell(crumbHtml, body) {
     <span class="wordmark">Remit<i>4</i>Me</span>
     <div class="spacer"></div>
     <div class="icons">
-      <button class="ibtn" type="button" data-act="go" data-href="${isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard'}" aria-label="Home">⌂</button>
+      <button class="ibtn" type="button" data-act="go" data-href="${homeHash()}" aria-label="Home">⌂</button>
       <button class="ibtn" type="button" data-act="guide-open" aria-label="Demo guide">?</button>
       <button class="ibtn" type="button" data-act="logout" aria-label="Sign out">⏻</button>
     </div>
   </div>
+  ${masterBarHTML()}
   ${simBanner()}
   ${acting() ? `<div class="sim-bar" style="background:#e0f4f4;border-color:#9ad4d5;color:#0b5f61">
       <b>Transacting for a customer</b>
@@ -740,7 +752,7 @@ const crumb = (...parts) =>
 
 /* A page for public screens (sign-in, registration, status). */
 const publicTop = back => `<div class="appbar"><span class="wordmark">Remit<i>4</i>Me</span><div class="spacer"></div>
-  ${back ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/login">Back to sign in</button>` : ''}</div>`;
+  ${back && !MASTER ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/login">Back to sign in</button>` : ''}</div>${masterBarHTML()}`;
 
 /* ---------- 8. drafts shared across views --------------------------------- */
 let DRAFT = null, OR_DRAFT = null, DI_DRAFT = null, BILL_DRAFT = null, REVIEW = null, RESP = null;

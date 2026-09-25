@@ -505,3 +505,31 @@ test('queries: AD2 answers for the customer with its documents, and it goes back
   const view = Engine.scopeState(db, MER);
   assert.ok(view.outward.find(x => x.id === 'OR-5104').query.response);
 });
+
+/* ---- master test user ---- */
+test('master test user: opens anyone, is audited, holds no authority of its own', () => {
+  const db = Engine.freshState(SEED);
+  const MASTER = who('TEST', 'MASTER');
+  const view = Engine.scopeState(db, MASTER);
+  assert.equal(view.scope, 'master');
+  assert.equal(view.smes.length, db.smes.length, 'sees every business');
+  assert.ok(view.outward.some(o => o.rate && o.rate.margin != null), 'sees the platform as AD2 does');
+  const r = run(db, MASTER, 'test.actAs', { domainId: 'meridiantex', loginId: 'smeuser' });
+  assert.deepEqual([r.domainId, r.loginId], ['MERIDIANTEX', 'SMEUSER']);
+  const entry = db.audit[0];
+  assert.match(entry.action, /Opened the platform as MERIDIANTEX\/SMEUSER/);
+  assert.equal(entry.internal, true, 'the switch is never shown to the business');
+  /* only the master may switch, and never into another master */
+  refuses(() => run(db, MAKER, 'test.actAs', { domainId: 'AD2', loginId: 'CHECKER' }), /cannot/);
+  refuses(() => run(db, MASTER, 'test.actAs', { domainId: 'TEST', loginId: 'MASTER' }), /master/);
+  refuses(() => run(db, MASTER, 'test.actAs', { domainId: 'AD2', loginId: 'NOBODY' }), /not found/);
+  /* it cannot transact itself: every step is taken as a real user */
+  refuses(() => run(db, MASTER, 'outward.verify', { id: 'OR-5106', checks: { documents: true, sanctions: true, purpose: true, beneficiary: true } }), /cannot/);
+  refuses(() => run(db, MASTER, 'onboarding.approve', { smeId: 'SME-1005' }), /cannot/);
+  /* the administrator's test-tools switch turns it off */
+  run(db, ADMIN, 'settings.update', { testLab: false });
+  refuses(() => run(db, MASTER, 'test.actAs', { domainId: 'AD2', loginId: 'MAKER' }), /switched off/);
+  /* a business sees no trace of the master in its own view */
+  const mer = Engine.scopeState(db, who('MERIDIANTEX', 'SMEUSER'));
+  assert.ok(!mer.audit.some(a => /Master/.test(a.actor)));
+});

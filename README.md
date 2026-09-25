@@ -16,13 +16,25 @@ npm install
 npm start            # http://localhost:8130 — state in .data/state.json
 ```
 
-Open the demo and click **Demo guide** in the yellow bar. It walks one new business through 17 steps and signs in
-as the right person at each one. For everything else, open **Test data lab** from the sidebar.
+**To test everything with one sign-in, use the master test user: Domain ID `TEST`, Login ID `MASTER`, passcode `demo`.**
+It opens a test console with:
+- every open item, its next step and who can take it;
+- journeys to start;
+- every customer and AD2 user, each one click away with no password.
+
+While you test, a dark bar at the top follows the item you are on. It shows what happens next and offers
+**Do it as …** for the next person. It never offers someone who has already handled the item, so four-eyes still applies.
+
+The master holds no authority itself. The server hands it the other user's own session, so every step is recorded
+against that user. Each switch is written to the audit log. Switch it off with **Test tools** in Platform settings.
+
+Or click **Demo guide** in the yellow bar. It walks one new business through 17 steps and signs in as the right
+person at each one. To create more test data, open **Test data lab** from the sidebar.
 
 ```bash
 npm test             # engine and API tests
 npm run test:e2e     # the guided journey in a real browser, on a throwaway server
-npm run test:qa      # 34 journeys across every role and product; writes qa-report.md (see tests/qa.js)
+npm run test:qa      # 36 journeys across every role and product; writes qa-report.md (see tests/qa.js)
 ```
 
 ## Workspaces
@@ -122,12 +134,13 @@ through the portal, or a user added with a password, signs in with its own passw
 
 | Domain ID | Login ID | Role |
 |---|---|---|
+| TEST | MASTER | **Master test user** — opens the platform as anyone (see *Run it*) |
 | MERIDIANTEX | SMEUSER | SME User — Import and Export |
 | ARCADIACOMP | SMEUSER | SME User — Import only |
 | NILGIRISPICE | SMEUSER | SME User — Export only |
 | COASTALCASH, PUNEAUTO, MYSOREMACH, KERALACOIR, HYDPHARMA, DELHIDECOR | SMEUSER | Test businesses |
 | HKTRADING | APPLICANT | SME Applicant — waiting on its IEC |
-| ISHANICONS | APPLICANT | SME Applicant — priced, waiting on the checker |
+| ISHANICONS | APPLICANT | SME Applicant — priced, waiting on Compliance |
 | AD2 | SALES | AD2 Sales |
 | AD2 | MAKER, MAKER2 | AD2 Maker |
 | AD2 | CHECKER, CHECKER2 | AD2 Checker |
@@ -159,6 +172,10 @@ The project deploys as-is: `public/` is served statically and `api/` becomes ser
 - Server-side validation of every field; booked rates recomputed on the server; deal rates held within 3% of
   reference; assisted margins held within the configured band.
 - Content Security Policy with no inline or third-party script, HSTS, nosniff, frame-ancestors self.
+- The master test user (TEST / MASTER) signs in with the demo passcode and can open **any** user. That includes
+  businesses that registered with their own password. It is a test tool. Set `DEMO_PASSCODE` before sharing a link,
+  or switch off **Test tools** in Platform settings for a deployment that holds real sign-ins. It never gains
+  authority of its own: it receives the chosen user's session, and each switch is audited.
 
 ## Not in scope yet
 

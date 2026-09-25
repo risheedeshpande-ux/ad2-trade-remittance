@@ -1,10 +1,29 @@
 # AD2 Trade Remittance — QA report
 
-24 September 2026 · run with `npm run test:qa` (rerun any time; it writes a fresh `qa-report.md`)
+25 September 2026 · run with `npm run test:qa` (rerun any time; it writes a fresh `qa-report.md`)
 
-**Result: 35 of 35 journeys pass, 131 checks.** Also green: 26 engine and API tests (`npm test`) and the 18-step guided
+**Result: all 36 journeys pass, 144 checks.** Also green: 28 engine and API tests (`npm test`) and the 18-step guided
 journey (`npm run test:e2e`). Every journey is driven through the real screens as the role that does it, on a server,
 with a different person at each approval stage.
+
+## Master test user
+
+**Domain ID `TEST`, Login ID `MASTER`, passcode `demo`** is the first account on the sign-in page. It opens a
+**test console**:
+- **Start a journey:** ten common journeys, each opened as the right person.
+- **Waiting on AD2 / Waiting on a customer:** every open item, its next step, and a button that opens the platform as
+  someone who can take that step.
+- **Open the platform as:** every customer, applicant and AD2 user, one click each, with no password.
+- **Latest activity**, including each switch you make.
+
+While testing, a dark bar on every page shows who you are and the next step on the item in front of you. It offers
+**Do it as …** for the next person, and never someone who already handled the item. A payment goes customer → maker
+→ checker → operations in four clicks. An online registration goes applicant → maker → Compliance. The bar also
+has **Open as…** to jump to anyone, and **Test console** to go back.
+
+The master cannot approve anything itself. The server gives it the chosen user's own session, so every step is
+recorded against that user and four-eyes holds. Journey 31 below, and new engine and API tests, prove this.
+
 
 ## What the 24 Sep review found, and what changed
 
@@ -63,25 +82,35 @@ with a different person at each approval stage.
 | 28 | Admin | Administrator adds a Compliance user and changes the controls; the audit log records it | Admin | 3 |
 | 29 | Reports | Bill amount beside outstanding, aging with rows, UFI status, FIRC downloads, CSV export | SME, Ops | 5 |
 | 30 | Lab | A new test business with parked requests that carry on through the real workflow | Maker, Ops | 2 |
-| 31 | Platform | Type an amount and click straight away: the first click counts | SME | 2 |
-| 32 | Platform | The browser never goes back to an older copy of the state | Any | 1 |
-| 33 | Platform | Phone width: drawer navigation, no horizontal scroll | SME | 1 |
-| 34 | Platform | A half-filled registration survives a reload | Applicant | 1 |
-| 35 | Platform | Reset demo data restores the starting data for everyone | Any | 3 |
+| 31 | Testing | Master test user: one sign-in; “Do it as …” carries a payment through every stage, never to someone who already handled it | Master → SME → Maker → Checker → Ops | 13 |
+| 32 | Platform | Type an amount and click straight away: the first click counts | SME | 2 |
+| 33 | Platform | The browser never goes back to an older copy of the state | Any | 1 |
+| 34 | Platform | Phone width: drawer navigation, no horizontal scroll | SME | 1 |
+| 35 | Platform | A half-filled registration survives a reload | Applicant | 1 |
+| 36 | Platform | Reset demo data restores the starting data for everyone | Any | 3 |
 
 ## Try it yourself
 
-Sign in with the passcode **demo**. For a first run: **MERIDIANTEX / SMEUSER** → New outward payment → DIR → choose
-BL-24014 from the dropdown → book the rate → review → confirm. Then sign in as **AD2 / MAKER** (Verify payments),
-**AD2 / CHECKER** (Authorise payments) and **AD2 / OPS** (Release payments). For inward, **NILGIRISPICE / SMEUSER**
-has a reported payment waiting for **AD2 / OPS** under Receipts to confirm. Onboarding approvals are with
-**AD2 / COMPLIANCE**.
+Sign in as **TEST / MASTER** (passcode **demo**). On the console, click **Start as Kavita Raghunathan** under *Pay a
+supplier against a bill*. Choose DIR, pick BL-24014 from the dropdown, book the rate, review and confirm. Then click
+**Do it as …** in the dark bar three times: the maker verifies, the checker authorises and Operations releases.
 
-## Open decisions
+To sign in as each role separately instead, use the passcode **demo** with:
+- **MERIDIANTEX / SMEUSER**, **AD2 / MAKER**, **AD2 / CHECKER** and **AD2 / OPS** for payments;
+- **NILGIRISPICE / SMEUSER** for inward; its reported payment waits for **AD2 / OPS** under Receipts to confirm;
+- **AD2 / COMPLIANCE** for onboarding approvals.
 
-- **Role names.** The review split onboarding and money checking. The build calls them *AD2 Compliance* (customers)
-  and *AD2 Checker* / *AD2 Operations* (money). Rename if the bank uses other titles.
-- **Assisted journey.** Kept as "work inside the customer's portal", with a clearer banner and a "Done — back to my
-  AD2 workspace" button. A single AD2-side form with a customer picker is a larger change if preferred.
-- **Deployment storage.** On Vercel, connect a Blob store (private preferred). Without one, each server instance keeps
-  its own state and no client-side fix can make that consistent.
+## Decisions taken
+
+- **Role names.** Kept as built. *AD2 Compliance* approves customers; *AD2 Checker* or *AD2 Operations* approves
+  money, matching the 24 Sep call ("onboarding checker will be different and bill checker will be an operational
+  role"). If the bank uses other titles, renaming means changing the role in `public/data.js` and where the
+  menus and queues refer to it.
+- **Assisted journey.** Kept inside the customer's portal, with the banner and the "Done — back to my AD2
+  workspace" button. It reuses the same screens and checks the customer uses, so there is one form to maintain.
+  The master test user now covers the "act as someone else" testing need.
+- **Deployment storage (action for the project owner).** Connect a Vercel Blob store to the project: Storage →
+  Create → Blob, private access, then connect it to *ad2-trade-remittance* for Production and Preview. Vercel sets
+  `BLOB_READ_WRITE_TOKEN` itself, and the code picks it up with no change. Until then, each server instance keeps its
+  own copy of the data, so a step can seem to vanish or a reset seem not to take. `/api/health` reports
+  `"store":"blob"` once it is connected.

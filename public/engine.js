@@ -2015,6 +2015,24 @@
       return { ids: out, message: `Generated ${out.join(', ')} — parked at submitted, verified and authorised stages.` };
     },
   };
+  /* The master test user opens the platform as someone else. It gains no
+     authority of its own: the server issues a session for the user it opens,
+     so every step is recorded against that user and four-eyes still holds. */
+  C['test.actAs'] = {
+    cap: 'test.master',
+    run(db, a, p, ctx) {
+      need(db.settings.testLab !== false, 'Test tools are switched off in Administration → Settings.');
+      const t = loginOf(db, p.domainId, p.loginId);
+      if (!t) missing('User');
+      need(!can(db, { role: t.role }, 'test.master'), 'Open a customer or AD2 user, not another master test user.');
+      need(t.active !== false, `${t.domainId}/${t.loginId} is deactivated.`);
+      const s = t.smeId && smeOf(db, t.smeId);
+      need(!(s && s.status === 'Rejected'), 'This business was rejected, so it cannot sign in.');
+      audit(db, a, ctx.now, 'USERS', `Opened the platform as ${t.domainId}/${t.loginId} (${t.name || t.role}) for testing`, true);
+      return { message: `Now testing as ${t.name || t.loginId} — ${t.role}.`, domainId: t.domainId, loginId: t.loginId };
+    },
+  };
+
   C['assist.open'] = {
     cap: 'assist.transact',
     run(db, a, p, ctx) {
@@ -2058,13 +2076,14 @@
     try { a = resolveActor(db, who, null); } catch (e) { a = null; }
     /* Sign-in shortcuts list the shared demo accounts; a password account is
        visible only to AD2 and to its own business. */
-    out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || l.smeId === a.smeId))).map(publicLogin(db));
+    const master = !!a && can(db, a, 'test.master');
+    out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || master || l.smeId === a.smeId))).map(publicLogin(db));
     if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); out.scope = 'public'; return out; }
-    if (isAD2(a)) {
+    if (isAD2(a) || master) {
       BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
       out.complianceRules = clone(db.complianceRules || []);
       out.notifications = out.notifications.filter(n => n.toRole === a.role);
-      out.scope = 'ad2';
+      out.scope = master ? 'master' : 'ad2';
       return out;
     }
     const sid = a.smeId;

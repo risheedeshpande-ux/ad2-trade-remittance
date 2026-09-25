@@ -134,3 +134,26 @@ test('reset is authoritative and moves the revision forward', async () => {
   const after = await call('GET', 'state', { token: await signIn('AD2', 'MAKER') });
   assert.equal(after.body.epoch, r.body.epoch);
 });
+
+test('master test user: the server hands over the other user’s own session', async () => {
+  const master = await signIn('TEST', 'MASTER');
+  const st = await call('GET', 'state', { token: master });
+  assert.equal(st.body.state.scope, 'master');
+  const r = await call('POST', 'session', { token: master, body: { as: { domainId: 'AD2', loginId: 'CHECKER' } } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.user.role, 'AD2 Checker');
+  assert.equal(r.body.state.scope, 'ad2');
+  /* the token is the checker's: it carries the checker's authority and no more */
+  const as = await call('GET', 'state', { token: r.body.token });
+  assert.equal(as.body.user.loginId, 'CHECKER');
+  const again = await call('POST', 'session', { token: r.body.token, body: { as: { domainId: 'AD2', loginId: 'OPS' } } });
+  assert.equal(again.status, 403, 'a switched-to user cannot switch onwards');
+  /* a business opens with only its own data */
+  const biz = await call('POST', 'session', { token: master, body: { as: { domainId: 'MERIDIANTEX', loginId: 'SMEUSER' } } });
+  assert.equal(biz.body.state.scope, 'sme');
+  assert.ok(biz.body.state.smes.every(s => s.id === 'SME-1001'));
+  /* no session, or a non-master session, is refused */
+  assert.equal((await call('POST', 'session', { body: { as: { domainId: 'AD2', loginId: 'OPS' } } })).status, 401);
+  const maker = await signIn('AD2', 'MAKER');
+  assert.equal((await call('POST', 'session', { token: maker, body: { as: { domainId: 'AD2', loginId: 'OPS' } } })).status, 403);
+});

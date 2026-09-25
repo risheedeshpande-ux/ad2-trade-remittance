@@ -142,7 +142,7 @@ function adminSettings() {
       <label class="chk"><input type="checkbox" data-act="set-unlinked" ${st.allowUnlinked ? 'checked' : ''} ${ed}>
         <span>Permit DIR and LC payments without a linked import bill<small>Off by default: DIR and LC payments settle a lodged bill.</small></span></label>
       <label class="chk"><input type="checkbox" data-act="set-testlab" ${st.testLab !== false ? 'checked' : ''} ${ed}>
-        <span>Test data lab<small>Lets users generate test businesses, bills, receipts and parked requests. Switch off for a clean walkthrough.</small></span></label>
+        <span>Test tools<small>The test data lab, which generates test businesses, bills, receipts and parked requests, and the master test user (TEST / MASTER), which opens the platform as anyone. Switch off for a clean walkthrough.</small></span></label>
     </div>
     <div class="grid g3 fields" style="margin-top:22px;align-items:end">
       <div class="f"><label for="set-band">Assisted margin band (paise)</label>

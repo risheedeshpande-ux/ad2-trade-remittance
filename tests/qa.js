@@ -802,6 +802,44 @@ async function startServer() {
       check(true, 'an authorised one is waiting for operations to release');
     });
 
+    /* ================= master test user ================= */
+    await scenario('Testing', 'Master test user: one sign-in; “Do it as …” carries a payment through every stage, never to someone who already handled it', 'Master → SME → Maker → Checker → Ops', async () => {
+      await closeModal();
+      await page.evaluate(() => { setSession(null); resetDrafts(); location.hash = '#/login'; render(); });
+      await page.waitForSelector('.login-panel');
+      await click('.mt-login [data-act="fill-login"]');
+      check(await page.inputValue('#li-domain') === 'TEST' && await page.inputValue('#li-user') === 'MASTER', 'the sign-in page offers the master test user first (TEST / MASTER)');
+      await page.fill('#li-pass', 'demo'); await click('form [type=submit]'); await wait(400);
+      check(await page.evaluate(() => location.hash) === '#/test', 'the master lands on the test console');
+      check(await page.locator('.mt-person').count() >= 15, 'every customer and AD2 user can be opened from the console');
+      check(await page.locator('tr:has-text("Verify the payment") [data-act="mt-go"]').count() >= 1, 'open items list the next step and who can take it');
+      await shot('master-console', true);
+      await click('[data-act="mt-go"][data-d="MERIDIANTEX"][data-dest="#/sme/outward/new"]');
+      check(await state(() => S.domainId + '/' + S.loginId) === 'MERIDIANTEX/SMEUSER', 'a journey starts as the customer, with no password');
+      const id = await newOutward({ bene: 'BEN-002', product: 'OTT', purpose: 'S1006', purposeSearch: 'consultancy', currency: 'GBP', amount: 3000 });
+      await shot('master-bar');
+      const trail = [];
+      for (const [action, status] of [['or-verify', 'Verified'], ['or-authorise', 'Authorised'], ['or-execute', 'Completed']]) {
+        trail.push((await text('.mbar .mb-go')).replace(/\s*→\s*$/, ''));
+        await click('.mbar .mb-go'); await page.waitForSelector(`[data-act="${action}"]`);
+        check(/you can do this here/.test(await text('.mbar .mb-step')), `the bar opens the request for the ${status === 'Verified' ? 'maker' : status === 'Authorised' ? 'checker' : 'operations user'}`);
+        await click(`[data-act="${action}"]`);
+        if (action === 'or-verify') await click('[data-act="vchk-all"]');
+        await modalOk();
+        if (action === 'or-execute') { await page.waitForSelector('.modal .advice', { timeout: 8000 }); await closeModal(); }
+        await page.waitForSelector(`h1:has-text("${status}")`);
+      }
+      check(new Set(trail).size === 3, 'the bar hands it to three different people: ' + trail.join(' → '));
+      check(/Released/.test(await text('.mbar .mb-step')), 'the bar shows the payment released');
+      const keys = await state(i => { const o = DB.outward.find(x => x.id === i); return [o.createdByKey, o.wf.verified.key, o.wf.authorised.key, o.wf.executed.key]; }, id);
+      check(new Set(keys).size === 4, 'four different people raised, verified, authorised and released it');
+      const switches = await state(() => DB.audit.filter(a => /^Opened the platform as/.test(a.action)).length);
+      check(switches >= 4, `each switch is written to the audit log (${switches})`);
+      await click('.mbar [data-act="mt-console"]');
+      check(await page.evaluate(() => location.hash) === '#/test', 'the bar returns to the console');
+      await page.evaluate(() => { setSession(null); endMaster(); });
+    });
+
     await scenario('Platform', 'Type an amount and click straight away: the first click counts', 'SME', async () => {
       await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
       await select('#or-bene', 'BEN-002'); await click('[data-act="or-product"][data-id="OTT"]'); await select('#or-currency', 'GBP');

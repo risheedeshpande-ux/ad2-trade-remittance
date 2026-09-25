@@ -18,11 +18,15 @@ function render(opts = {}) {
   if (!S && !['login','register','status'].includes(parts[0])) { location.hash = '#/login'; return; }
   let html;
   try {
-    if (parts[0] === 'login') html = S ? (location.hash = S.role.startsWith('AD2') ? '#/ad2/dashboard' : '#/sme/dashboard', '') : viewLogin();
+    if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
     else if (parts[0] === 'register') html = viewRegister();
     else if (parts[0] === 'status')   html = viewStatus();
+    else if (parts[0] === 'test') {
+      if (!isMaster()) { location.hash = homeHash(); return; }
+      html = viewTestConsole();
+    }
     else if (parts[0] === 'sme') {
-      if (!isSME() && !acting()) { location.hash = '#/ad2/dashboard'; return; }
+      if (!isSME() && !acting()) { location.hash = homeHash(); return; }
       const me = sme(ctxSmeId());
       if (me && me.status !== 'Approved' && parts[1] !== 'dashboard') { location.hash = '#/sme/dashboard'; return; }
       switch (parts[1]) {
@@ -41,7 +45,7 @@ function render(opts = {}) {
       }
     }
     else if (parts[0] === 'ad2') {
-      if (!isAD2()) { location.hash = '#/sme/dashboard'; return; }
+      if (!isAD2()) { location.hash = homeHash(); return; }
       if (acting()) setSession({ ...S, actingFor:null });
       if (!navAllows(hash)) { toast('That screen is not part of the ' + S.role + ' workspace.', 'err'); location.hash = '#/ad2/dashboard'; return; }
       switch (parts[1]) {
@@ -287,7 +291,7 @@ document.addEventListener('click', async e => {
 
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
-  if (act === 'logout')    { setSession(null); resetDrafts(); location.hash = '#/login'; render(); return; }
+  if (act === 'logout')    { setSession(null); endMaster(); resetDrafts(); location.hash = '#/login'; render(); return; }
   if (act === 'reset-demo'){ resetDemo(); return; }
   if (act === 'nav-toggle'){ document.body.classList.toggle('nav-open'); return; }
   if (act === 'nav-mini')  { if (window.innerWidth <= 1024) { document.body.classList.toggle('nav-open'); return; } setNavMini(!navMini()); render({ keepScroll:true }); return; }
@@ -296,6 +300,7 @@ document.addEventListener('click', async e => {
     const d = t.dataset.d, l = t.dataset.l;
     closeModal();
     if (S && S.domainId === d && S.loginId === l) return;
+    if (MASTER && !(d === MASTER.domainId && l === MASTER.loginId)) { masterAs(d, l); return; }
     switchTo(d, l).then(ok => { if (ok) toast('Switched to ' + S.role + (S.name ? ' — ' + S.name : '') + '.'); else render(); });
     return;
   }
@@ -398,7 +403,7 @@ document.addEventListener('click', async e => {
       return;
     }
     modal({ title:'Application submitted', okLabel:'Sign in and track it', body:`
-      <div class="note note-ok"><span>Application <b>${esc(res.smeId)}</b> is with AD2. A maker reviews and prices it, then a checker approves it.</span></div>
+      <div class="note note-ok"><span>Application <b>${esc(res.smeId)}</b> is with AD2. A maker reviews and prices it, then AD2 Compliance approves it.</span></div>
       <div class="kv" style="margin-top:16px">
         <div><div class="k">Domain ID</div><div class="v">${esc(res.domainId)}</div></div>
         <div><div class="k">Login ID</div><div class="v">${esc(res.loginId)}</div></div>
@@ -1410,6 +1415,7 @@ document.addEventListener('pointerup', e => {
   }
   if (API.mode === 'server') { API.tokens = sessGet('ad2-tokens') || {}; S = sessGet('ad2-session'); }
   else { LOCAL = loadLocal(); S = EMBEDDED ? null : sessGet('ad2-session'); }
+  MASTER = sessGet('ad2-master');
 
   try { await pull(); }
   catch (e) {

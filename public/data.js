@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v7';
+const SEED_VERSION = 'ad2-trade-v8';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -349,6 +349,7 @@ const CAPABILITIES = [
   { id:'fx.dealRef',           group:'Assisted',       label:'Apply an FX deal reference negotiated with the treasury desk' },
   { id:'reports.view',         group:'Reports',        label:'View and export reports' },
   { id:'lab.use',              group:'Test data',      label:'Generate test businesses, bills, receipts and requests' },
+  { id:'test.master',          group:'Test data',      label:'Open the platform as any user, to run a journey end to end' },
 
   { id:'admin.masters',        group:'Administration', label:'Maintain purpose codes, document policy and compliance rules' },
   { id:'admin.users',          group:'Administration', label:'Manage users and roles' },
@@ -412,6 +413,11 @@ const ROLES = [
          'bills.viewAll','reports.view','lab.use'],
     segregated:['onboard.approve','outward.approve','recon.confirm','inward.dispose'],
     note:'Kept out of the transaction path on purpose: whoever configures the controls should not also be able to transact through them.' },
+
+  { id:'Master Tester', portal:'TEST', order:9,
+    summary:'One sign-in for testing and demos. Sees the whole platform and opens it as any customer or AD2 user in one click, so a journey runs end to end without signing in and out. Holds no authority of its own: each step is taken as, and recorded against, the user it opens, so four-eyes still applies. Every switch is written to the audit log.',
+    can:['test.master','outward.viewAll','inward.viewAll','bills.viewAll','reports.view'],
+    note:'Not assignable to a user. Switched off with the test tools in Platform settings.' },
 ];
 
 /* --- SMEs ---------------------------------------------------------------- */
@@ -814,6 +820,7 @@ const AUDIT = [
    demo:true accounts sign in with the shared demo passcode. An SME that
    registers through the portal sets its own password instead.             */
 const ACCOUNTS = [
+  { domainId:'TEST',        loginId:'MASTER',   role:'Master Tester',      smeId:null,       name:'Master Tester',      demo:true },
   { domainId:'MERIDIANTEX', loginId:'SMEUSER',  role:'SME User',           smeId:'SME-1001', name:'Kavita Raghunathan', demo:true },
   { domainId:'ARCADIACOMP', loginId:'SMEUSER',  role:'SME User',           smeId:'SME-1002', name:'Devansh Mehta',      demo:true },
   { domainId:'NILGIRISPICE',loginId:'SMEUSER',  role:'SME User',           smeId:'SME-1003', name:'Suresh Palaniappan', demo:true },

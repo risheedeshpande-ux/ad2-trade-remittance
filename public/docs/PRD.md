@@ -1,6 +1,6 @@
 # AD2 Trade Remittance Platform — Product Requirements
 
-Version 1.3 · 24 September 2026
+Version 1.4 · 25 September 2026
 Source: AD2 Trade Remittance BRD v1.0, requirements call of 22 September 2026, the product reviews of 22–23 and 24 September 2026, and the live Remit4Me operations platform (uat1.remit4me.com).
 
 ---
@@ -54,6 +54,7 @@ The requirements call revised the BRD in ten places (C1–C10); two further chan
 | C31 | Inward intimation | AD2 records every receipt | The SME may **report a buyer's payment** (New inward remittance); Operations confirms it against the nostro credit or declines it with a reason. Disposals carry an **RBI inward purpose code** (P0102 by default, P0103 for an advance). |
 | C32 | Onboarding pricing | At least one charge required | **Charges are optional.** The maker can select all currencies and apply one margin across the board, then adjust per currency. |
 | C33 | Reports | Outstanding shows the balance | Outstanding bills show the **bill amount** beside the outstanding; aging lists every open bill, receipt and FIRC; FIRCs **download** from the report; realised bills show the **UFI portal** knock-off. |
+| C34 | Testing | Sign in and out as each role | A **master test user** (TEST / MASTER) opens the platform as any customer or AD2 user and follows an item through every stage; see §14B. |
 
 Two further decisions carry into the build:
 
@@ -75,6 +76,7 @@ Two further decisions carry into the build:
 | AD2 Operations | AD2 | Records and confirms incoming credits, **authorises** (as a checker would), accepts bills, confirms and reverses knock-offs, **releases** authorised payments, **processes** disposals and issues FIRCs — never authorising and releasing the same request. |
 | AD2 (assisted) | SME portal | Any AD2 maker or operations user may act inside an approved SME's portal on its behalf. Covered in §7A. |
 | AD2 Administrator | AD2 | Users (add, deactivate, change role, reset password), purpose codes, document policy, compliance rules, settings, audit log. No transaction authority. |
+| Master Tester | Test | Demo and test use only. Sees the whole platform and opens it as any user; holds no authority of its own. Not assignable. See §14B. |
 
 An SME user may submit without a second SME approver. SME-side maker-checker is a later addition.
 
@@ -412,6 +414,7 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC27 | Compliance approves customers; the trade checker cannot; Operations can authorise and release but not both on one request |
 | AC28 | AD2 can answer a query for the customer with documents; an SME can report an inward remittance that Operations confirms |
 | AC29 | A browser never shows an older state than it has seen; Reset demo data takes effect for everyone at once |
+| AC30 | One master test sign-in can run any journey end to end; each step is recorded against the user it was taken as, and four-eyes still holds |
 
 ---
 
@@ -424,6 +427,16 @@ Seeded data is used up as journeys are run. The lab — *Test data lab* for AD2 
 - **Park requests** at each stage (DIR submitted, LC verified, AIR authorised, a disposal submitted) by running the real commands as lab users, so every control still applies.
 
 The six test businesses are also created whenever the demo is reset. The Administrator can switch the lab off in Platform settings.
+
+## 14B. Master test user
+
+Testing a journey across roles once meant signing in and out at every stage. The master test user (**TEST / MASTER**, demo passcode) replaces that:
+
+- **Test console.** Lists every open item (applications, payments, disposals, reported receipts, bills and knock-offs), its next step and who can take it. It also has journeys to start and every user to open.
+- **Open as.** One click opens the platform as that user, with no password. This works for businesses that registered with their own password too.
+- **Next-step bar.** While testing, a bar on every page follows the item in front of you and offers **Do it as …** for the next person. It never offers someone who has already handled the item.
+- **Controls stay intact.** The master holds no authority of its own. The server issues the chosen user's own session, so every action is recorded against that user and the maker-checker rules still apply. Each switch is written to the audit log, and a business never sees it.
+- **Switch.** The Administrator turns it off with the test tools in Platform settings.
 
 ---
 

@@ -94,6 +94,9 @@ const SCREENS = [
    note:'AD2 raises a request for an SME. It is stamped as assisted, and a different maker must verify it.' },
  { g:'Assisted journey', id:'AST-02', name:'Assisted disposal', route:'#/sme/inward/IR-3303/dispose', as:'AD2:OPS', acting:'SME-1001',
    note:'Operations disposes a receipt on the SME’s behalf; the audit names both parties.' },
+
+ { g:'Testing', id:'TST-01', name:'Test console (master test user)', route:'#/test', as:'TEST:MASTER',
+   note:'One sign-in for testing: every open item with its next step and who can take it, journeys to start, and every user to open. A bar then follows the item through each stage — “Do it as …” becomes the next person, never one who already handled it.' },
 ];
 
 const url = s => 'app.html' + (s.as ? '?as=' + encodeURIComponent(s.as) + (s.acting ? '&acting=' + encodeURIComponent(s.acting) : '') : '') + s.route;

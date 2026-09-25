@@ -9,6 +9,7 @@ function viewLogin() {
   const demo = DB.logins.filter(a => a.demo && a.active !== false);
   const staff = demo.filter(a => a.domainId === 'AD2').sort((a, b) => (DB.roles.find(r => r.id === a.role)?.order || 0) - (DB.roles.find(r => r.id === b.role)?.order || 0));
   const users = demo.filter(a => a.role === 'SME User'), applicants = demo.filter(a => a.role === 'SME Applicant');
+  const masters = demo.filter(a => a.role === MASTER_ROLE);
   const registered = DB.logins.filter(a => !a.demo);
   const group = (title, list, open, own) => list.length ? `<details ${open ? 'open' : ''}><summary>${esc(title)} (${list.length})</summary>${list.map(a => btn(a, own)).join('')}</details>` : '';
   const passHint = API.mode === 'local'
@@ -48,6 +49,9 @@ function viewLogin() {
         </div>
       </form>
       <div class="demo-note"><b>Demo accounts — click to fill</b>
+        ${masters.length ? `<div class="mt-login">${masters.map(a => `<button type="button" data-act="fill-login" data-domain="${esc(a.domainId)}" data-login="${esc(a.loginId)}">
+            <b>Master test user</b> — every role, one sign-in<small>${esc(a.domainId)} / ${esc(a.loginId)}</small></button>`).join('')}
+          <span>One sign-in to test everything: opens any customer or AD2 user in one click and walks each item to the person who takes the next step.</span></div>` : ''}
         ${group('AD2 staff', staff, true)}
         ${group('Businesses', users, true)}
         ${group('Applications in progress', applicants, false)}

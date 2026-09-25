@@ -3,6 +3,7 @@
 
      GET  /api/health                  mode, store and whether a passcode is needed
      POST /api/session                 sign in -> { token, user }
+                                       { as } with a master test session -> the target's session
      GET  /api/state[?since=rev]       the caller's view of the platform
      POST /api/command                 { cmd, payload } -> run one engine command
      GET  /api/status?app=&domain=     public application tracker
@@ -45,6 +46,27 @@ async function readState({ fresh } = {}) {
   return cache;
 }
 
+/* Run one command against a fresh read and write it back. If someone wrote
+   first, or the read lagged, wait a moment and replay it on a fresh read.
+   Returns { next, result }, or null if the store stayed busy. */
+async function commit(w, cmd, payload) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { state, etag } = await readState({ fresh: true });
+    const next = clone(state);
+    const result = Engine.execute(next, w, cmd, payload, { now: new Date().toISOString(), hashPassword: auth.hashPassword });
+    try {
+      const newTag = await getStore().write(next, etag);
+      cache = { state: next, etag: newTag, at: Date.now() };
+      return { next, result };
+    } catch (e) {
+      if (!e.conflict) throw e;
+      cache = null;
+      await new Promise(r => setTimeout(r, 120 * (attempt + 1)));
+    }
+  }
+  return null;
+}
+
 const json = (status, body, extra) => ({ status, body, headers: extra || {} });
 const errorOut = e => {
   if (e instanceof Engine.EngineError) return json(e.status, { error: e.message, code: e.code, details: e.details || [] });
@@ -82,6 +104,21 @@ async function handle({ method, route, query, headers, body, ip }) {
       const { state } = await readState();
       const r = Engine.publicStatus(state, query.app, query.domain);
       return r ? json(200, { application: r }) : json(404, { error: 'No application matches that Application ID and Domain ID.', code: 'not_found' });
+    }
+
+    if (route === 'session' && method === 'POST' && body.as) {
+      /* The master test user opens the platform as another user. The engine
+         checks the capability and audits the switch; the session issued is
+         the target's own, so it carries only that user's authority. */
+      const w = who(headers);
+      if (!w.ok || !w.who) return json(401, { error: 'Your session has expired. Sign in again.', code: 'auth' });
+      const target = { domainId: String(body.as.domainId || '').trim().toUpperCase().slice(0, 20),
+                       loginId: String(body.as.loginId || '').trim().toUpperCase().slice(0, 20) };
+      const out = await commit(w.who, 'test.actAs', target);
+      if (!out) return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
+      const login = out.next.logins.find(l => l.domainId === target.domainId && l.loginId === target.loginId);
+      return json(200, { ok: true, result: out.result, token: auth.issueToken(login), user: publicUser(out.next, target),
+                         rev: out.next.rev, epoch: out.next.epoch, state: Engine.scopeState(out.next, target) });
     }
 
     if (route === 'session' && method === 'POST') {
@@ -129,22 +166,10 @@ async function handle({ method, route, query, headers, body, ip }) {
       const cmd = String(body.cmd || '');
       if (!Engine.COMMANDS.includes(cmd)) return json(400, { error: 'Unknown action.', code: 'unknown' });
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
-      for (let attempt = 0; attempt < 6; attempt++) {
-        const { state, etag } = await readState({ fresh: true });
-        const next = clone(state);
-        const result = Engine.execute(next, w.who, cmd, payload, { now: new Date().toISOString(), hashPassword: auth.hashPassword });
-        try {
-          const newTag = await getStore().write(next, etag);
-          cache = { state: next, etag: newTag, at: Date.now() };
-          return json(200, { ok: true, result, rev: next.rev, epoch: next.epoch, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
-        } catch (e) {
-          if (!e.conflict) throw e;
-          /* someone wrote first, or the read lagged: wait a moment and replay on a fresh read */
-          cache = null;
-          await new Promise(r => setTimeout(r, 120 * (attempt + 1)));
-        }
-      }
-      return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
+      const out = await commit(w.who, cmd, payload);
+      if (!out) return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
+      const { next, result } = out;
+      return json(200, { ok: true, result, rev: next.rev, epoch: next.epoch, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
     }
 
     if (route === 'reset' && method === 'POST') {
