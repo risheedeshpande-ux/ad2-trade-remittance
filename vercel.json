@@ -3,9 +3,13 @@
   "outputDirectory": "public",
   "cleanUrls": false,
   "trailingSlash": false,
+  "regions": ["bom1"],
   "functions": {
     "api/*.js": { "maxDuration": 15 }
   },
+  "crons": [
+    { "path": "/api/health", "schedule": "17 3 * * *" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

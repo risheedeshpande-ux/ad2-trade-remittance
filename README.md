@@ -115,7 +115,7 @@ public/            the app (static): app.html, js/*, styles.css, plus
 api/*.js           Vercel serverless functions → server/app.js
 server/app.js      /api/health, session, state, command, status, reset
 server/auth.js     signed session tokens, scrypt passwords, sign-in throttling
-server/store.js    Vercel Blob · JSON file locally · optimistic concurrency
+server/store.js    Supabase Postgres (or Vercel Blob) · JSON file locally · optimistic concurrency
 server.js          local server: static files + API on one port
 tests/             engine and API tests; e2e.js and qa.js browser suites
 ```
@@ -150,14 +150,42 @@ through the portal, or a user added with a password, signs in with its own passw
 
 ## Deploying to Vercel
 
-The project deploys as-is: `public/` is served statically and `api/` becomes serverless functions.
+The project deploys as-is: `public/` is served statically and `api/` becomes serverless functions in Mumbai (`bom1`).
+
+### Connect the database (once)
+
+The live site needs one shared store. Without one, each serverless instance keeps its own copy and actions can seem
+to vanish. Use **Supabase** (Postgres):
+
+1. **Create the project in Mumbai.** In Vercel: *ad2-trade-remittance* → **Storage** → **Create Database** →
+   **Supabase**, region **Mumbai**, connected to Production and Preview. Vercel adds `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` itself. Mumbai matters: the functions run there, so the database should too.
+   *Already have a Supabase account?* Create the project there instead, again in Mumbai. Then copy the Project URL and
+   the `service_role` (or secret) key from **Project Settings → API**, and add them to Vercel as `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY`.
+2. **Create the table.** Open the project in Supabase → **SQL Editor** → paste [`supabase/schema.sql`](supabase/schema.sql)
+   → **Run**. It creates one table with row-level security on, so only the server's key can reach it.
+3. **Redeploy.** Vercel → Deployments → the latest → **Redeploy**.
+4. **Check.** `https://<your site>/api/health` shows `"store":"supabase","storeOk":true`. If something is off, the
+   yellow bar on the site says what: for example, that the table is missing or the key is the public one.
+
+**Why Supabase.** It is real Postgres, so the single state row can grow into proper tables. Its Storage can later hold
+the uploaded documents, which today record only a file name. The app reaches it over HTTPS with no driver to install.
+Polls ask only for a version stamp and fetch the ~150 KB state only when it changed. A free Supabase project pauses
+after a week without activity, so Vercel pings `/api/health` daily (`crons` in `vercel.json`) to keep it awake.
+
+**Vercel Blob** also works (`BLOB_READ_WRITE_TOKEN`), but it is no longer recommended. Blob is file storage charged
+per operation. This app writes on every action and re-reads every few seconds while anyone has it open, which uses
+up a free plan's monthly allowance quickly.
 
 | Variable | Needed | Purpose |
 |---|---|---|
-| `BLOB_READ_WRITE_TOKEN` | Yes | Set automatically when a Vercel Blob store is connected to the project. Without it, state lives in function memory and can reset. |
-| `SESSION_SECRET` | Recommended | Signs session tokens. Falls back to a value derived from the Blob token. |
-| `DEMO_PASSCODE` | Optional | Replaces `demo` for the demo accounts and for **Reset demo data**. Set it before sharing a link publicly. |
-| `STATE_PREFIX` | Optional | Blob path prefix, to run two demos from one store. |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Yes | The database. Set by the Vercel Supabase integration. `SUPABASE_SECRET_KEY` (a newer `sb_secret_…` key) works in place of the service role key. Server-side only; never sent to a browser. |
+| `SESSION_SECRET` | Recommended | Signs session tokens. Falls back to a value derived from the store's key. |
+| `DEMO_PASSCODE` | Optional | Replaces `demo` for the demo accounts, the master test user and **Reset demo data**. Set it before sharing a link publicly. |
+| `STATE_PREFIX` | Optional | The row (Supabase) or path (Blob) the state is kept under, to run two demos from one store. |
+| `STATE_STORE` | Optional | `supabase`, `blob`, `file` or `memory`, when more than one is configured. |
+| `BLOB_READ_WRITE_TOKEN` | Alternative | Vercel Blob instead of Supabase (see above). |
 
 ## Security
 
@@ -171,6 +199,8 @@ The project deploys as-is: `public/` is served statically and `api/` becomes ser
   action look undone. Reset overwrites the store unconditionally.
 - Server-side validation of every field; booked rates recomputed on the server; deal rates held within 3% of
   reference; assisted margins held within the configured band.
+- The Supabase table has row-level security on and no policy for the public or signed-in roles; only the server's
+  service role key, held in a Vercel environment variable, can read or write it.
 - Content Security Policy with no inline or third-party script, HSTS, nosniff, frame-ancestors self.
 - The master test user (TEST / MASTER) signs in with the demo passcode and can open **any** user. That includes
   businesses that registered with their own password. It is a test tool. Set `DEMO_PASSCODE` before sharing a link,

@@ -3,9 +3,13 @@
    else wrote since it was read, and the caller replays its command on the
    fresh state.
 
-     blob    Vercel Blob (private store) — used when BLOB_READ_WRITE_TOKEN is set
-     file    a JSON file on disk — local development (STATE_FILE, default .data/state.json)
-     memory  per-process only — the fallback on Vercel with no Blob store linked
+     supabase  a row in Supabase Postgres — used when SUPABASE_URL and a server key are set
+     blob      Vercel Blob (private store) — used when BLOB_READ_WRITE_TOKEN is set
+     file      a JSON file on disk — local development (STATE_FILE, default .data/state.json)
+     memory    per-process only — the fallback on Vercel with no store connected
+
+   STATE_STORE=supabase|blob|file|memory picks one explicitly when more than
+   one is configured; otherwise the first configured in the order above.
 
    A relational database can replace this module without touching the engine:
    it only needs read() and write() with the same conflict behaviour. */
@@ -112,13 +116,120 @@ function blobStore(token) {
   return store;
 }
 
-function makeStore() {
-  const token = blobToken();
-  if (token) return blobStore(token);
-  if (process.env.STATE_FILE || !process.env.VERCEL) {
-    return fileStore(process.env.STATE_FILE || path.join(__dirname, '..', '.data', 'state.json'));
+/* Supabase: the Vercel integration sets SUPABASE_URL and
+   SUPABASE_SERVICE_ROLE_KEY; a project using the newer API keys has a
+   secret key (sb_secret_…) instead. Either works. */
+function supabaseConfig() {
+  const env = process.env;
+  const url = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY;
+  return url && key ? { url: String(url).replace(/\/+$/, ''), key: String(key) } : null;
+}
+
+/* The whole state is one row of a table (supabase/schema.sql). Every write
+   stamps a fresh etag, and an update only lands where the row still carries
+   the etag it was read with — the same optimistic concurrency as the Blob
+   store. It talks to the Supabase REST API with fetch, so there is no client
+   library to install. Only a server key can reach the table. */
+function supabaseStore({ url, key }, { fetch: doFetch = globalThis.fetch, table = process.env.SUPABASE_TABLE || 'ad2_state' } = {}) {
+  const id = process.env.STATE_PREFIX || 'ad2-trade';
+  const base = `${url}/rest/v1/${encodeURIComponent(table)}`;
+  const byId = 'id=eq.' + encodeURIComponent(id);
+  /* legacy service-role keys are JWTs and go in Authorization too; the newer
+     secret keys go in apikey only */
+  const headers = prefer => ({ apikey: key, ...(/^eyJ/.test(key) ? { Authorization: 'Bearer ' + key } : {}),
+    'Content-Type': 'application/json', ...(prefer ? { Prefer: prefer } : {}) });
+
+  async function call(method, qs, { body, prefer } = {}) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 10000);
+    try {
+      const res = await doFetch(qs ? `${base}?${qs}` : base, { method, headers: headers(prefer),
+        body: body === undefined ? undefined : JSON.stringify(body), signal: ctl.signal });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (e) { data = { message: text.slice(0, 200) }; }
+      return { status: res.status, data };
+    } finally { clearTimeout(timer); }
   }
+  const problem = (r, what) => {
+    const d = (r.data && typeof r.data === 'object') ? r.data : {};
+    if (d.code === 'PGRST205' || d.code === '42P01' || /could not find the table|does not exist/i.test(d.message || ''))
+      return new Error(`Supabase table "${table}" not found. Run supabase/schema.sql in the Supabase SQL editor.`);
+    if (r.status === 401 || r.status === 403)
+      return new Error('Supabase refused the key. Set SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) to the service role or secret key, not the anon key.');
+    return new Error(`Supabase ${what} failed (${r.status}${d.message ? ': ' + d.message : ''}).`);
+  };
+  const fail = (r, what) => { const e = problem(r, what); store.lastError = e.message; throw e; };
+  const first = r => (Array.isArray(r.data) ? r.data[0] : null) || null;
+
+  /* The last document this instance read or wrote. Browsers poll every few
+     seconds, so a read first asks only for the etag (a few bytes) and fetches
+     the ~150 KB document only when it has changed. Callers never mutate what
+     read() returns: a command works on a copy. */
+  let last = null;
+  const store = {
+    kind: 'supabase', persistent: true, lastError: null,
+    async read() {
+      if (last) {
+        const r = await call('GET', `${byId}&select=etag`);
+        if (r.status !== 200) fail(r, 'read');
+        const row = first(r);
+        if (row && row.etag === last.etag) { store.lastError = null; return { state: last.doc, etag: last.etag }; }
+        if (!row) { last = null; store.lastError = null; return { state: null, etag: null }; }
+      }
+      const r = await call('GET', `${byId}&select=doc,etag`);
+      if (r.status !== 200) fail(r, 'read');
+      store.lastError = null;
+      const row = first(r);
+      last = row ? { doc: row.doc, etag: row.etag } : null;
+      return row ? { state: row.doc, etag: row.etag } : { state: null, etag: null };
+    },
+    async write(state, etag, opts) {
+      const tag = crypto.randomBytes(12).toString('hex');
+      const at = new Date().toISOString();
+      let r;
+      if (opts && opts.force) {
+        /* a reset: overwrite whatever is there */
+        r = await call('POST', 'on_conflict=id', { body: { id, doc: state, etag: tag, updated_at: at }, prefer: 'resolution=merge-duplicates,return=minimal' });
+        if (r.status >= 300) fail(r, 'write');
+      } else if (!etag) {
+        /* the first write: only if no one has created the row meanwhile */
+        r = await call('POST', '', { body: { id, doc: state, etag: tag, updated_at: at }, prefer: 'return=minimal' });
+        if (r.status === 409) throw new Conflict();
+        if (r.status >= 300) fail(r, 'write');
+      } else {
+        r = await call('PATCH', `${byId}&etag=eq.${encodeURIComponent(etag)}&select=etag`, { body: { doc: state, etag: tag, updated_at: at }, prefer: 'return=representation' });
+        if (r.status >= 300) fail(r, 'write');
+        if (!Array.isArray(r.data) || !r.data.length) throw new Conflict();   // someone wrote since we read
+      }
+      store.lastError = null;
+      last = { doc: state, etag: tag };
+      return tag;
+    },
+  };
+  return store;
+}
+
+/* A secret the deployment already holds, to derive the session-signing key
+   from when SESSION_SECRET is not set. */
+function storeSecret() {
+  const sb = supabaseConfig();
+  return blobToken() || (sb && sb.key) || null;
+}
+
+function makeStore() {
+  const pick = String(process.env.STATE_STORE || '').toLowerCase();
+  const sb = supabaseConfig(), token = blobToken();
+  const file = () => fileStore(process.env.STATE_FILE || path.join(__dirname, '..', '.data', 'state.json'));
+  if (pick === 'supabase' && sb) return supabaseStore(sb);
+  if (pick === 'blob' && token) return blobStore(token);
+  if (pick === 'file') return file();
+  if (pick === 'memory') return memoryStore();
+  if (sb) return supabaseStore(sb);
+  if (token) return blobStore(token);
+  if (process.env.STATE_FILE || !process.env.VERCEL) return file();
   return memoryStore();
 }
 
-module.exports = { makeStore, memoryStore, fileStore, blobToken, Conflict };
+module.exports = { makeStore, memoryStore, fileStore, supabaseStore, blobToken, storeSecret, Conflict };

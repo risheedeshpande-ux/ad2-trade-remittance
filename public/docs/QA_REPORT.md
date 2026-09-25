@@ -109,8 +109,9 @@ To sign in as each role separately instead, use the passcode **demo** with:
 - **Assisted journey.** Kept inside the customer's portal, with the banner and the "Done — back to my AD2
   workspace" button. It reuses the same screens and checks the customer uses, so there is one form to maintain.
   The master test user now covers the "act as someone else" testing need.
-- **Deployment storage (action for the project owner).** Connect a Vercel Blob store to the project: Storage →
-  Create → Blob, private access, then connect it to *ad2-trade-remittance* for Production and Preview. Vercel sets
-  `BLOB_READ_WRITE_TOKEN` itself, and the code picks it up with no change. Until then, each server instance keeps its
-  own copy of the data, so a step can seem to vanish or a reset seem not to take. `/api/health` reports
-  `"store":"blob"` once it is connected.
+- **Deployment storage (action for the project owner).** The store is Supabase Postgres, in Mumbai next to the
+  functions. Vercel Blob is no longer recommended: it is charged per operation, and this app's constant writes and
+  polls would use up a free plan's allowance. Setup takes four steps (README → *Connect the database*): create the
+  Supabase project from Vercel's Storage tab, run `supabase/schema.sql`, redeploy, and check `/api/health` shows
+  `"store":"supabase"`. Until then, each server instance keeps its own copy of the data, so a step can seem to vanish
+  or a reset seem not to take.
