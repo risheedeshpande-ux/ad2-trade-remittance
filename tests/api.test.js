@@ -72,7 +72,7 @@ test('register, approve, sign in with own password; scoping holds', async () => 
   assert.equal((await call('GET', 'status', { query: { app: smeId, domain: 'WRONG' } })).status, 404);
 
   const maker = await signIn('AD2', 'MAKER');
-  const checker = await signIn('AD2', 'CHECKER');
+  const checker = await signIn('AD2', 'COMPLIANCE');
   const cfg = { permission: 'Import', currencies: ['USD'], margins: { USD: 40 },
     charges: [{ name: 'SWIFT charge', basis: 'Fixed', value: 750 }], effectiveDate: '2026-09-24' };
   assert.equal((await call('POST', 'command', { token: maker, body: { cmd: 'onboarding.review', payload: { smeId, config: cfg, submit: true } } })).status, 200);
@@ -106,4 +106,54 @@ test('reset needs the passcode', async () => {
   assert.equal((await call('POST', 'reset', { body: { passcode: 'demo' }, ip: '10.3.3.4' })).status, 200);
   const st = await call('GET', 'state', { token: await signIn('AD2', 'MAKER') });
   assert.ok(!st.body.state.smes.some(s => s.domainId === 'TAPIRIVER'));
+});
+
+test('never back in time: a caller holding a newer state is told to keep it', async () => {
+  const token = await signIn('AD2', 'MAKER');
+  const st = await call('GET', 'state', { token });
+  const { rev, epoch } = st.body;
+  assert.ok(epoch, 'state carries its epoch');
+  /* the caller says it already has a later revision (a lagging instance would see this) */
+  const ahead = await call('GET', 'state', { token, query: { since: String(rev + 5), epoch } });
+  assert.equal(ahead.body.unchanged, true);
+  assert.equal(ahead.body.stale, true);
+  assert.ok(!ahead.body.state);
+  /* min= never short-circuits: a user who just switched gets a full view */
+  const full = await call('GET', 'state', { token, query: { min: String(rev), epoch } });
+  assert.ok(full.body.state && full.body.user);
+});
+
+test('reset is authoritative and moves the revision forward', async () => {
+  const token = await signIn('AD2', 'MAKER');
+  const before = await call('GET', 'state', { token });
+  const r = await call('POST', 'reset', { body: { passcode: 'demo' }, ip: '10.3.3.9' });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.rev > before.body.rev, 'revision continues across a reset');
+  assert.notEqual(r.body.epoch, before.body.epoch);
+  assert.equal(r.body.state.smes.length, 0, 'reset answers with the public view');
+  const after = await call('GET', 'state', { token: await signIn('AD2', 'MAKER') });
+  assert.equal(after.body.epoch, r.body.epoch);
+});
+
+test('master test user: the server hands over the other user’s own session', async () => {
+  const master = await signIn('TEST', 'MASTER');
+  const st = await call('GET', 'state', { token: master });
+  assert.equal(st.body.state.scope, 'master');
+  const r = await call('POST', 'session', { token: master, body: { as: { domainId: 'AD2', loginId: 'CHECKER' } } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.user.role, 'AD2 Checker');
+  assert.equal(r.body.state.scope, 'ad2');
+  /* the token is the checker's: it carries the checker's authority and no more */
+  const as = await call('GET', 'state', { token: r.body.token });
+  assert.equal(as.body.user.loginId, 'CHECKER');
+  const again = await call('POST', 'session', { token: r.body.token, body: { as: { domainId: 'AD2', loginId: 'OPS' } } });
+  assert.equal(again.status, 403, 'a switched-to user cannot switch onwards');
+  /* a business opens with only its own data */
+  const biz = await call('POST', 'session', { token: master, body: { as: { domainId: 'MERIDIANTEX', loginId: 'SMEUSER' } } });
+  assert.equal(biz.body.state.scope, 'sme');
+  assert.ok(biz.body.state.smes.every(s => s.id === 'SME-1001'));
+  /* no session, or a non-master session, is refused */
+  assert.equal((await call('POST', 'session', { body: { as: { domainId: 'AD2', loginId: 'OPS' } } })).status, 401);
+  const maker = await signIn('AD2', 'MAKER');
+  assert.equal((await call('POST', 'session', { token: maker, body: { as: { domainId: 'AD2', loginId: 'OPS' } } })).status, 403);
 });

@@ -48,12 +48,14 @@ const EMBEDDED = (() => { try { return window.top !== window.self; } catch (e) {
 const API = {
   mode: 'local',            // 'server' | 'local'
   rev: null,                // server state revision last seen
+  epoch: null,              // when that state was seeded (changes on reset)
   store: '', persistent: true, passcodeRequired: false,
   tokens: {},               // account key -> session token, for quick role switching
 };
 const LOCAL_KEY = 'ad2-trade-state';
 let DB = null;              // what the signed-in user may see
 let S = null;               // { domainId, loginId, role, smeId, name, actingFor, token }
+let MASTER = null;          // the master test user behind this session, while testing: { domainId, loginId, name, focus }
 
 const sessGet = k => { if (EMBEDDED) return null; try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } };
 const sessSet = (k, v) => { if (EMBEDDED) return; try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -63,6 +65,7 @@ const localSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); }
 function setSession(v) {
   S = v;
   sessSet('ad2-session', v);
+  if (v && v.role === MASTER_ROLE) { MASTER = { domainId:v.domainId, loginId:v.loginId, name:v.name, focus:(MASTER && MASTER.focus) || null }; sessSet('ad2-master', MASTER); }
   if (v && v.token) { API.tokens[v.domainId + '/' + v.loginId] = v.token; sessSet('ad2-tokens', API.tokens); }
 }
 
@@ -110,8 +113,19 @@ function refreshUser(user) {
   } catch (e) { setSession(null); }
 }
 
+/* Never go back in time: a reply built from an older copy of the state (a
+   lagging server instance or CDN) is ignored rather than shown. */
+function isNewer(r) {
+  if (API.rev == null || !API.epoch) return true;
+  const e = r.epoch || '';
+  if (e !== API.epoch) return e > API.epoch;
+  return Number(r.rev) >= Number(API.rev);
+}
 function applyServer(r) {
-  if (r.state) { DB = r.state; API.rev = r.rev; }
+  if (r.state && isNewer(r)) {
+    DB = r.state; API.rev = r.rev; API.epoch = r.epoch || API.epoch;
+    API.view = r.user ? r.user.domainId + '/' + r.user.loginId : 'public';
+  }
   if ('user' in r) {
     if (S && !r.user) { setSession(null); }
     else refreshUser(r.user);
@@ -126,9 +140,13 @@ async function pull() {
     refreshUser();
     return;
   }
-  const r = await http('/api/state', { token: S && S.token });
+  const r = await http('/api/state' + floorQuery('min'), { token: S && S.token });
   applyServer(r);
 }
+/* Tells the server which revision this browser already holds, so it never
+   answers from an older copy. 'since' also lets it reply "unchanged". */
+const floorQuery = key => API.rev != null
+  ? `?${key}=${encodeURIComponent(API.rev)}${API.epoch ? '&epoch=' + encodeURIComponent(API.epoch) : ''}` : '';
 
 /* Send one command. Resolves with the engine's result; rejects with ApiError. */
 async function send(cmd, payload = {}) {
@@ -172,7 +190,7 @@ async function run(cmd, payload, { success, after, keepScroll = true, quiet = fa
 
 function showError(e) {
   if (e.status === 401) {
-    setSession(null); closeModal();
+    setSession(null); endMaster(); closeModal();
     toast(e.message || 'Sign in again.', 'err');
     location.hash = '#/login'; render();
     return;
@@ -216,7 +234,7 @@ async function switchTo(domainId, loginId, { dest } = {}) {
     const prev = S;
     try {
       S = { domainId, loginId, token: API.tokens[key] };
-      const r = await http('/api/state', { token: API.tokens[key] });
+      const r = await http('/api/state' + floorQuery('min'), { token: API.tokens[key] });
       if (!r.user) throw new ApiError('expired', 401);
       setSession({ ...r.user, actingFor:null, token:API.tokens[key] });
       applyServer(r);
@@ -245,10 +263,13 @@ async function switchTo(domainId, loginId, { dest } = {}) {
   });
 }
 function afterSignIn(dest) {
-  const home = S.role.startsWith('AD2') ? '#/ad2/dashboard' : '#/sme/dashboard';
-  location.hash = dest || home;
+  location.hash = dest || homeHash();
   render();
 }
+/* Where each user starts: the master test user on its console, AD2 on its
+   dashboard, a business on its portal. */
+const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
+function endMaster() { MASTER = null; sessSet('ad2-master', null); }
 
 /* Poll for changes other users make, so a checker sees the maker's work
    arrive without reloading. Re-render only when it will not disturb input. */
@@ -256,7 +277,8 @@ let pendingRender = false;
 async function poll() {
   if (API.mode !== 'server' || document.visibilityState !== 'visible' || IN_FLIGHT) return;
   try {
-    const q = API.rev != null ? '?since=' + encodeURIComponent(API.rev) : '';
+    /* after a sign-in or switch the view must be rebuilt for the new user */
+    const q = floorQuery(API.view === (S ? myKey() : 'public') ? 'since' : 'min');
     const r = await http('/api/state' + q, { token: S && S.token, timeout: 8000 });
     if (r.unchanged) { if (pendingRender) safeRender(); return; }
     const had = S && S.token;
@@ -280,9 +302,13 @@ async function resetDemo() {
   const go = async (passcode) => {
     try {
       if (API.mode === 'local') { LOCAL = Engine.freshState(SEED); localSet(LOCAL_KEY, LOCAL); DB = LOCAL; }
-      else await http('/api/reset', { method:'POST', body:{ passcode } });
+      else {
+        const r = await http('/api/reset', { method:'POST', body:{ passcode } });
+        API.rev = null; API.epoch = null;
+        applyServer(r);
+      }
       API.tokens = {}; sessSet('ad2-tokens', null); localSet('ad2-guide', null);
-      setSession(null); resetDrafts(); closeModal();
+      setSession(null); endMaster(); resetDrafts(); closeModal();
       await pull();
       toast('Demo data reset.', 'ok');
       location.hash = '#/login'; render();
@@ -321,10 +347,26 @@ const checklistFor = (productId, code, inrAmt) => Engine.checklist(DB, productId
 const marginFor = (s, code) => Engine.marginFor(DB, s, code);
 const customerRate = (code, m) => Engine.customerRate(DB, code, m);
 const productLabel = id => { const p = product(id); return p ? `${p.id} — ${p.label}` : (id || '—'); };
+/* The live customer rate for an SME. The customer's own view carries its
+   rates ready-made (config.customerRates) and never the margin or the
+   reference rate; AD2 derives them, and in an assisted journey may apply a
+   margin inside the band. dir: 'out' (SME buys FX) or 'in' (SME sells). */
+function liveRate(smeRec, cur, dir, marginOverride) {
+  if (!cur) return 0;
+  const ready = smeRec?.config?.customerRates?.[cur];
+  if (ready && (marginOverride == null || marginOverride === '')) return dir === 'out' ? ready.out : ready.in;
+  if (currency(cur)?.refRate == null) return 0;
+  const m = marginOverride != null && marginOverride !== '' ? Number(marginOverride) : marginFor(smeRec, cur);
+  return customerRate(cur, dir === 'out' ? m : -m);
+}
+/* Margins and reference rates are AD2-only information. */
+const seesMargin = () => isAD2();
 const purposeLabel = code => { const p = purpose(code); return p ? `${p.code} — ${p.label}` : (code || '—'); };
 
 /* ---------- 4. session and capabilities ----------------------------------- */
+const MASTER_ROLE = 'Master Tester';
 const isAD2 = () => !!S && S.role.startsWith('AD2');
+const isMaster = () => !!S && S.role === MASTER_ROLE;
 const isSME = () => !!S && S.role.startsWith('SME');
 const acting = () => !!(S && S.actingFor);
 const asSme  = () => isSME() || acting();
@@ -356,6 +398,7 @@ function toast(msg, kind = '') {
   const host = $('#toasts');
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
+  el.dataset.at = Date.now();
   el.textContent = msg;
   host.appendChild(el);
   while (host.children.length > 3) host.firstChild.remove();
@@ -397,7 +440,7 @@ const BADGE = {
   'Draft':'b-grey','Submitted':'b-blue','Under Review':'b-blue','Pending Approval':'b-purple','Clarification Required':'b-amber',
   'Query Raised':'b-amber','Resubmitted':'b-blue','Verified':'b-purple','Authorised':'b-teal','Processing':'b-purple',
   'Completed':'b-green','Processed':'b-green','Approved':'b-green','Accepted':'b-green','Rejected':'b-red','Failed':'b-red',
-  'Awaiting Instruction':'b-amber','Instruction Submitted':'b-blue','Partially Disposed':'b-amber',
+  'Awaiting Instruction':'b-amber','Instruction Submitted':'b-blue','Partially Disposed':'b-amber','Intimated':'b-purple','Not Received':'b-red',
   'Unsettled':'b-grey','Partially Settled':'b-amber','Settled':'b-green',
   'Proposed':'b-amber','Confirmed':'b-green','Reversed':'b-grey',
 };
@@ -500,17 +543,32 @@ const NI = {
   smeInt:    { href:'#/sme/integrations', label:'Integrations',           chip:'UP', tone:'--chip-up' },
   smeProf:   { href:'#/sme/profile',      label:'Accounts & beneficiaries', chip:'PR', tone:'--chip-pr' },
   smeLab:    { href:'#/sme/lab',          label:'Test data',              chip:'TD', tone:'--chip-ad', lab:true },
-  /* AD2 portal */
+  /* AD2 portal. Items with ?s= open a list already filtered to the step
+     that role takes, so each workspace names its own work. */
   dash:      { href:'#/ad2/dashboard',      label:'Dashboard',            chip:'DB', tone:'--chip-db' },
   queue:     { href:'#/ad2/queue',          label:'My work queue',        chip:'WQ', tone:'--chip-di', count:true },
   apps:      { href:'#/ad2/applications',   label:'SME applications',     chip:'SA', tone:'--chip-or' },
+  appsNew:   { href:'#/ad2/applications?s=mine', label:'Onboard a customer', chip:'ON', tone:'--chip-or' },
+  appsReview:{ href:'#/ad2/applications?s=review', label:'Applications to price', chip:'AP', tone:'--chip-or', n:'appsReview' },
+  appsApprove:{ href:'#/ad2/applications?s=approve', label:'Applications to approve', chip:'AA', tone:'--chip-or', n:'appsApprove' },
   dir:       { href:'#/ad2/directory',      label:'SME directory',        chip:'SD', tone:'--chip-pr' },
+  myCust:    { href:'#/ad2/directory',      label:'My customers',         chip:'MC', tone:'--chip-pr' },
   out:       { href:'#/ad2/outward',        label:'Outward requests',     chip:'OR', tone:'--chip-or' },
+  outVerify: { href:'#/ad2/outward?s=Submitted',  label:'Verify payments',    chip:'VP', tone:'--chip-or', n:'outVerify' },
+  outAuth:   { href:'#/ad2/outward?s=Verified',   label:'Authorise payments', chip:'AU', tone:'--chip-or', n:'outAuth' },
+  outRelease:{ href:'#/ad2/outward?s=Authorised', label:'Release payments',   chip:'RL', tone:'--chip-or', n:'outRelease' },
   inw:       { href:'#/ad2/inward',         label:'Inward & disposal',    chip:'IR', tone:'--chip-ir' },
+  inwReceipts:{ href:'#/ad2/inward?s=receipts',   label:'Receipts to confirm', chip:'RC', tone:'--chip-ir', n:'inwReceipts' },
+  inwVerify: { href:'#/ad2/inward?s=Submitted',   label:'Verify disposals',   chip:'VD', tone:'--chip-ir', n:'inwVerify' },
+  inwAuth:   { href:'#/ad2/inward?s=Verified',    label:'Authorise disposals', chip:'AD', tone:'--chip-ir', n:'inwAuth' },
+  inwProcess:{ href:'#/ad2/inward?s=Authorised',  label:'Credit & issue FIRC', chip:'FC', tone:'--chip-ir', n:'inwProcess' },
   bills:     { href:'#/ad2/bills',          label:'Bills',                chip:'BL', tone:'--chip-bl' },
+  billsAccept:{ href:'#/ad2/bills?s=accept', label:'Accept bills',        chip:'AB', tone:'--chip-bl', n:'billsAccept' },
   recon:     { href:'#/ad2/reconciliation', label:'Reconciliation',       chip:'RC', tone:'--chip-rc' },
+  reconConfirm:{ href:'#/ad2/reconciliation?s=Proposed', label:'Confirm knock-offs', chip:'CK', tone:'--chip-rc', n:'reconConfirm' },
   reports:   { href:'#/ad2/reports',        label:'Reports',              chip:'RP', tone:'--chip-rp' },
   lab:       { href:'#/ad2/lab',            label:'Test data lab',        chip:'TL', tone:'--chip-ad', lab:true },
+  console:   { href:'#/test',               label:'Test console',         chip:'MT', tone:'--chip-ad' },
   aPurpose:  { href:'#/ad2/admin/purpose',    label:'Purpose codes',      chip:'PC', tone:'--chip-or' },
   aDocs:     { href:'#/ad2/admin/docs',       label:'Document policy',    chip:'DP', tone:'--chip-bl' },
   aComp:     { href:'#/ad2/admin/compliance', label:'Compliance rules',   chip:'CR', tone:'--chip-er' },
@@ -524,30 +582,59 @@ const NAV_BY_ROLE = {
   'SME User':         [['Home', 'smeDash'], ['Transact', 'smeOut', 'smeIn'], ['Bills', 'smeExp', 'smeImp', 'smeKo'],
                        ['Records', 'smeRep', 'smeInt'], ['Settings', 'smeProf', 'smeLab']],
   'SME Applicant':    [['Application', 'smeDash']],
-  'AD2 Sales':        [['Home', 'dash'], ['My customers', 'dir', 'apps'], ['Track', 'out', 'inw', 'bills'], ['Insight', 'reports'], ['Tools', 'lab']],
-  'AD2 Maker':        [['Home', 'dash', 'queue'], ['Onboarding', 'apps', 'dir'], ['Transactions', 'out', 'inw', 'bills', 'recon'], ['Insight', 'reports'], ['Tools', 'lab']],
-  'AD2 Checker':      [['Home', 'dash', 'queue'], ['Approvals', 'apps', 'out', 'inw', 'bills', 'recon'], ['Customers', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
-  'AD2 Operations':   [['Home', 'dash', 'queue'], ['Settlement', 'out', 'inw', 'recon'], ['Records', 'bills', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Sales':        [['Home', 'dash'], ['Customers', 'myCust', 'appsNew'], ['Track', 'out', 'inw', 'bills'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Maker':        [['Home', 'dash', 'queue'], ['Onboarding', 'appsReview', 'appsNew', 'dir'], ['Verify', 'outVerify', 'inwVerify'],
+                       ['Transactions', 'out', 'inw', 'bills', 'recon'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Checker':      [['Home', 'dash', 'queue'], ['Authorise', 'outAuth', 'inwAuth', 'billsAccept', 'reconConfirm'],
+                       ['Records', 'out', 'inw', 'bills', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Compliance':   [['Home', 'dash', 'queue'], ['Onboarding', 'appsApprove', 'apps', 'dir'], ['Oversight', 'out', 'inw', 'bills'],
+                       ['Insight', 'reports'], ['Tools', 'lab']],
+  'AD2 Operations':   [['Home', 'dash', 'queue'], ['Settle', 'inwReceipts', 'outRelease', 'inwProcess'],
+                       ['Authorise', 'outAuth', 'inwAuth', 'billsAccept', 'reconConfirm'],
+                       ['Records', 'out', 'inw', 'bills', 'recon', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
   'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
                        ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Tools', 'lab']],
+  'Master Tester':    [['Testing', 'console']],
 };
+/* How many items wait behind a filtered menu entry. */
+function navCount(key) {
+  if (!DB) return 0;
+  const me = myKey();
+  const free = rec => !Object.values(rec.wf || {}).some(w => w && w.key === me) && rec.createdByKey !== me;
+  switch (key) {
+    case 'appsReview':  return DB.smes.filter(x => ['Submitted','Under Review'].includes(x.status)).length;
+    case 'appsApprove': return DB.smes.filter(x => x.status === 'Pending Approval' && x.reviewedBy?.key !== me).length;
+    case 'outVerify':   return DB.outward.filter(o => o.status === 'Submitted' && free(o)).length;
+    case 'outAuth':     return DB.outward.filter(o => o.status === 'Verified' && free(o)).length;
+    case 'outRelease':  return DB.outward.filter(o => o.status === 'Authorised' && free(o)).length;
+    case 'inwReceipts': return DB.inward.filter(i => i.status === 'Intimated').length;
+    case 'inwVerify':   return DB.disposals.filter(d => d.status === 'Submitted' && free(d)).length;
+    case 'inwAuth':     return DB.disposals.filter(d => d.status === 'Verified' && free(d)).length;
+    case 'inwProcess':  return DB.disposals.filter(d => d.status === 'Authorised' && free(d)).length;
+    case 'billsAccept': return DB.bills.filter(b => ['Submitted','Resubmitted','Under Review'].includes(b.review) && b.lodgedBy?.key !== me).length;
+    case 'reconConfirm':return DB.allocations.filter(l => l.status === 'Proposed' && l.proposedBy?.key !== me).length;
+    default: return 0;
+  }
+}
 /* Routes each AD2 role may open (anything in its sidebar, plus detail pages under them). */
+const routeBase = h => h.split('?')[0].split('/').slice(0, 3).join('/');
 function navAllows(hash) {
   if (!S || !isAD2() || acting()) return true;
   const groups = NAV_BY_ROLE[S.role] || [];
   const hrefs = groups.flatMap(g => g.slice(1).map(k => NI[k].href));
-  const base = hash.split('/').slice(0, 3).join('/');
-  if (base === '#/ad2/disposals') return hrefs.includes('#/ad2/inward');
+  const base = routeBase(hash);
+  if (base === '#/ad2/disposals') return hrefs.some(h => routeBase(h) === '#/ad2/inward');
   if (base === '#/ad2/admin') return hrefs.some(h => h.startsWith('#/ad2/admin'));
-  return hrefs.some(h => h.split('/').slice(0, 3).join('/') === base);
+  if (base === '#/ad2/done') return true;
+  return hrefs.some(h => routeBase(h) === base);
 }
 const navMini = () => document.body.classList.contains('nav-mini');
 function setNavMini(on) { document.body.classList.toggle('nav-mini', on); localSet('ad2-nav-mini', on ? 1 : null); }
 
 function navHTML() {
-  const ad2Home = isAD2() && !acting();
-  const me = !ad2Home ? sme(ctxSmeId()) : null;
-  const role = ad2Home ? S.role : (me && me.status !== 'Approved' ? 'SME Applicant' : 'SME User');
+  const ad2Home = isAD2() && !acting(), master = isMaster();
+  const me = !ad2Home && !master ? sme(ctxSmeId()) : null;
+  const role = master ? MASTER_ROLE : ad2Home ? S.role : (me && me.status !== 'Approved' ? 'SME Applicant' : 'SME User');
   const groups = NAV_BY_ROLE[role] || NAV_BY_ROLE['SME User'];
   const hash = location.hash || '';
   const qn = ad2Home ? myQueue().length : 0;
@@ -557,14 +644,15 @@ function navHTML() {
     const items = keys.map(k => NI[k]).filter(show);
     if (!items.length) return '';
     return `<div class="grp"><span>${esc(grp)}</span></div>` + items.map(it => {
-      const on = hash === it.href || hash.startsWith(it.href + '/') ? 'on' : '';
+      const on = hash === it.href || (!it.href.includes('?') && hash.split('?')[0].startsWith(it.href + '/')) ? 'on' : '';
+      const n = it.count ? qn : it.n ? navCount(it.n) : 0;
       return `<a href="${it.href}" class="${on}" title="${esc(it.label)}">
         <span class="ic" style="background:var(${it.tone})">${esc(it.chip)}</span><span class="lbl">${esc(it.label)}</span>
-        ${it.count && qn ? `<span class="navcount">${qn}</span>` : ''}</a>`;
+        ${n ? `<span class="navcount">${n}</span>` : ''}</a>`;
     }).join('');
   }).join('');
-  const title = ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
-  const sub = ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
+  const title = master ? 'Test console' : ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
+  const sub = master ? 'Master test user' : ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
   return `<nav class="nav" aria-label="Main">
     <div class="brand"><span class="mark">◈</span>
       <span class="bt"><span class="name">${esc(title)}</span><span class="mod">${esc(sub)}</span></span></div>
@@ -578,14 +666,16 @@ function navHTML() {
 /* Switch between accounts: grouped, searchable, and quicker than a long list. */
 function switchUserModal() {
   const staff = DB.logins.filter(l => l.domainId === 'AD2' && l.active !== false);
-  const biz = DB.logins.filter(l => l.domainId !== 'AD2' && l.active !== false);
+  const biz = DB.logins.filter(l => l.domainId !== 'AD2' && l.role !== MASTER_ROLE && l.active !== false);
+  const masters = DB.logins.filter(l => l.role === MASTER_ROLE && l.active !== false);
   const row = l => `<button type="button" class="swrow ${S.domainId === l.domainId && S.loginId === l.loginId ? 'me' : ''}" data-act="switch-user"
       data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" data-q="${esc((l.domainId + ' ' + l.loginId + ' ' + l.role + ' ' + (l.name || '') + ' ' + (l.tradingName || '')).toLowerCase())}">
       <b>${esc(l.name || l.loginId)}</b><span>${esc(l.role)}${l.tradingName ? ' · ' + esc(l.tradingName) : ''}</span>
-      <small>${esc(l.domainId)} / ${esc(l.loginId)}${l.test ? ' · test' : ''}${l.demo ? '' : ' · own password'}</small></button>`;
+      <small>${esc(l.domainId)} / ${esc(l.loginId)}${l.test ? ' · test' : ''}${l.demo || MASTER ? '' : ' · own password'}</small></button>`;
   const roles = [...new Set(staff.map(l => l.role))].sort((a, b) => (roleDef(a)?.order || 0) - (roleDef(b)?.order || 0));
   modal({ title:'Switch user', wide:true, body:`
     <input type="search" id="sw-q" data-act="sw-filter" placeholder="Search by name, role, business or Domain ID" aria-label="Search users" style="width:100%;margin-bottom:14px">
+    ${masters.length ? `<div class="swgrp" style="margin-bottom:14px"><h3 class="swh">Master test user — open anyone, run a journey end to end</h3>${masters.map(row).join('')}</div>` : ''}
     <div class="swgrid">
       <div><h3 class="swh">AD2 staff</h3>${roles.map(r => `<div class="swgrp">${staff.filter(l => l.role === r).map(row).join('')}</div>`).join('')}</div>
       <div><h3 class="swh">Businesses</h3>${biz.map(row).join('') || '<p style="color:var(--muted)">No business users.</p>'}</div>
@@ -633,19 +723,20 @@ function shell(crumbHtml, body) {
     <span class="wordmark">Remit<i>4</i>Me</span>
     <div class="spacer"></div>
     <div class="icons">
-      <button class="ibtn" type="button" data-act="go" data-href="${isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard'}" aria-label="Home">⌂</button>
+      <button class="ibtn" type="button" data-act="go" data-href="${homeHash()}" aria-label="Home">⌂</button>
       <button class="ibtn" type="button" data-act="guide-open" aria-label="Demo guide">?</button>
       <button class="ibtn" type="button" data-act="logout" aria-label="Sign out">⏻</button>
     </div>
   </div>
+  ${masterBarHTML()}
   ${simBanner()}
   ${acting() ? `<div class="sim-bar" style="background:#e0f4f4;border-color:#9ad4d5;color:#0b5f61">
-      <b>Assisted journey</b>
-      <span style="flex:1">You are acting for <b>${esc(sme(S.actingFor)?.tradingName || '')}</b>.
-        Anything you submit is recorded as raised by ${esc(S.name || S.role)} on their behalf, and needs a different maker to verify it.</span>
+      <b>Transacting for a customer</b>
+      <span style="flex:1">You are working in <b>${esc(sme(S.actingFor)?.tradingName || '')}</b>’s portal as ${esc(S.name || S.role)} (${esc(S.role)}).
+        Everything you raise is recorded as done by you on their behalf; another AD2 user verifies it.</span>
       <a href="#/sme/outward" style="color:#0b5f61;font-size:var(--fs-xs);margin-left:var(--s3)">Outward</a>
       <a href="#/sme/inward" style="color:#0b5f61;font-size:var(--fs-xs);margin-left:var(--s3)">Inward</a>
-      <button type="button" data-act="assist-exit" style="border-color:#6fbfc0;color:#0b5f61;margin-left:var(--s3)">Exit assisted journey</button>
+      <button type="button" data-act="assist-exit" style="border-color:#6fbfc0;color:#0b5f61;margin-left:var(--s3)">Done — back to my AD2 workspace</button>
     </div>` : ''}
   <div class="app">
     ${navHTML()}
@@ -661,14 +752,15 @@ const crumb = (...parts) =>
 
 /* A page for public screens (sign-in, registration, status). */
 const publicTop = back => `<div class="appbar"><span class="wordmark">Remit<i>4</i>Me</span><div class="spacer"></div>
-  ${back ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/login">Back to sign in</button>` : ''}</div>`;
+  ${back && !MASTER ? `<button class="btn btn-plain btn-sm" type="button" data-act="go" data-href="#/login">Back to sign in</button>` : ''}</div>${masterBarHTML()}`;
 
 /* ---------- 8. drafts shared across views --------------------------------- */
 let DRAFT = null, OR_DRAFT = null, DI_DRAFT = null, BILL_DRAFT = null, REVIEW = null, RESP = null;
 function resetDrafts() {
   DRAFT = null; OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null; REVIEW = null; RESP = null;
   /* list tabs and filters belong to the person who set them */
-  try { recTab = 'Proposed'; KO = { side:'Import', currency:'', allocations:[], focus:'' }; outTab = 'All'; outSearch = ''; billSearch = ''; } catch (e) {}
+  try { recTab = 'Proposed'; KO = { side:'Import', currency:'', allocations:[], focus:'' }; outTab = 'All'; outSearch = ''; billSearch = '';
+        billReview = 'All'; disStatus = ''; appFilter = ''; inTab = 'receipts'; } catch (e) {}
 }
 
 function markField(key, ok) {

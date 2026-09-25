@@ -23,8 +23,8 @@ function memoryStore() {
   return {
     kind: 'memory', persistent: false,
     async read() { return text ? { state: JSON.parse(text), etag: etagOf(text) } : { state: null, etag: null }; },
-    async write(state, etag) {
-      if ((text ? etagOf(text) : null) !== etag) throw new Conflict();
+    async write(state, etag, opts) {
+      if (!(opts && opts.force) && (text ? etagOf(text) : null) !== etag) throw new Conflict();
       text = JSON.stringify(state);
       return etagOf(text);
     },
@@ -37,9 +37,9 @@ function fileStore(file) {
   return {
     kind: 'file', persistent: true,
     async read() { const t = readText(); return t ? { state: JSON.parse(t), etag: etagOf(t) } : { state: null, etag: null }; },
-    async write(state, etag) {
+    async write(state, etag, opts) {
       const cur = readText();
-      if ((cur ? etagOf(cur) : null) !== etag) throw new Conflict();
+      if (!(opts && opts.force) && (cur ? etagOf(cur) : null) !== etag) throw new Conflict();
       const t = JSON.stringify(state);
       const tmp = file + '.' + process.pid + '.tmp';
       fs.writeFileSync(tmp, t);
@@ -66,6 +66,14 @@ function blobStore(token) {
   const secretPath = base + '-' + crypto.createHash('sha256').update('path:' + token).digest('hex').slice(0, 24);
   let access = process.env.BLOB_ACCESS === 'public' ? 'public' : 'private';
   const pathname = () => (access === 'public' ? secretPath : base) + '/state.json';
+  /* Public blobs are served through a CDN that caches for up to a minute, so
+     a plain read can return an old state — the cause of actions that seemed
+     not to stick and resets that seemed not to happen. Read the public copy
+     with a unique query string so the CDN has to fetch the current one. */
+  const storeId = String(token).split('_')[3] || '';
+  const target = () => access === 'public' && storeId
+    ? `https://${storeId}.public.blob.vercel-storage.com/${pathname()}?fresh=${Date.now()}${Math.random().toString(36).slice(2, 6)}`
+    : pathname();
   const accessProblem = e => /access|public|private/i.test(String(e && e.message)) && !(e instanceof blob.BlobPreconditionFailedError);
   const store = {
     kind: 'blob', persistent: true, lastError: null,
@@ -73,7 +81,7 @@ function blobStore(token) {
     async read() {
       try {
         let r;
-        try { r = await blob.get(pathname(), { access, useCache: false, token }); }
+        try { r = await blob.get(target(), { access, useCache: false, token, headers: { 'cache-control': 'no-cache' } }); }
         catch (e) {
           if (e instanceof blob.BlobNotFoundError) return { state: null, etag: null };
           if (access === 'private' && accessProblem(e)) { access = 'public'; return store.read(); }
@@ -85,16 +93,17 @@ function blobStore(token) {
         return { state: JSON.parse(text), etag: r.blob.etag };
       } catch (e) { store.lastError = String(e && e.message || e); throw e; }
     },
-    async write(state, etag) {
+    async write(state, etag, wopts) {
       const opts = { access, contentType: 'application/json', addRandomSuffix: false, cacheControlMaxAge: 60, token };
-      if (etag) { opts.ifMatch = etag; opts.allowOverwrite = true; } else { opts.allowOverwrite = false; }
+      if (wopts && wopts.force) opts.allowOverwrite = true;
+      else if (etag) { opts.ifMatch = etag; opts.allowOverwrite = true; } else { opts.allowOverwrite = false; }
       try {
         const res = await blob.put(pathname(), JSON.stringify(state), opts);
         store.lastError = null;
         return res.etag;
       } catch (e) {
         if (e instanceof blob.BlobPreconditionFailedError || /already exists|precondition/i.test(String(e && e.message))) throw new Conflict();
-        if (access === 'private' && accessProblem(e)) { access = 'public'; return store.write(state, null); }
+        if (access === 'private' && accessProblem(e)) { access = 'public'; return store.write(state, null, wopts); }
         store.lastError = String(e && e.message || e);
         throw e;
       }

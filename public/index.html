@@ -49,7 +49,8 @@
   <div class="hero">
     <h1>AD2 Trade Remittance</h1>
     <p>A working demo of the SME trade-remittance portal and the AD2 operations portal behind it. Onboard a partner,
-       then take a payment and an export receipt all the way through maker, checker and operations to a UTR and a FIRC.</p>
+       then take a payment and an export receipt all the way through maker, checker and operations to a UTR and a FIRC.
+       Customers book the live rate and never see AD2’s margin; every submission ends on a confirmation with its reference.</p>
   </div>
 
   <div class="cards">
@@ -81,7 +82,7 @@
 
   <section>
     <h2>Run the demo</h2>
-    <p>Open the demo and click <b>Demo guide</b>. It walks one new business through 17 steps — registration, maker review, checker
+    <p>Open the demo and click <b>Demo guide</b>. It walks one new business through 17 steps — registration, maker review, Compliance
        approval, an import bill, a DIR payment verified, authorised and released, then an export receipt disposed and a FIRC issued.
        Each step signs in as the right person with one click, so you can watch the work move from role to role.</p>
     <p>Then open the <b>Test data lab</b> from the sidebar. It creates fresh businesses, bills, receipts and requests parked at each
@@ -101,10 +102,12 @@
           <tr><td class="acct">ARCADIACOMP</td><td class="acct">SMEUSER</td><td>SME User</td><td>Arcadia Components — Import only</td></tr>
           <tr><td class="acct">NILGIRISPICE</td><td class="acct">SMEUSER</td><td>SME User</td><td>Nilgiri Spice — Export only</td></tr>
           <tr><td class="acct">HKTRADING</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application waiting on the applicant to supply its IEC</td></tr>
-          <tr><td class="acct">ISHANICONS</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application priced by the maker, waiting on the checker</td></tr>
-          <tr><td class="acct">AD2</td><td class="acct">MAKER · MAKER2</td><td>AD2 Maker</td><td>Prices applications; verifies payments and disposals</td></tr>
-          <tr><td class="acct">AD2</td><td class="acct">CHECKER</td><td>AD2 Checker</td><td>Approves, authorises, accepts bills, confirms knock-offs</td></tr>
-          <tr><td class="acct">AD2</td><td class="acct">OPS</td><td>AD2 Operations</td><td>Records inward credits, releases payments, issues FIRCs</td></tr>
+          <tr><td class="acct">ISHANICONS</td><td class="acct">APPLICANT</td><td>SME Applicant</td><td>An application priced by the maker, waiting on Compliance</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">SALES</td><td>AD2 Sales</td><td>Branch RM: onboards customers and transacts on their behalf</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">MAKER · MAKER2</td><td>AD2 Maker</td><td>Branch maker: onboards and prices; verifies payments and disposals; answers queries for customers</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">CHECKER · CHECKER2</td><td>AD2 Checker</td><td>Trade checker: authorises, accepts bills, confirms knock-offs</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">COMPLIANCE · COMPLIANCE2</td><td>AD2 Compliance</td><td>Onboarding checker: approves, returns or rejects applications</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">OPS · OPS2</td><td>AD2 Operations</td><td>Confirms receipts, authorises, releases payments, issues FIRCs</td></tr>
           <tr><td class="acct">AD2</td><td class="acct">ADMIN</td><td>AD2 Administrator</td><td>Purpose codes, document policy and settings</td></tr>
         </tbody>
       </table>
@@ -117,8 +120,10 @@
       <thead><tr><th style="width:230px">Where</th><th>What to do</th></tr></thead>
       <tbody>
         <tr><td><b>Outward → New request</b></td>
-          <td>Switch between <b>AIR</b>, <b>DIR</b> and <b>OTT</b>: the purpose codes and documents follow the business team's workbook. Under OTT,
-            type a large amount and Form 146 becomes required; pick a goods code and the transport document does too.</td></tr>
+          <td>Pick <b>DIR</b>, choose the bill from the dropdown — the amount follows it — and book the rate: the card shows the foreign currency,
+            the rate and the INR. Under <b>OTT</b>, type “consultancy” to find the purpose code; a large amount makes Form 146 required.</td></tr>
+        <tr><td><b>Inward → New inward remittance</b></td>
+          <td>Report a buyer’s payment; Operations confirms the credit; dispose of it against the export bill under an RBI purpose code.</td></tr>
         <tr><td><b>Any approval</b></td>
           <td>Try to authorise as the maker who verified — the button is not there, and the API refuses it even if called directly.</td></tr>
         <tr><td><b>Release a payment</b></td>

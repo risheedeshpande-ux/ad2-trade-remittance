@@ -96,13 +96,13 @@
     <thead><tr><th style="width:40px">#</th><th>Who</th><th>Does</th><th>Result</th></tr></thead>
     <tbody>
       <tr><td>1</td><td>Business (public)</td><td>Registers: 8 steps, documents, bank account, own Login ID and password</td><td>Application <i>Submitted</i>, with the maker</td></tr>
-      <tr><td>2</td><td>AD2 Maker</td><td>Reviews, sets permission, currencies, margins and charges</td><td><i>Pending Approval</i>, with the checker</td></tr>
-      <tr><td>3</td><td>AD2 Checker</td><td>Approves (cannot be the maker)</td><td><i>Approved</i> — the same sign-in becomes an SME User</td></tr>
+      <tr><td>2</td><td>AD2 Maker</td><td>Reviews, sets permission, currencies, margins and (optional) charges</td><td><i>Pending Approval</i>, with Compliance</td></tr>
+      <tr><td>3</td><td>AD2 Compliance</td><td>Approves (cannot be the maker)</td><td><i>Approved</i> — the same sign-in becomes an SME User</td></tr>
       <tr><td>4–5</td><td>SME</td><td>Adds a beneficiary; lodges the import bill</td><td>Bill <i>Submitted</i></td></tr>
-      <tr><td>6</td><td>AD2 Checker</td><td>Accepts the bill</td><td>Bill <i>Accepted</i> — payable</td></tr>
-      <tr><td>7</td><td>SME</td><td>Raises a DIR payment: purpose S0102, booked rate, bill allocated, three documents</td><td>Outward <i>Submitted</i>; bill reserved</td></tr>
+      <tr><td>6</td><td>AD2 Checker or Operations</td><td>Accepts the bill</td><td>Bill <i>Accepted</i> — payable</td></tr>
+      <tr><td>7</td><td>SME</td><td>Raises a DIR payment: picks the bill (amount follows), books the rate for it, three documents, reviews and confirms</td><td>Outward <i>Submitted</i>; bill reserved; confirmation screen</td></tr>
       <tr><td>8</td><td>AD2 Maker</td><td>Verifies documents, sanctions, purpose, beneficiary</td><td><i>Verified</i></td></tr>
-      <tr><td>9</td><td>AD2 Checker</td><td>Authorises</td><td><i>Authorised</i></td></tr>
+      <tr><td>9</td><td>AD2 Checker or Operations</td><td>Authorises</td><td><i>Authorised</i></td></tr>
       <tr><td>10</td><td>AD2 Operations</td><td>Releases</td><td><i>Completed</i>: INR debited, UTR and MT103, bill settled</td></tr>
       <tr><td>11–12</td><td>SME, Checker</td><td>Export bill lodged and accepted</td><td>Bill payable against receipts</td></tr>
       <tr><td>13</td><td>AD2 Operations</td><td>Records the incoming SWIFT credit</td><td>Receipt <i>Awaiting Instruction</i>; SME notified</td></tr>
@@ -120,26 +120,26 @@
   <div class="grid g2">
     <div class="card"><div class="card-head"><h2>Onboarding</h2></div><div class="card-body">
       <div class="flow"><span class="st">Submitted<small>maker</small></span><span class="sep">→</span><span class="st">Under Review<small>maker saving</small></span><span class="sep">→</span>
-        <span class="st">Pending Approval<small>checker</small></span><span class="sep">→</span><span class="st go">Approved</span></div>
+        <span class="st">Pending Approval<small>compliance</small></span><span class="sep">→</span><span class="st go">Approved</span></div>
       <div class="flow"><span class="st hold">Clarification Required<small>applicant</small></span><span class="sep">→ back to Submitted</span></div>
       <div class="flow"><span class="st">Pending Approval</span><span class="sep">→ Return to maker →</span><span class="st">Under Review</span></div>
-      <div class="flow"><span class="st no">Rejected<small>checker</small></span></div>
+      <div class="flow"><span class="st no">Rejected<small>compliance</small></span></div>
       <p style="font-size:var(--fs-xs);color:var(--muted)">With AutoChecker on, the maker's review approves directly.</p></div></div>
     <div class="card"><div class="card-head"><h2>Outward remittance</h2></div><div class="card-body">
       <div class="flow"><span class="st">Draft</span><span class="sep">→</span><span class="st">Submitted<small>maker</small></span><span class="sep">→</span>
-        <span class="st">Verified<small>checker</small></span><span class="sep">→</span><span class="st">Authorised<small>operations</small></span><span class="sep">→</span><span class="st go">Completed</span></div>
-      <div class="flow"><span class="st hold">Clarification Required<small>SME</small></span><span class="sep">→ back to Submitted (verified again)</span></div>
+        <span class="st">Verified<small>checker or operations</small></span><span class="sep">→</span><span class="st">Authorised<small>operations</small></span><span class="sep">→</span><span class="st go">Completed</span></div>
+      <div class="flow"><span class="st hold">Clarification Required<small>SME, or AD2 for it</small></span><span class="sep">→ back to Submitted (verified again)</span></div>
       <div class="flow"><span class="st no">Rejected<small>checker or operations; reservation released</small></span></div></div></div>
     <div class="card"><div class="card-head"><h2>Disposal instruction</h2></div><div class="card-body">
-      <div class="flow"><span class="st">Submitted<small>maker</small></span><span class="sep">→</span><span class="st">Verified<small>checker</small></span><span class="sep">→</span>
+      <div class="flow"><span class="st">Submitted<small>maker</small></span><span class="sep">→</span><span class="st">Verified<small>checker or operations</small></span><span class="sep">→</span>
         <span class="st">Authorised<small>operations</small></span><span class="sep">→</span><span class="st go">Processed<small>FIRC</small></span></div>
       <div class="flow"><span class="st hold">Clarification Required</span><span class="sep">·</span><span class="st no">Rejected<small>amount returns to the receipt</small></span></div>
-      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Receipt: Awaiting Instruction → Partially Disposed → Instruction Submitted → Processed.
+      <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Receipt: (Intimated by the SME → confirmed by operations) → Awaiting Instruction → Partially Disposed → Instruction Submitted → Processed.
         Each instruction takes any part of the receipt and gets its own FIRC; any part not applied to bills stays pending knock-off.</p></div></div>
     <div class="card"><div class="card-head"><h2>Bills and knock-off</h2></div><div class="card-body">
-      <div class="flow"><span class="st">Submitted</span><span class="sep">→</span><span class="st go">Accepted<small>checker</small></span></div>
+      <div class="flow"><span class="st">Submitted</span><span class="sep">→</span><span class="st go">Accepted<small>checker or operations</small></span></div>
       <div class="flow"><span class="st hold">Query Raised</span><span class="sep">→</span><span class="st">Resubmitted</span><span class="sep">→</span><span class="st go">Accepted</span></div>
-      <div class="flow"><span class="st">Knock-off Proposed<small>SME</small></span><span class="sep">→</span><span class="st go">Confirmed<small>checker · UFI report</small></span><span class="sep">→</span><span class="st">Reversed<small>operations · UFI reversal</small></span></div>
+      <div class="flow"><span class="st">Knock-off Proposed<small>SME</small></span><span class="sep">→</span><span class="st go">Confirmed<small>checker or operations · UFI report</small></span><span class="sep">→</span><span class="st">Reversed<small>operations · UFI reversal</small></span></div>
       <p style="font-size:var(--fs-xs);color:var(--muted);margin-top:8px">Import: unmatched payment → import bill. Export: FIRC pending knock-off → export bill.
         Settlement follows the ledger: Unsettled → Partially Settled → Settled.</p></div></div>
   </div>
@@ -171,10 +171,11 @@
     <tbody>
       <tr><td>SME Applicant</td><td>Submits the application, answers queries</td><td>All transactions until approved</td></tr>
       <tr><td>SME User</td><td>Payments, disposals, bills, knock-off proposals, masters</td><td>Approving its own work</td></tr>
-      <tr><td>AD2 Sales</td><td>Offline applications; transacts for its customers (assisted journey)</td><td>Verify, authorise, release, confirm</td></tr>
-      <tr><td>AD2 Maker</td><td>Prices applications; verifies payments and disposals; assisted journey</td><td>Approve, authorise, release, confirm</td></tr>
-      <tr><td>AD2 Checker</td><td>Approves applications; authorises; accepts bills; confirms knock-offs</td><td>Preparing, verifying or releasing</td></tr>
-      <tr><td>AD2 Operations</td><td>Records inward credits; releases payments; processes disposals; reverses</td><td>Approving, verifying, authorising</td></tr>
+      <tr><td>AD2 Sales</td><td>Branch RM: offline applications; transacts for its customers (assisted journey)</td><td>Verify, authorise, release, confirm</td></tr>
+      <tr><td>AD2 Maker</td><td>Branch maker: onboards and prices; verifies payments and disposals; transacts for customers; answers queries for them</td><td>Approve customers, authorise, release, confirm</td></tr>
+      <tr><td>AD2 Checker</td><td>Trade checker: authorises; accepts bills; confirms knock-offs; answers queries for customers</td><td>Approving customers; preparing, verifying or releasing</td></tr>
+      <tr><td>AD2 Compliance</td><td>Onboarding checker: approves, returns or rejects applications</td><td>All transaction authority</td></tr>
+      <tr><td>AD2 Operations</td><td>Confirms receipts; authorises; accepts bills; releases payments; processes disposals; reverses — never both authorising and releasing one request</td><td>Approving customers, verifying</td></tr>
       <tr><td>AD2 Administrator</td><td>Purpose codes, document policy, compliance rules, users, settings, audit</td><td>All transaction authority</td></tr>
     </tbody></table></div></div></div>
 </section>

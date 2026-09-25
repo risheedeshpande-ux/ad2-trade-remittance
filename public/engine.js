@@ -213,6 +213,8 @@
                expiresAt: addHours(at, 48), dealRef: null };
     }
     if (rate.mode === 'deal') {
+      if (!can(db, a, 'fx.dealRef') || !isAD2(a))
+        fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
       const dealRef = txt(rate.dealRef, 'FX deal reference', { max: 30, pattern: /^[A-Za-z0-9\-\/]{4,30}$/,
         patternMsg: 'FX deal reference should be 4–30 letters, digits or dashes.' });
       let r = Number(rate.customerRate);
@@ -348,10 +350,13 @@
   }
 
   /* ---------- seeding ------------------------------------------------------ */
-  function freshState(SEED, nowIso) {
+  /* opts.rev lets a reset continue the revision count of the state it
+     replaces, so no client mistakes the old state for the newer one. */
+  function freshState(SEED, nowIso, opts) {
     const db = clone(SEED);
     const now = nowIso || new Date().toISOString();
-    db.rev = 0;
+    db.rev = Math.max(0, Number(opts && opts.rev) || 0);
+    db.epoch = now + '~' + Math.random().toString(36).slice(2, 8);
     db.settings = { autoChecker: false, allowUnlinked: false, testLab: true, marginBand: 5, ...(db.settings || {}) };
     /* Seeded transactions carry the documents their policy asked for. */
     const fill = (rec, product, purpose, inrAmt, opts) => {
@@ -377,7 +382,7 @@
     });
     db.disposals.forEach(d => {
       d.option = d.option || 'knockoff';
-      d.purposeCode = d.purposeCode || 'TRADE';
+      d.purposeCode = d.purposeCode && d.purposeCode !== 'TRADE' ? d.purposeCode : (d.option === 'advance' ? 'P0103' : 'P0102');
       d.creditCurrency = d.creditCurrency || 'INR';
       d.allocatedTotal = d.allocatedTotal ?? round2((d.allocations || []).reduce((t, x) => t + x.amount, 0));
       d.unallocated = d.unallocated ?? round2(d.amount - d.allocatedTotal);
@@ -404,7 +409,7 @@
     (db.testSmes || []).forEach(prof => labCreateSme(db, prof, 'approved', now));
     return db;
   }
-  const smePendingWith = st => ({ 'Submitted': 'AD2 Maker', 'Under Review': 'AD2 Maker', 'Pending Approval': 'AD2 Checker',
+  const smePendingWith = st => ({ 'Submitted': 'AD2 Maker', 'Under Review': 'AD2 Maker', 'Pending Approval': 'AD2 Compliance',
                                   'Clarification Required': 'SME', 'Approved': '—', 'Rejected': '—' }[st] || '—');
 
   /* ======================================================================== */
@@ -495,7 +500,7 @@
         demo: !pw, ...(pw ? { pw } : {}) });
       audit(db, a, ctx.now, id, offline ? 'Offline application captured by AD2' : 'Application submitted through digital onboarding');
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `New ${offline ? 'offline' : 'digital'} application ${id} — ${app.legalName}`, link: '#/ad2/applications/' + id });
-      return { smeId: id, domainId: app.domainId, loginId, message: `Application ${id} submitted.` };
+      return { smeId: id, domainId: app.domainId, loginId, demo: !pw, message: `Application ${id} submitted.` };
     },
   };
 
@@ -526,7 +531,6 @@
     const errs = [];
     if (!currencies.length) errs.push('at least one enabled currency');
     currencies.forEach(x => { if (margins[x] == null && margins.USD == null) errs.push('margin for ' + x); });
-    if (!charges.length) errs.push('at least one charge (enter zero if there is none)');
     const effectiveDate = date(c.effectiveDate, 'Effective date', false);
     if (!effectiveDate) errs.push('effective date');
     if (!s.iec) errs.push('IEC on the application (raise a clarification to collect it)');
@@ -563,10 +567,11 @@
         commitApproval(db, s, a, ctx.now, cfg, 'by AutoChecker');
         return { message: 'Approved under AutoChecker. The SME can transact now.', approved: true };
       }
-      s.status = 'Pending Approval'; s.pendingWith = 'AD2 Checker';
-      audit(db, a, ctx.now, s.id, `Review complete — sent to checker with ${cfg.permission} permission, ${cfg.currencies.join('/')}`);
-      notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Application ${s.id} (${s.legalName}) is ready for approval`, link: '#/ad2/applications/' + s.id });
-      return { message: 'Sent to the checker for approval.' };
+      s.status = 'Pending Approval'; s.pendingWith = 'AD2 Compliance';
+      audit(db, a, ctx.now, s.id, `Review complete — sent to compliance with ${cfg.permission} permission, ${cfg.currencies.join('/')}`);
+      audit(db, a, ctx.now, s.id, `Pricing prepared — ${cfg.currencies.map(c => `${c} ${cfg.margins[c] != null ? cfg.margins[c] : marginFor(db, { config: cfg }, c)}p`).join(', ')}; ${cfg.charges.length ? cfg.charges.length + ' charge(s)' : 'no charges'}`, true);
+      notify(db, ctx.now, { toRole: 'AD2 Compliance', text: `Application ${s.id} (${s.legalName}) is ready for approval`, link: '#/ad2/applications/' + s.id });
+      return { message: 'Sent to AD2 Compliance for approval.' };
     },
   };
 
@@ -591,7 +596,7 @@
       const note = txt(p.note, 'Reason for returning', { max: 500 });
       s.status = 'Under Review'; s.pendingWith = 'AD2 Maker';
       audit(db, a, ctx.now, s.id, 'Returned to maker: ' + note);
-      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Application ${s.id} returned by the checker: ${note}`, link: '#/ad2/applications/' + s.id });
+      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Application ${s.id} returned by compliance: ${note}`, link: '#/ad2/applications/' + s.id });
       return { message: 'Returned to the maker.' };
     },
   };
@@ -960,6 +965,29 @@
     },
   };
 
+  /* AD2 answers a query on the customer's behalf, with what the customer
+     handed in at the branch or sent by email. The record returns to the
+     maker exactly as if the SME had answered it. */
+  function resolvedBy(a) { return actorLabel(a) + ' on behalf of the SME'; }
+  C['outward.resolveQuery'] = {
+    cap: 'txn.resolveQuery',
+    run(db, a, p, ctx) {
+      const o = outwardFor(db, p.id);
+      need(o.status === 'Clarification Required', 'There is no open query on this request.');
+      const r = txt(p.response, 'The customer’s answer', { max: 1000 });
+      const list = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount || o.amount * (o.rate.customerRate || 0));
+      const added = docsIn(p.docs, list.map(x => x.id));
+      Object.assign(o.docs = o.docs || {}, added);
+      o.query = { ...(o.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
+      o.status = 'Submitted'; o.pendingWith = 'AD2 Maker';
+      const n = Object.keys(added).length;
+      audit(db, a, ctx.now, o.id, `Query answered on the customer’s behalf${n ? ` — ${n} document(s) received from the customer attached` : ''}; back with the maker`);
+      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Query on ${o.id} answered by ${a.name || a.role} for the SME — verify again`, link: '#/ad2/outward/' + o.id });
+      notify(db, ctx.now, { toSmeId: o.smeId, text: `AD2 recorded your answer to the query on ${o.id}`, link: '#/sme/outward/' + o.id });
+      return { message: 'Answer recorded for the customer. The request is back with the maker to verify.' };
+    },
+  };
+
   C['outward.reject'] = {
     cap: 'outward.reject',
     run(db, a, p, ctx) {
@@ -1000,9 +1028,67 @@
     },
   };
 
+  /* The SME (or AD2 for it) reports a payment its buyer has sent. Operations
+     matches it to the credit in the nostro and confirms it — only then can
+     it be disposed of. */
+  C['inward.intimate'] = {
+    cap: 'inward.dispose',
+    run(db, a, p, ctx) {
+      const s = ownSme(db, a); requireApproved(s);
+      need(perm(s).exportSide, 'Inward remittance needs Export or Both permission.');
+      const v = p.inward || {};
+      const cur = oneOf(v.currency, currencyCodes(db), 'Currency');
+      if (!(a.actingFor && isAD2(a))) need(((s.config || {}).currencies || []).includes(cur), `${cur} is not enabled for ${s.tradingName}.`);
+      const amt = amount(v.amount, 'Amount');
+      const ref = v.reference ? txt(String(v.reference).toUpperCase(), 'SWIFT / UTR reference', { max: 30, pattern: /^[A-Z0-9\-\/]{4,30}$/,
+        patternMsg: 'The SWIFT or UTR reference should be 4–30 letters, digits or dashes.' }) : '';
+      if (ref) need(!db.inward.some(i => i.reference === ref), `Reference ${ref} is already on the platform.`);
+      const id = nextId(db.inward, 'IR');
+      const rec = { id, smeId: s.id, reference: ref || `INT-${seq(db, 'inw')}`, valueDate: date(v.valueDate || ctx.now.slice(0, 10), 'Value date'),
+        remitter: txt(v.remitter, 'Remitter (buyer)', { max: 120 }), remitterCountry: txt(v.remitterCountry, 'Remitter country', { max: 60 }),
+        currency: cur, amount: amt, available: 0, status: 'Intimated', pendingWith: 'AD2 Operations', remittanceType: 'TRADE', purposeCode: '',
+        remarks: txt(v.remarks, 'Remarks', { max: 300, required: false }), firc: null, docs: docsIn(p.docs, ['swiftcopy', 'invoice']),
+        intimatedBy: stamp(a, ctx.now, 'reported'), source: a.actingFor ? 'AD2 Assisted' : 'SME' };
+      db.inward.unshift(rec);
+      audit(db, a, ctx.now, id, `Inward remittance reported — ${fmt(amt, cur)} from ${rec.remitter}${ref ? ', ' + ref : ''}; awaiting confirmation against the nostro credit`);
+      notify(db, ctx.now, { toRole: 'AD2 Operations', text: `${s.tradingName} reports ${fmt(amt, cur)} from ${rec.remitter} — confirm the credit`, link: '#/ad2/inward/' + id });
+      return { id, message: `Inward remittance ${id} reported. AD2 Operations confirms it against the credit received, then you can dispose of it.` };
+    },
+  };
+  C['inward.confirm'] = {
+    cap: 'inward.record',
+    run(db, a, p, ctx) {
+      const i = find(db.inward, p.id) || missing('Inward remittance');
+      need(i.status === 'Intimated', 'Only a reported remittance waiting for confirmation can be confirmed.');
+      const amt = p.amount != null && p.amount !== '' ? amount(p.amount, 'Amount credited') : i.amount;
+      const ref = p.reference ? txt(String(p.reference).toUpperCase(), 'SWIFT reference', { max: 30, pattern: /^[A-Z0-9\-\/]{4,30}$/ })
+        : (/^INT-/.test(i.reference) ? `SWF-INW-${seq(db, 'inw')}` : i.reference);
+      need(!db.inward.some(x => x !== i && x.reference === ref), `Reference ${ref} is already recorded.`);
+      const was = i.amount;
+      Object.assign(i, { amount: amt, available: amt, reference: ref, valueDate: date(p.valueDate || i.valueDate, 'Value date'),
+        status: 'Awaiting Instruction', pendingWith: 'SME', recordedBy: stamp(a, ctx.now, 'confirmed') });
+      audit(db, a, ctx.now, i.id, `Credit confirmed in the nostro — ${fmt(amt, i.currency)}, ${ref}${amt !== was ? ` (reported ${fmt(was, i.currency)})` : ''}`);
+      notify(db, ctx.now, { toSmeId: i.smeId, text: `${fmt(amt, i.currency)} from ${i.remitter} confirmed — submit your disposal instruction`, link: '#/sme/inward/' + i.id });
+      return { id: i.id, message: `Credit confirmed. ${fmt(amt, i.currency)} is ready for the SME to dispose.` };
+    },
+  };
+  C['inward.decline'] = {
+    cap: 'inward.record',
+    run(db, a, p, ctx) {
+      const i = find(db.inward, p.id) || missing('Inward remittance');
+      need(i.status === 'Intimated', 'Only a reported remittance waiting for confirmation can be declined.');
+      const r = txt(p.reason, 'Reason', { max: 300 });
+      Object.assign(i, { status: 'Not Received', pendingWith: '—', declineReason: r, declinedBy: stamp(a, ctx.now, 'declined') });
+      audit(db, a, ctx.now, i.id, 'No matching credit — ' + r);
+      notify(db, ctx.now, { toSmeId: i.smeId, text: `We could not match ${i.reference} to a credit: ${r}`, link: '#/sme/inward/' + i.id });
+      return { message: 'Marked as not received. The SME has been told why.' };
+    },
+  };
+
   /* A receipt can be disposed of in parts. available is what no instruction
      covers yet; an instruction may credit the whole amount or only part. */
   function inwardStatus(db, i) {
+    if (['Intimated', 'Not Received'].includes(i.status)) return i.status;
     const live = db.disposals.filter(d => d.inwardId === i.id && d.status !== 'Rejected');
     if (i.available > 0) return live.length ? 'Partially Disposed' : 'Awaiting Instruction';
     return live.some(d => OPEN.includes(d.status)) ? 'Instruction Submitted' : 'Processed';
@@ -1036,7 +1122,9 @@
     const amt = amount(d.amount == null || d.amount === '' ? i.available : d.amount, 'Amount to dispose');
     need(amt <= i.available + 0.001, `Only ${fmt(i.available, i.currency)} of this receipt is left to dispose.`);
     const option = oneOf(d.option || 'knockoff', (db.disposalOptions || []).map(o => o.id), 'Disposal option');
-    const purposeCode = oneOf(d.purposeCode || 'TRADE', (db.inwardPurposes || []).filter(x => !x.disabled).map(x => x.code), 'Purpose');
+    const fallback = option === 'advance' ? 'P0103' : 'P0102';
+    const pc = !d.purposeCode || d.purposeCode === 'TRADE' ? fallback : d.purposeCode;
+    const purposeCode = oneOf(pc, (db.inwardPurposes || []).filter(x => !x.disabled).map(x => x.code), 'Purpose of remittance');
     let al = [], total = 0;
     if (option === 'knockoff') {
       ({ list: al, total } = allocationsIn(db, s, d.allocations, { type: 'Export', currency: i.currency, cap: amt, label: 'The amount applied to bills' }));
@@ -1066,6 +1154,7 @@
       const d = p.draft || {};
       const i = find(db.inward, d.inwardId);
       if (!i || i.smeId !== s.id) missing('Inward receipt');
+      need(i.status !== 'Intimated', 'AD2 Operations has not confirmed this remittance against the credit yet.');
       need(i.available > 0, 'Nothing is left to dispose on this receipt.');
       const v = readDisposal(db, a, s, i, d, ctx.now);
       const inrCredit = v.acc.currency === 'INR';
@@ -1205,6 +1294,23 @@
       return { message: 'Response sent.' };
     },
   };
+  C['disposal.resolveQuery'] = {
+    cap: 'txn.resolveQuery',
+    run(db, a, p, ctx) {
+      const d = disposalFor(db, p.id);
+      need(d.status === 'Clarification Required', 'There is no open query on this instruction.');
+      const r = txt(p.response, 'The customer’s answer', { max: 1000 });
+      const added = docsIn(p.docs, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }).map(x => x.id));
+      Object.assign(d.docs = d.docs || {}, added);
+      d.query = { ...(d.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
+      d.status = 'Submitted'; d.pendingWith = 'AD2 Maker';
+      const n = Object.keys(added).length;
+      audit(db, a, ctx.now, d.id, `Query answered on the customer’s behalf${n ? ` — ${n} document(s) received from the customer attached` : ''}; back with the maker`);
+      notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Query on disposal ${d.id} answered for the SME — verify again`, link: '#/ad2/disposals/' + d.id });
+      notify(db, ctx.now, { toSmeId: d.smeId, text: `AD2 recorded your answer to the query on ${d.id}`, link: '#/sme/disposals/' + d.id });
+      return { message: 'Answer recorded for the customer. The instruction is back with the maker to verify.' };
+    },
+  };
   /* Disposal queries use the outward query capability for both maker and
      checker; the explicit caps below keep the matrix readable. */
   C['disposal.reject'] = {
@@ -1337,6 +1443,21 @@
       audit(db, a, ctx.now, b.id, 'Resubmitted after query: ' + r);
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Bill ${b.id} resubmitted by ${s.tradingName}`, link: '#/ad2/bills/' + b.type.toLowerCase() });
       return { message: 'Bill resubmitted.' };
+    },
+  };
+
+  C['bill.resolveQuery'] = {
+    cap: 'txn.resolveQuery',
+    run(db, a, p, ctx) {
+      const b = billFor(db, p.id);
+      need(b.review === 'Query Raised', 'There is no open query on this bill.');
+      const r = txt(p.response, 'The customer’s answer', { max: 500 });
+      if (p.shipmentRef) b.shipmentRef = txt(p.shipmentRef, 'Reference', { max: 40 });
+      b.query = { ...(b.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
+      b.review = 'Resubmitted';
+      audit(db, a, ctx.now, b.id, 'Query answered on the customer’s behalf: ' + r);
+      notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Bill ${b.id} resubmitted for the SME`, link: '#/ad2/bills/' + b.type.toLowerCase() });
+      return { message: 'Answer recorded. The bill is back with the checker to accept.' };
     },
   };
 
@@ -1894,6 +2015,24 @@
       return { ids: out, message: `Generated ${out.join(', ')} — parked at submitted, verified and authorised stages.` };
     },
   };
+  /* The master test user opens the platform as someone else. It gains no
+     authority of its own: the server issues a session for the user it opens,
+     so every step is recorded against that user and four-eyes still holds. */
+  C['test.actAs'] = {
+    cap: 'test.master',
+    run(db, a, p, ctx) {
+      need(db.settings.testLab !== false, 'Test tools are switched off in Administration → Settings.');
+      const t = loginOf(db, p.domainId, p.loginId);
+      if (!t) missing('User');
+      need(!can(db, { role: t.role }, 'test.master'), 'Open a customer or AD2 user, not another master test user.');
+      need(t.active !== false, `${t.domainId}/${t.loginId} is deactivated.`);
+      const s = t.smeId && smeOf(db, t.smeId);
+      need(!(s && s.status === 'Rejected'), 'This business was rejected, so it cannot sign in.');
+      audit(db, a, ctx.now, 'USERS', `Opened the platform as ${t.domainId}/${t.loginId} (${t.name || t.role}) for testing`, true);
+      return { message: `Now testing as ${t.name || t.loginId} — ${t.role}.`, domainId: t.domainId, loginId: t.loginId };
+    },
+  };
+
   C['assist.open'] = {
     cap: 'assist.transact',
     run(db, a, p, ctx) {
@@ -1937,21 +2076,35 @@
     try { a = resolveActor(db, who, null); } catch (e) { a = null; }
     /* Sign-in shortcuts list the shared demo accounts; a password account is
        visible only to AD2 and to its own business. */
-    out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || l.smeId === a.smeId))).map(publicLogin(db));
+    const master = !!a && can(db, a, 'test.master');
+    out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || master || l.smeId === a.smeId))).map(publicLogin(db));
     if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); out.scope = 'public'; return out; }
-    if (isAD2(a)) {
+    if (isAD2(a) || master) {
       BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
       out.complianceRules = clone(db.complianceRules || []);
       out.notifications = out.notifications.filter(n => n.toRole === a.role);
-      out.scope = 'ad2';
+      out.scope = master ? 'master' : 'ad2';
       return out;
     }
     const sid = a.smeId;
     const mine = r => r.smeId === sid;
-    const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return r; };
+    /* The customer sees its own rate, never AD2's margin or the reference
+       rate it is built from. */
+    const hideMargin = r => { if (r.rate) { delete r.rate.margin; delete r.rate.refRate; } return r; };
+    const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return hideMargin(r); };
+    out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, ...rest } = c; return rest; });
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
       delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
-      if (s.config) delete s.config.remarks;
+      if (s.config) {
+        delete s.config.remarks;
+        const live = smeOf(db, s.id);
+        s.config.customerRates = {};
+        (s.config.currencies || []).forEach(c => {
+          const m = marginFor(db, live, c);
+          s.config.customerRates[c] = { out: customerRate(db, c, m), in: customerRate(db, c, -m) };
+        });
+        delete s.config.margins; delete s.config.marginBasis;
+      }
       return s;
     });
     ['accounts', 'beneficiaries', 'bills', 'inward', 'allocations', 'jobs'].forEach(k => { out[k] = clone((db[k] || []).filter(mine)); });

@@ -1,7 +1,7 @@
 # AD2 Trade Remittance Platform — Product Requirements
 
-Version 1.2 · 24 September 2026
-Source: AD2 Trade Remittance BRD v1.0, requirements call of 22 September 2026, the product review of 22–23 September 2026, and the live Remit4Me operations platform (uat1.remit4me.com).
+Version 1.4 · 25 September 2026
+Source: AD2 Trade Remittance BRD v1.0, requirements call of 22 September 2026, the product reviews of 22–23 and 24 September 2026, and the live Remit4Me operations platform (uat1.remit4me.com).
 
 ---
 
@@ -43,6 +43,18 @@ The requirements call revised the BRD in ten places (C1–C10); two further chan
 | C20 | Sales assist | Maker transacts on behalf | An **AD2 Sales** role raises requests for its customers; a maker verifies and a checker authorises. In an assisted journey the margin may be set within a configurable **band** below the approved margin. |
 | C21 | Workspaces | One AD2 menu for every role | Each role gets its **own sidebar and dashboard**; the sidebar collapses to an icon rail. |
 | C22 | Test data | Seed only | A **test data lab** creates businesses, bills, receipts and parked requests on demand, so any journey can be repeated. |
+| C23 | Customer pricing | Margin shown in pricing | The **customer never sees AD2's margin** or the reference rate — not in the rate box, the summary, details, the profile, reports or activity, and not in the data its session receives. It sees its own rate, the foreign currency amount and the INR. |
+| C24 | FX deal reference | SME may enter a deal reference (C8) | **Only AD2** (branch, maker, operations) applies a deal reference negotiated with the treasury desk. The customer books the live rate. |
+| C25 | Rate booking | Rate booked independently of the amount | The rate is **booked for an amount**: the card shows the FX amount, the rate and the INR, and changing the amount releases the booking. |
+| C26 | Bill allocation | Table of bills below the rate | Bills come **first**, picked from a **dropdown** that shows each bill's amount and what is free (and which request holds the rest); the remittance amount follows the bills; the rate is booked for that amount. |
+| C27 | Purpose search | Select list with a filter | Purpose codes are found by **typing** a code or words (“freight”, “consultancy”), like a search box. Execution date defaults to today. |
+| C28 | Submission | Submit, then the detail page | Every submission has a **review step** and ends on a **confirmation screen** with the reference, where it is and what happens next. |
+| C29 | Roles | One checker for customers and money | The **branch maker is common** to onboarding and transactions; checking is split — **AD2 Compliance** approves customers, the **AD2 Checker or AD2 Operations** approves money. Operations can authorise, accept bills and confirm knock-offs as well as release, but never authorise and release the same request. Menus name each role's work and open filtered lists. |
+| C30 | Queries | Answered by the SME only | AD2 (maker, checker or operations) may **answer a query for the customer** with the documents the customer sent in; it goes back to the maker as if the SME had answered. |
+| C31 | Inward intimation | AD2 records every receipt | The SME may **report a buyer's payment** (New inward remittance); Operations confirms it against the nostro credit or declines it with a reason. Disposals carry an **RBI inward purpose code** (P0102 by default, P0103 for an advance). |
+| C32 | Onboarding pricing | At least one charge required | **Charges are optional.** The maker can select all currencies and apply one margin across the board, then adjust per currency. |
+| C33 | Reports | Outstanding shows the balance | Outstanding bills show the **bill amount** beside the outstanding; aging lists every open bill, receipt and FIRC; FIRCs **download** from the report; realised bills show the **UFI portal** knock-off. |
+| C34 | Testing | Sign in and out as each role | A **master test user** (TEST / MASTER) opens the platform as any customer or AD2 user and follows an item through every stage; see §14B. |
 
 Two further decisions carry into the build:
 
@@ -57,12 +69,14 @@ Two further decisions carry into the build:
 |---|---|---|
 | SME Applicant | SME | Onboarding, document upload, query response, application status. No transaction access until approved. |
 | SME User | SME | Outward requests, inward disposal instructions, bill lodgement, knock-off proposals, reports — for its own SME only, within approved permissions. |
-| AD2 Sales | AD2 | Captures offline applications and **transacts on behalf** of its customers. Cannot verify, authorise or release anything. |
-| AD2 Maker | AD2 | Creates offline applications, reviews and prices applications, **verifies** outward requests and disposal instructions. |
-| AD2 Checker | AD2 | Approves or rejects applications, **authorises** verified outward requests and disposals, accepts bills, confirms knock-offs. |
-| AD2 Operations | AD2 | Records incoming SWIFT credits, **releases** authorised payments, **processes** authorised disposals and issues FIRCs, reverses allocations. |
+| AD2 Sales | AD2 | Branch RM. Captures offline applications and **transacts on behalf** of its customers. Cannot verify, authorise or release anything. |
+| AD2 Maker | AD2 | Branch maker. Creates offline applications, reviews and prices applications, **verifies** outward requests and disposal instructions, transacts on behalf, answers queries for the customer. |
+| AD2 Checker | AD2 | Trade checker. **Authorises** verified outward requests and disposals, accepts bills, confirms knock-offs. Does not approve customers. |
+| AD2 Compliance | AD2 | Onboarding checker. **Approves**, returns or rejects applications and raises clarifications. No transaction authority. |
+| AD2 Operations | AD2 | Records and confirms incoming credits, **authorises** (as a checker would), accepts bills, confirms and reverses knock-offs, **releases** authorised payments, **processes** disposals and issues FIRCs — never authorising and releasing the same request. |
 | AD2 (assisted) | SME portal | Any AD2 maker or operations user may act inside an approved SME's portal on its behalf. Covered in §7A. |
 | AD2 Administrator | AD2 | Users (add, deactivate, change role, reset password), purpose codes, document policy, compliance rules, settings, audit log. No transaction authority. |
+| Master Tester | Test | Demo and test use only. Sees the whole platform and opens it as any user; holds no authority of its own. Not assignable. See §14B. |
 
 An SME user may submit without a second SME approver. SME-side maker-checker is a later addition.
 
@@ -74,9 +88,10 @@ Each role holds a set of named capabilities, and the interface is built from the
 |---|---|---|
 | SME Applicant | Submit an application | — |
 | SME User | Create outward requests, dispose inward receipts, lodge bills, propose allocations, maintain its own masters, view reports | Approving its own requests; confirming its own allocations |
-| AD2 Maker | Capture offline applications, review and price them, raise queries, transact on behalf of an SME, propose allocations | Approving applications or outward requests; confirming allocations |
-| AD2 Checker | Approve or reject applications and outward requests, accept bills, confirm allocations | Creating or reviewing the work it approves |
-| AD2 Operations | Progress remittances and disposal instructions, query, approve, complete, accept bills, confirm and reverse allocations, transact on behalf | Approving onboarding applications |
+| AD2 Maker | Capture offline applications, review and price them, raise queries, verify requests, transact on behalf of an SME, answer queries for it, propose allocations | Approving applications or outward requests; confirming allocations |
+| AD2 Checker | Authorise or reject outward requests and disposals, accept bills, confirm allocations, answer queries for the SME | Approving customers; creating or verifying the work it approves |
+| AD2 Compliance | Approve, return or reject applications; raise clarifications | All transaction authority |
+| AD2 Operations | Record and confirm receipts, query, authorise, release, accept bills, confirm and reverse allocations, transact on behalf | Approving onboarding applications; verifying; releasing what it authorised |
 | AD2 Administrator | Masters, document checklists, purpose-code mapping, users, roles, settings | All transaction authority |
 
 The Administrator is deliberately outside the transaction path: whoever configures the controls should not also be able to transact through them.
@@ -97,10 +112,11 @@ Each role has its own workspace. The sidebar is grouped around that role's work,
 |---|---|
 | SME User | Home: Dashboard · Transact: Outward remittance (Import), Inward & disposal (Export) · Bills: Export bills, Import bills, Knock-off · Records: Reports, Integrations · Settings: Accounts & beneficiaries, Test data |
 | SME Applicant | Application |
-| AD2 Sales | Home: Dashboard (my customers) · My customers: SME directory, SME applications · Track: Outward, Inward & disposal, Bills · Insight: Reports · Tools: Test data lab |
-| AD2 Maker | Home: Dashboard, My work queue · Onboarding: Applications, Directory · Transactions: Outward, Inward & disposal, Bills, Reconciliation · Insight · Tools |
-| AD2 Checker | Home: Dashboard, My work queue · Approvals: Applications, Outward, Inward & disposal, Bills, Reconciliation · Customers: Directory · Insight · Tools |
-| AD2 Operations | Home: Dashboard, My work queue · Settlement: Outward, Inward & disposal, Reconciliation · Records: Bills, Directory · Insight · Tools |
+| AD2 Sales | Home: Dashboard · Customers: My customers, Onboard a customer · Track: Outward, Inward & disposal, Bills · Insight: Reports · Tools: Test data lab |
+| AD2 Maker | Home: Dashboard, My work queue · Onboarding: Applications to price, Onboard a customer, Directory · Verify: Verify payments, Verify disposals · Transactions: Outward, Inward & disposal, Bills, Reconciliation · Insight · Tools |
+| AD2 Checker | Home: Dashboard, My work queue · Authorise: Authorise payments, Authorise disposals, Accept bills, Confirm knock-offs · Records: Outward, Inward & disposal, Bills, Directory · Insight · Tools |
+| AD2 Compliance | Home: Dashboard, My work queue · Onboarding: Applications to approve, SME applications, Directory · Oversight: Outward, Inward & disposal, Bills · Insight · Tools |
+| AD2 Operations | Home: Dashboard, My work queue · Settle: Receipts to confirm, Release payments, Credit & issue FIRC · Authorise: Authorise payments, Authorise disposals, Accept bills, Confirm knock-offs · Records: Outward, Inward & disposal, Bills, Reconciliation, Directory · Insight · Tools |
 | AD2 Administrator | Home: Dashboard · Configuration: Purpose codes, Document policy, Compliance rules, Currencies & checklists, Platform settings · Access: Users, Roles & permissions · Oversight: Audit log, Directory, Outward, Inward & disposal, Bills, Reports · Tools |
 
 ---
@@ -130,17 +146,17 @@ IEC is mandatory because regular transacting exporters must hold one. One-off ex
 
 ## 6. SME approval and pricing
 
-AD2 review shows the application summary, business and bank details, a document viewer, query history, service permissions, pricing configuration and approval actions. Approval runs Maker → Checker.
+AD2 review shows the application summary, business and bank details, a document viewer, query history, service permissions, pricing configuration and approval actions. Approval runs Maker → **Compliance**.
 
 Mandatory before approval:
 
 - Transaction permission — Import, Export or Both
 - Enabled currencies (multi-select)
 - Currency-wise FX margin and margin basis (paise or basis points)
-- FX charge name, fixed or percentage basis, charge value, charge currency, application basis, effective date
-- Internal remarks
+- FX charges, if any — name, fixed or percentage basis, value, currency, application basis (optional, per C32)
+- Effective date and internal remarks
 
-Zero margin and zero charge must be entered explicitly rather than left blank. Rejection and clarification require a reason. Configuration changes retain an audit history.
+The maker can select all currencies at once and apply one margin across the board before adjusting any currency. A zero margin must be entered explicitly rather than left blank. Rejection and clarification require a reason. Configuration changes retain an audit history.
 
 **Currency visibility.** Only enabled currencies are selectable by the SME. A transaction initiated by an AD2 maker may use any currency the platform supports.
 
@@ -192,7 +208,7 @@ Principal Debit Account, Fee Account, Transport Document Number and Transfer Ref
 
 FORM_145 and FORM146 in the workbook are the Income-tax Act 2025 successors to Form 15CA and 15CB. The Administrator can change any rule (required, optional, goods-only, above threshold) and stop any purpose code being offered.
 
-**Rate** — a live reference rate is displayed with a countdown. **Book Rate** locks the customer rate for 48 hours and notifies treasury; no bank approval step. Where the rate has been negotiated offline, the customer enters the **FX Deal Reference** instead. A request cannot be submitted without either a booked rate or a deal reference.
+**Rate** — the customer's live rate is displayed with the foreign currency amount and its INR equivalent. **Book Rate** locks it for 48 hours *for that amount* and notifies treasury; no bank approval step. Where the rate has been negotiated with the treasury desk, **AD2** applies the **FX Deal Reference** (C24). A request cannot be submitted without either a booked rate or a deal reference. The customer never sees the margin or the reference rate (C23).
 
 **Bill allocation** — linked import bills, allocation per bill, unallocated amount. Allocations may not exceed the remittance value or the available bill balance.
 
@@ -243,10 +259,12 @@ AD2 Operations records the inward receipt. The SME views it and disposes of it �
 
 **Receipt fields** — remittance reference, value date, remitter name, remitter country, currency, amount, amount still to dispose, remarks, status, FIRCs issued.
 
+**Reported by the SME** (C31) — *New inward remittance* lets the SME dispose of a confirmed receipt or report a buyer's payment (remitter, amount, value date, SWIFT or UTR reference, the MT103 copy). Operations confirms it against the nostro credit — adjusting the amount to what was actually credited — or declines it with a reason. Only a confirmed receipt can be disposed of.
+
 **Disposal instruction**
 
 1. **Amount to dispose now** — up to what is left on the receipt (defaults to all of it). The balance stays for a later instruction.
-2. **Purpose** — from the inward purposes (TRADE from the workbook; the Administrator can add more).
+2. **Purpose of remittance** — an RBI inward purpose code, found by typing (P0102 for proceeds of goods shipped, P0103 for an advance; the Administrator can add more).
 3. **How to apply it** — *Knock off against export bills* (apply the amount to accepted export bills of the same currency; any part not applied is credited too and tracked as pending knock-off), or *Credit as advance* (no bills yet; knock off later).
 4. **Account to credit** — a verified INR account, converted at a booked rate or FX deal, or a verified **EEFC account in the receipt currency**, credited as it is with no rate.
 5. **Documents** — the TRADE policy: Disposal Instruction Letter always; Commercial Export Invoice and Shipping Bill when bills are knocked off, optional for an advance.
@@ -390,6 +408,13 @@ Outstanding balances derive from confirmed transactions and approved allocations
 | AC21 | Every role's capabilities are defined explicitly, and an action a role cannot perform is absent from the interface rather than shown and refused |
 | AC22 | Maker and checker are segregated: a maker cannot approve what it prepared, a checker cannot prepare what it approves, and the interface says which actions are withheld and why |
 | AC23 | The Administrator holds no transaction authority, and the roles and permissions matrix is viewable in Administration |
+| AC24 | No margin, reference rate or deal-reference entry is visible to, or sent to, an SME user |
+| AC25 | Rate booking shows the FX amount and INR; bills are picked from a dropdown with their amounts before the rate is booked |
+| AC26 | Every submission has a review step and a confirmation screen |
+| AC27 | Compliance approves customers; the trade checker cannot; Operations can authorise and release but not both on one request |
+| AC28 | AD2 can answer a query for the customer with documents; an SME can report an inward remittance that Operations confirms |
+| AC29 | A browser never shows an older state than it has seen; Reset demo data takes effect for everyone at once |
+| AC30 | One master test sign-in can run any journey end to end; each step is recorded against the user it was taken as, and four-eyes still holds |
 
 ---
 
@@ -402,6 +427,16 @@ Seeded data is used up as journeys are run. The lab — *Test data lab* for AD2 
 - **Park requests** at each stage (DIR submitted, LC verified, AIR authorised, a disposal submitted) by running the real commands as lab users, so every control still applies.
 
 The six test businesses are also created whenever the demo is reset. The Administrator can switch the lab off in Platform settings.
+
+## 14B. Master test user
+
+Testing a journey across roles once meant signing in and out at every stage. The master test user (**TEST / MASTER**, demo passcode) replaces that:
+
+- **Test console.** Lists every open item (applications, payments, disposals, reported receipts, bills and knock-offs), its next step and who can take it. It also has journeys to start and every user to open.
+- **Open as.** One click opens the platform as that user, with no password. This works for businesses that registered with their own password too.
+- **Next-step bar.** While testing, a bar on every page follows the item in front of you and offers **Do it as …** for the next person. It never offers someone who has already handled the item.
+- **Controls stay intact.** The master holds no authority of its own. The server issues the chosen user's own session, so every action is recorded against that user and the maker-checker rules still apply. Each switch is written to the audit log, and a business never sees it.
+- **Switch.** The Administrator turns it off with the test tools in Platform settings.
 
 ---
 

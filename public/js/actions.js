@@ -8,18 +8,25 @@ function render(opts = {}) {
   const root = $('#root');
   if (!DB) return;
   const hash = location.hash || '#/login';
-  const parts = hash.replace(/^#\//, '').split('/');
+  const [path, qs] = hash.split('?');
+  const parts = path.replace(/^#\//, '').split('/');
   const keep = opts.keepScroll !== false && hash === lastHash;
   const y = window.scrollY;
+  /* a menu entry like "Authorise payments" opens a list already filtered */
+  if (hash !== lastHash) applyRouteFilter(parts, new URLSearchParams(qs || ''));
 
   if (!S && !['login','register','status'].includes(parts[0])) { location.hash = '#/login'; return; }
   let html;
   try {
-    if (parts[0] === 'login') html = S ? (location.hash = S.role.startsWith('AD2') ? '#/ad2/dashboard' : '#/sme/dashboard', '') : viewLogin();
+    if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
     else if (parts[0] === 'register') html = viewRegister();
     else if (parts[0] === 'status')   html = viewStatus();
+    else if (parts[0] === 'test') {
+      if (!isMaster()) { location.hash = homeHash(); return; }
+      html = viewTestConsole();
+    }
     else if (parts[0] === 'sme') {
-      if (!isSME() && !acting()) { location.hash = '#/ad2/dashboard'; return; }
+      if (!isSME() && !acting()) { location.hash = homeHash(); return; }
       const me = sme(ctxSmeId());
       if (me && me.status !== 'Approved' && parts[1] !== 'dashboard') { location.hash = '#/sme/dashboard'; return; }
       switch (parts[1]) {
@@ -33,11 +40,12 @@ function render(opts = {}) {
         case 'integrations': html = viewIntegrations(); break;
         case 'profile':      html = viewProfile(); break;
         case 'lab':          html = viewLab(); break;
+        case 'done':         html = viewDone(parts[2], parts[3]); break;
         default: location.hash = '#/sme/dashboard'; return;
       }
     }
     else if (parts[0] === 'ad2') {
-      if (!isAD2()) { location.hash = '#/sme/dashboard'; return; }
+      if (!isAD2()) { location.hash = homeHash(); return; }
       if (acting()) setSession({ ...S, actingFor:null });
       if (!navAllows(hash)) { toast('That screen is not part of the ' + S.role + ' workspace.', 'err'); location.hash = '#/ad2/dashboard'; return; }
       switch (parts[1]) {
@@ -48,7 +56,7 @@ function render(opts = {}) {
         case 'outward':        html = parts[2] ? viewOutwardDetail(parts[2]) : viewOutwardList(); break;
         case 'inward':         html = parts[2] ? viewInwardDetail(parts[2]) : viewInwardList(); break;
         case 'disposals':      html = viewDisposalDetail(parts[2]); break;
-        case 'bills':          html = viewBills(parts[2] === 'import' ? 'Import' : 'Export'); break;
+        case 'bills':          html = viewBills(parts[2] === 'import' ? 'Import' : parts[2] === 'export' ? 'Export' : 'All'); break;
         case 'reconciliation': html = viewReconciliation(); break;
         case 'reports':        html = viewReports(); break;
         case 'admin':          html = viewAdmin(parts[2]); break;
@@ -72,7 +80,26 @@ function render(opts = {}) {
   window.scrollTo(0, keep ? y : 0);
   lastHash = hash;
 }
-window.addEventListener('hashchange', () => render({ keepScroll:false }));
+window.addEventListener('hashchange', () => {
+  /* confirmations belong to the screen they were shown on; errors stay */
+  $$('#toasts .toast:not(.err)').forEach(t => { if (Date.now() - (+t.dataset.at || 0) > 1500) t.remove(); });
+  render({ keepScroll:false });
+});
+
+function applyRouteFilter(parts, q) {
+  const st = q.get('s');
+  const [area, page, id] = parts;
+  if (page === 'bills') billReview = st === 'accept' ? 'To accept' : st === 'query' ? 'With customer' : 'All';
+  if (id) return;
+  if (page === 'outward') outTab = st && OUT_TABS.includes(st) ? st : 'All';
+  if (page === 'inward') {
+    if (st === 'receipts') { inTab = 'receipts'; disStatus = ''; }
+    else if (st) { inTab = 'instructions'; disStatus = st; }
+    else disStatus = '';
+  }
+  if (page === 'reconciliation') recTab = st || 'Proposed';
+  if (page === 'applications') appFilter = st && APP_FILTERS[st] ? st : '';
+}
 
 /* ---------- helpers for actions ------------------------------------------------ */
 const val = sel => ($(sel)?.value || '').trim();
@@ -141,14 +168,28 @@ function startAssist(smeId, dest) {
   toast('Acting for ' + (target.tradingName || target.legalName) + '.', 'ok');
 }
 
-function rateBook(draft, cur, smeRec, dir) {
-  const approved = marginFor(smeRec, cur);
-  const m = acting() && isAD2() && draft.marginOverride != null && draft.marginOverride !== '' ? Math.round(Number(draft.marginOverride)) : approved;
-  const band = DB.settings.marginBand ?? 5;
-  if (m < Math.max(0, approved - band) || m > approved + 100) { toast(`Margin must be between ${Math.max(0, approved - band)} and ${approved + 100} paise.`, 'err'); return false; }
-  draft.rate = { mode:'booked', refRate:currency(cur).refRate, margin:m, customerRate:customerRate(cur, dir === 'out' ? m : -m),
+function rateBook(draft, cur, smeRec, dir, amount) {
+  if (!(Number(amount) > 0)) { toast('Enter the amount first — the rate is booked for that amount.', 'err'); return false; }
+  const assisted = acting() && isAD2();
+  let m;
+  if (seesMargin()) {
+    const approved = marginFor(smeRec, cur);
+    m = assisted && draft.marginOverride != null && draft.marginOverride !== '' ? Math.round(Number(draft.marginOverride)) : approved;
+    const band = DB.settings.marginBand ?? 5;
+    if (m < Math.max(0, approved - band) || m > approved + 100) { toast(`Margin must be between ${Math.max(0, approved - band)} and ${approved + 100} paise.`, 'err'); return false; }
+  }
+  /* the customer never holds the margin: its rate comes ready-made */
+  draft.rate = { mode:'booked', customerRate: liveRate(smeRec, cur, dir, assisted ? m : null), bookedAmount: Number(amount),
+    ...(seesMargin() ? { refRate: currency(cur).refRate, margin: m } : {}),
     bookedAt:nowISO(), expiresAt:new Date(Date.now() + 48 * 3600000).toISOString(), dealRef:null };
   return true;
+}
+/* A booking is for an amount: change the amount and it has to be booked again. */
+function rebookIfChanged(draft, amount) {
+  if (draft.rate.mode === 'booked' && Math.abs((draft.rate.bookedAmount || 0) - (Number(amount) || 0)) > 0.001) {
+    draft.rate = RATE_NONE();
+    toast('The amount changed, so the booked rate was released. Book it again for the new amount.');
+  }
 }
 function dealModal(draft, cur, smeRec, dir) {
   const m = marginFor(smeRec, cur);
@@ -163,9 +204,26 @@ function dealModal(draft, cur, smeRec, dir) {
       if (!/^[A-Za-z0-9\-\/]{4,30}$/.test(ref)) { toast('Enter a deal reference of 4–30 letters, digits or dashes.', 'err'); return; }
       const refRate = currency(cur).refRate;
       if (!(rt > 0) || Math.abs(rt - refRate) / refRate > 0.03) { toast('The agreed rate must be within 3% of the reference rate ₹' + refRate + '.', 'err'); return; }
-      draft.rate = { mode:'deal', refRate, margin:m, customerRate:rt, bookedAt:null, expiresAt:null, dealRef:ref };
+      draft.rate = { mode:'deal', refRate, margin:m, customerRate:rt, bookedAt:null, expiresAt:null, dealRef:ref, bookedAmount: null };
       closeModal(); render(); toast('Deal reference applied.', 'ok');
     } });
+}
+
+/* The purpose search belongs to the outward or the disposal draft. */
+function pickPurpose(pp, code) {
+  const d = pp === 'or-purpose' ? OR_DRAFT : DI_DRAFT;
+  if (!d) return;
+  d.purposeCode = code; d.purposeQuery = null;
+  render();
+  toast(pp === 'or-purpose' ? `Purpose ${code} selected — the document checklist follows it.` : `Purpose ${code} selected.`);
+}
+/* While the amount follows the bills, it is their total. */
+function syncAmountToBills() {
+  const d = OR_DRAFT;
+  if (!d || !d.amountFromBills) return;
+  const total = +d.allocations.reduce((t, a) => t + a.amount, 0).toFixed(2);
+  d.amount = total ? String(total) : '';
+  rebookIfChanged(d, d.amount);
 }
 
 /* One line on the compliance score, for the approval modals. */
@@ -222,16 +280,18 @@ function sortTable(th) {
 }
 
 document.addEventListener('click', async e => {
+  if (!e.target.closest('.pp')) $$('.pp-list').forEach(l => { l.hidden = true; });
   const th = e.target.closest('th[data-sort]');
   if (th) { sortTable(th); return; }
   const t = e.target.closest('[data-act]');
   if (!t) return;
   const act = t.dataset.act;
+  if (act === 'pp-pick') { pickPurpose(t.dataset.pp, t.dataset.code); return; }
   if (t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['button','submit'].includes(t.type))) return;
 
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
-  if (act === 'logout')    { setSession(null); resetDrafts(); location.hash = '#/login'; render(); return; }
+  if (act === 'logout')    { setSession(null); endMaster(); resetDrafts(); location.hash = '#/login'; render(); return; }
   if (act === 'reset-demo'){ resetDemo(); return; }
   if (act === 'nav-toggle'){ document.body.classList.toggle('nav-open'); return; }
   if (act === 'nav-mini')  { if (window.innerWidth <= 1024) { document.body.classList.toggle('nav-open'); return; } setNavMini(!navMini()); render({ keepScroll:true }); return; }
@@ -240,6 +300,7 @@ document.addEventListener('click', async e => {
     const d = t.dataset.d, l = t.dataset.l;
     closeModal();
     if (S && S.domainId === d && S.loginId === l) return;
+    if (MASTER && !(d === MASTER.domainId && l === MASTER.loginId)) { masterAs(d, l); return; }
     switchTo(d, l).then(ok => { if (ok) toast('Switched to ' + S.role + (S.name ? ' — ' + S.name : '') + '.'); else render(); });
     return;
   }
@@ -330,9 +391,19 @@ document.addEventListener('click', async e => {
     if (!res) return;
     setGuideTarget(res.smeId, res.domainId, res.loginId);
     DRAFT = null; clearObDraft();
-    if (offline) { toast(`Offline application ${res.smeId} captured.`, 'ok'); location.hash = '#/ad2/applications/' + res.smeId; return; }
+    if (offline) {
+      location.hash = navAllows('#/ad2/applications') ? '#/ad2/applications/' + res.smeId : '#/ad2/dashboard';
+      modal({ title:'Application captured', body:`
+        <div class="note note-ok"><span>Offline application <b>${esc(res.smeId)}</b> is with the AD2 maker for review and pricing; AD2 Compliance approves it.</span></div>
+        <div class="kv" style="margin-top:16px">
+          <div><div class="k">Customer signs in with</div><div class="v">Domain ID <b>${esc(res.domainId)}</b> · Login ID <b>${esc(res.loginId)}</b></div></div>
+          <div><div class="k">Password</div><div class="v">${res.demo ? 'The demo passcode' : 'The password set on the form'}</div></div>
+        </div>
+        <p style="font-size:var(--fs-sm);color:var(--muted);margin-top:14px">They can track the application with that sign-in now; trade services open on the same sign-in once it is approved.</p>` });
+      return;
+    }
     modal({ title:'Application submitted', okLabel:'Sign in and track it', body:`
-      <div class="note note-ok"><span>Application <b>${esc(res.smeId)}</b> is with AD2. A maker reviews and prices it, then a checker approves it.</span></div>
+      <div class="note note-ok"><span>Application <b>${esc(res.smeId)}</b> is with AD2. A maker reviews and prices it, then AD2 Compliance approves it.</span></div>
       <div class="kv" style="margin-top:16px">
         <div><div class="k">Domain ID</div><div class="v">${esc(res.domainId)}</div></div>
         <div><div class="k">Login ID</div><div class="v">${esc(res.loginId)}</div></div>
@@ -421,26 +492,20 @@ document.addEventListener('click', async e => {
     if (p.purposes.length === 1) OR_DRAFT.purposeCode = p.purposes[0];
     if ((p.id === 'DIR' || p.id === 'LC') && !OR_DRAFT.purposeCode) OR_DRAFT.purposeCode = 'S0102';
     if (p.id === 'AIR' && !OR_DRAFT.purposeCode) OR_DRAFT.purposeCode = 'S0101';
-    OR_DRAFT.docs = {}; OR_DRAFT.purposeFilter = '';
-    if (p.bills === 'none') OR_DRAFT.allocations = [];
+    OR_DRAFT.docs = {}; OR_DRAFT.purposeQuery = null;
+    if (p.bills === 'none') { OR_DRAFT.allocations = []; }
     render(); toast(`${p.id} selected — ${purposesFor(p.id).length} purpose codes available.`); return;
   }
-  if (act === 'or-alloc-max') {
-    const b = bill(t.dataset.bill);
-    const avail = Engine.billAvailable(DB, b, OR_DRAFT.id);
-    const other = OR_DRAFT.allocations.filter(a => a.billId !== b.id).reduce((s, a) => s + a.amount, 0);
-    const amt = Number(OR_DRAFT.amount) || 0;
-    const use = amt ? Math.min(avail, Math.max(0, amt - other)) : avail;
-    if (!amt) OR_DRAFT.amount = String(avail);
-    if (!(use > 0)) { toast('Nothing left to allocate from the remittance amount.', 'err'); return; }
-    OR_DRAFT.allocations = [...OR_DRAFT.allocations.filter(a => a.billId !== b.id), { billId:b.id, amount:+use.toFixed(2) }];
-    if (!OR_DRAFT.beneficiary) toast('Bill allocated. Pick the supplier as the beneficiary.');
+  if (act === 'or-alloc-del' || act === 'di-alloc-del') {
+    const d = act === 'or-alloc-del' ? OR_DRAFT : DI_DRAFT;
+    d.allocations = d.allocations.filter(a => a.billId !== t.dataset.bill);
+    if (d === OR_DRAFT) syncAmountToBills();
     render(); return;
   }
   if (act === 'or-book-rate') {
     if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; }
-    if (!rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out')) return;
-    render(); toast('Rate booked and locked for 48 hours. Treasury notified.', 'ok'); return;
+    if (!rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount)) return;
+    render(); toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours. Treasury notified.`, 'ok'); return;
   }
   if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out'); return; }
   if (act === 'or-rate-clear') { OR_DRAFT.rate = RATE_NONE(); render(); return; }
@@ -456,7 +521,20 @@ document.addEventListener('click', async e => {
         <ul style="margin:14px 0 0 18px;font-size:var(--fs-md);line-height:1.8">${missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` });
       return;
     }
-    run('outward.submit', { draft: OR_DRAFT }, { keepScroll:false, after: r => { OR_DRAFT = null; location.hash = '#/sme/outward/' + r.id; } });
+    const d = OR_DRAFT, me = sme(d.smeId), q = outwardQuote(d, me), acc = acct(d.debitAccountId);
+    reviewModal({ title:'Review your outward request', rows:[
+      ['Pay', `<b>${money(q.amt, d.currency)}</b> to ${esc(d.beneficiary)}<br><small>${esc(d.beneficiaryBank)} · ${esc(d.swift)} · ${esc(d.beneficiaryAccount)}</small>`],
+      ['Product / purpose', esc(productLabel(d.remittanceType)) + (d.lcNumber ? ' · LC ' + esc(d.lcNumber) : '') + '<br><small>' + esc(purposeLabel(d.purposeCode)) + '</small>'],
+      ['Bills settled', d.allocations.length ? d.allocations.map(a => `${esc(a.billId)} — ${money(a.amount, d.currency)}`).join('<br>') : 'None'],
+      ['Rate', `₹ ${Number(q.rate).toFixed(4)} ${d.rate.mode === 'deal' ? '· deal ' + esc(d.rate.dealRef) : '· booked for ' + money(d.rate.bookedAmount || q.amt, d.currency)}`],
+      ['INR equivalent', inr(q.inrAmt)],
+      ...q.charges.map(c => [c.name, inr(c.amount)]),
+      ['Total debit', `<b>${inr(q.debit)}</b> from ${acc ? esc(acc.bank + ' ' + acc.accountNumber) : ''}`],
+      ['Execution date', dmy(d.executionDate)],
+      ['Documents', Object.values(d.docs).map(f => esc(f.filename)).join(', ') || '—'],
+      acting() ? ['Raised by', `${esc(S.name || S.role)} (${esc(S.role)}) on behalf of ${esc(me?.tradingName || '')}`] : null],
+      note:'After you confirm, an AD2 maker verifies it, a checker or operations authorises it, and operations releases it over SWIFT.',
+      onOk: () => run('outward.submit', { draft: OR_DRAFT }, { keepScroll:false, quiet:true, after: r => { closeModal(); OR_DRAFT = null; location.hash = '#/sme/done/outward/' + r.id; } }) });
     return;
   }
   if (act === 'or-continue') { OR_DRAFT = newOutwardDraft(outwardRec(t.dataset.id)); location.hash = '#/sme/outward/new'; return; }
@@ -533,20 +611,18 @@ document.addEventListener('click', async e => {
   if (act === 'in-record')  { recordInwardModal(); return; }
   if (act === 'ri-suggest') { riSuggest(); return; }
   if (act === 'in-tab')     { inTab = t.dataset.t; render(); return; }
-  if (act === 'di-alloc-max') {
-    const b = bill(t.dataset.bill), i = inwardRec(DI_DRAFT.inwardId);
-    const other = DI_DRAFT.allocations.filter(a => a.billId !== b.id).reduce((s, a) => s + a.amount, 0);
-    const use = Math.min(Engine.billAvailable(DB, b), diAmount(DI_DRAFT, i) - other);
-    if (!(use > 0)) { toast('Nothing left of the amount to dispose. Increase the amount first.', 'err'); return; }
-    DI_DRAFT.allocations = [...DI_DRAFT.allocations.filter(a => a.billId !== b.id), { billId:b.id, amount:+use.toFixed(2) }];
-    render(); return;
-  }
   if (act === 'di-option') {
     DI_DRAFT.option = t.dataset.id;
-    if (DI_DRAFT.option === 'advance') DI_DRAFT.allocations = [];
+    if (DI_DRAFT.option === 'advance') { DI_DRAFT.allocations = []; if (DI_DRAFT.purposeCode === 'P0102') DI_DRAFT.purposeCode = 'P0103'; }
+    else if (DI_DRAFT.purposeCode === 'P0103') DI_DRAFT.purposeCode = 'P0102';
+    DI_DRAFT.purposeQuery = null;
     render(); return;
   }
-  if (act === 'di-book-rate') { const i = inwardRec(DI_DRAFT.inwardId); if (!rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in')) return; render(); toast('Rate booked and locked for 48 hours. Treasury notified.', 'ok'); return; }
+  if (act === 'di-book-rate') {
+    const i = inwardRec(DI_DRAFT.inwardId), amt = diAmount(DI_DRAFT, i);
+    if (!rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in', amt)) return;
+    render(); toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours. Treasury notified.`, 'ok'); return;
+  }
   if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in'); return; }
   if (act === 'di-rate-clear'){ DI_DRAFT.rate = RATE_NONE(); render(); return; }
   if (act === 'di-submit') {
@@ -563,7 +639,18 @@ document.addEventListener('click', async e => {
     if (!d.declarations.fema || !d.declarations.ofac) errs.push('Accept the FEMA and sanctions declarations.');
     if (errs.length) { modal({ title:'Cannot submit yet', body:`<ul style="margin:0 0 0 18px;font-size:var(--fs-md);line-height:1.8">${errs.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` }); return; }
     const draft = { ...d, allocations: d.option === 'knockoff' ? d.allocations : [], rate: acc && acc.currency !== 'INR' ? RATE_NONE() : d.rate };
-    run('disposal.submit', { draft }, { keepScroll:false, after: r => { DI_DRAFT = null; location.hash = '#/sme/disposals/' + r.id; } });
+    const fcy = acc && acc.currency !== 'INR';
+    reviewModal({ title:'Review your disposal instruction', rows:[
+      ['Receipt', `${esc(i.reference)} · ${esc(i.remitter)} · ${money(i.amount, i.currency)}`],
+      ['Dispose now', `<b>${money(amt, i.currency)}</b>${i.available - amt > 0.001 ? ` <small>· ${money(i.available - amt, i.currency)} stays on the receipt</small>` : ''}`],
+      ['Purpose of remittance', esc(purposeLabelIn(d.purposeCode))],
+      ['Bills knocked off', d.option === 'knockoff' ? d.allocations.map(a => `${esc(a.billId)} — ${money(a.amount, i.currency)}`).join('<br>') : 'None — credited as an advance'],
+      applied < amt - 0.001 ? ['Pending knock-off', money(amt - applied, i.currency) + ' <small>— knock it off against export bills later</small>'] : null,
+      ['Credit', fcy ? `<b>${money(amt, i.currency)}</b> to EEFC ${esc(acc.bank + ' ' + acc.accountNumber)}`
+        : `<b>${inr(amt * d.rate.customerRate)}</b> at ₹ ${Number(d.rate.customerRate).toFixed(4)} to ${esc(acc.bank + ' ' + acc.accountNumber)}`],
+      ['Documents', Object.values(d.docs).map(f => esc(f.filename)).join(', ') || '—']],
+      note:'After you confirm, an AD2 maker verifies it, a checker or operations authorises it, and operations credits the account and issues the FIRC.',
+      onOk: () => run('disposal.submit', { draft }, { keepScroll:false, quiet:true, after: r => { closeModal(); DI_DRAFT = null; location.hash = '#/sme/done/disposal/' + r.id; } }) });
     return;
   }
   if (act === 'ko-from-firc') {
@@ -609,11 +696,44 @@ document.addEventListener('click', async e => {
       body: reason('Reason for rejection', 'The amount becomes available on the receipt again.'),
       read: () => ({ id:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
   if (act === 'di-firc')   { showFirc(t.dataset.id); return; }
-  if (act === 'di-respond') {
-    if (!RESP || !RESP.text.trim()) { toast('Write a response first.', 'err'); return; }
-    run('disposal.respond', { id:t.dataset.id, response:RESP.text, docs:RESP.docs }, { after: () => { RESP = null; } });
+  if (act === 'di-respond' || act === 'di-resolve' || act === 'or-resolve') {
+    if (!RESP || !RESP.text.trim()) { toast(act === 'di-respond' ? 'Write a response first.' : 'Write down what the customer said first.', 'err'); return; }
+    const cmd = { 'di-respond':'disposal.respond', 'di-resolve':'disposal.resolveQuery', 'or-resolve':'outward.resolveQuery' }[act];
+    run(cmd, { id:t.dataset.id, response:RESP.text, docs:RESP.docs }, { after: () => { RESP = null; } });
     return;
   }
+
+  /* inward: new, report, confirm */
+  if (act === 'in-new')     { newInwardModal(); return; }
+  if (act === 'nin-dispose'){ const id = val('#nin-rec'); closeModal(); location.hash = '#/sme/inward/' + id + '/dispose'; return; }
+  if (act === 'nin-report') { closeModal(); intimateModal(); return; }
+  if (act === 'int-doc-sample') { INT_DOCS.swiftcopy = { filename:'MT103-buyer-copy.pdf', size:'88 KB', type:'application/pdf', at:nowISO() }; $('#int-doc-note').textContent = 'MT103-buyer-copy.pdf attached'; t.remove(); return; }
+  if (act === 'int-fill') {
+    const me = sme(ctxSmeId());
+    const b = DB.bills.find(x => x.smeId === me.id && x.type === 'Export' && x.review === 'Accepted' && x.outstanding > 0);
+    if (!b) return;
+    $('#int-rem').value = b.counterparty; $('#int-cty').value = b.counterpartyCountry; $('#int-cur').value = b.currency;
+    $('#int-amt').value = b.outstanding; $('#int-rmk').value = 'Against invoice ' + b.invoiceNumber;
+    return;
+  }
+  if (act === 'in-confirm') {
+    const i = inwardRec(t.dataset.id);
+    commandModal({ title:'Confirm the credit for ' + i.id, okLabel:'Confirm credit', cmd:'inward.confirm', wide:true, body:`
+      <p style="font-size:var(--fs-md);margin:0 0 14px">${esc(sme(i.smeId)?.tradingName || '')} reported <b>${money(i.amount, i.currency)}</b> from ${esc(i.remitter)}.
+        Match it to the credit in the nostro account, then confirm what was actually received.</p>
+      <div class="grid g2 fields">
+        <div class="f"><label for="ic-amt">Amount credited (${esc(i.currency)})</label><input id="ic-amt" type="number" step="0.01" value="${i.amount}"></div>
+        <div class="f"><label for="ic-vd">Value date</label><input id="ic-vd" type="date" value="${esc(i.valueDate)}"></div>
+        <div class="f span2"><label for="ic-ref">SWIFT reference</label><input id="ic-ref" type="text" value="${/^INT-/.test(i.reference) ? '' : esc(i.reference)}" placeholder="Generated if left blank"></div>
+      </div>`,
+      read: () => ({ id:i.id, amount: val('#ic-amt'), valueDate: val('#ic-vd'), reference: val('#ic-ref') }) });
+    return;
+  }
+  if (act === 'in-decline') { commandModal({ title:'No matching credit', okLabel:'Tell the SME', okClass:'btn-danger', cmd:'inward.decline',
+      body: reason('Why could it not be matched?', 'Shown to the SME. It can report the payment again once the credit arrives.'),
+      read: () => ({ id:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
+  if (act === 'dis-status') { disStatus = t.dataset.t; render(); return; }
+  if (act === 'app-filter') { appFilter = t.dataset.t; render(); return; }
 
   /* bills */
   if (act === 'bill-tab')    { billTab = t.dataset.t; render(); return; }
@@ -659,7 +779,26 @@ document.addEventListener('click', async e => {
     let ok = true; req.forEach(k => { const good = !!d[k]; markField(k, good); if (!good) ok = false; });
     if (!ok) { toast('Complete the required fields.', 'err'); return; }
     const { extracted, docs, type:_t, ...b } = d;
-    run('bill.lodge', { type, bill:b, source: extracted ? 'Document AI' : 'Form fill' }, { after: () => { BILL_DRAFT = null; billTab = 'register'; } });
+    run('bill.lodge', { type, bill:b, source: extracted ? 'Document AI' : 'Form fill' }, { quiet:true, keepScroll:false,
+      after: r => { BILL_DRAFT = null; billTab = 'register'; location.hash = '#/sme/done/bill/' + r.id; } });
+    return;
+  }
+  if (act === 'bill-another') { BILL_DRAFT = null; billTab = 'form'; location.hash = '#/sme/bills/' + t.dataset.type.toLowerCase(); return; }
+  if (act === 'bill-lodge-pick') {
+    const pm = perm(sme(ctxSmeId()));
+    const go = type => `<button class="btn btn-primary" type="button" data-act="bill-another" data-type="${type}">Lodge ${type.toLowerCase()} bill</button>`;
+    modal({ title:'Lodge a bill', body:`<p style="font-size:var(--fs-md);margin:0 0 14px">Which kind? Import bills are what DIR and LC payments settle; export bills are what inward receipts are disposed against.
+      Type the details, upload the invoice for document AI to read, or use a CSV file.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${pm.importSide ? go('Import') : ''}${pm.exportSide ? go('Export') : ''}</div>` });
+    return;
+  }
+  if (act === 'bill-resolve') {
+    const b = bill(t.dataset.id);
+    commandModal({ title:'Answer for the customer — ' + b.id, okLabel:'Record and resubmit', cmd:'bill.resolveQuery', body:`
+      <div class="note note-warn" style="margin-bottom:14px"><span>${esc(b.query?.question || '')}</span></div>
+      <div class="f"><label for="br-ref">${b.type === 'Export' ? 'Shipping bill' : 'Bill of Entry'} number</label><input id="br-ref" type="text" value="${esc(b.shipmentRef || '')}"></div>
+      <div class="f" style="margin-top:12px"><label for="why">What the customer sent</label><textarea id="why" placeholder="e.g. Customer emailed the Bill of Entry on …"></textarea></div>`,
+      read: () => ({ id:b.id, response: needText('#why', 'Enter the customer’s answer.'), shipmentRef: val('#br-ref') || undefined }) });
     return;
   }
   if (act === 'csv-template') {
@@ -745,14 +884,19 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
     return;
   }
   if (act === 'ko-add') {
-    const billId = val('#ko-bill'), remId = val('#ko-rem'), amount = Number(val('#ko-amt'));
+    const billId = val('#ko-bill'), remId = val('#ko-rem'), amount = +Number(val('#ko-amt')).toFixed(2);
     if (!billId || !remId || !(amount > 0)) { toast('Choose a bill, a remittance and an amount.', 'err'); return; }
-    KO.allocations = [...KO.allocations.filter(a => !(a.billId === billId && a.remId === remId)), { billId, remId, amount }];
-    render(); return;
+    const b = bill(billId), r = koEligible(KO.side, ctxSmeId()).find(x => x.id === remId);
+    if (b.currency !== r.cur) { toast(`${b.id} is in ${b.currency} and ${r.ref} in ${r.cur}. Knock-off is same-currency.`, 'err'); return; }
+    const billLeft = koBillLeft(b), remLeft = +(r.left - koDraftOn('remId', remId)).toFixed(2);
+    if (amount > Math.min(billLeft, remLeft) + 0.001) { toast(`At most ${money(Math.min(billLeft, remLeft), b.currency)} — what is left on ${amount > billLeft ? b.id : r.ref}.`, 'err'); return; }
+    KO.allocations = [...KO.allocations, { billId, remId, amount }];
+    render(); toast(`${money(amount, b.currency)} of ${b.id} against ${r.ref} added. Balances above are updated.`); return;
   }
   if (act === 'ko-clear')  { KO.allocations = []; render(); return; }
   if (act === 'ko-remove') { KO.allocations.splice(+t.dataset.i, 1); render(); return; }
-  if (act === 'ko-submit') { run('knockoff.propose', { side:KO.side, items:KO.allocations }, { after: () => { KO.allocations = []; KO.focus = ''; } }); return; }
+  if (act === 'ko-submit') { run('knockoff.propose', { side:KO.side, items:KO.allocations }, { quiet:true, keepScroll:false,
+      after: r => { KO.allocations = []; KO.focus = ''; location.hash = '#/sme/done/knockoff/' + r.ids.join(','); } }); return; }
   if (act === 'rec-tab')     { recTab = t.dataset.t; render(); return; }
   if (act === 'export-ledger') {
     csvDownload('allocation-ledger.csv', [['Allocation','SME','Side','Remittance','Reference','Bill','Currency','Amount','Source','Status','UFI report','UFI system','Reversal report','When'],
@@ -786,6 +930,22 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
     return;
   }
   if (act === 'rv-charge-del') { REVIEW.charges.splice(+t.dataset.i, 1); render(); return; }
+  if (act === 'rv-cur-all')  { REVIEW.currencies = DB.currencies.map(c => c.code); render(); return; }
+  if (act === 'rv-cur-none') { REVIEW.currencies = []; render(); return; }
+  if (act === 'rv-cur-req')  { REVIEW.currencies = [...(sme(REVIEW.id)?.requestedCurrencies || [])]; render(); return; }
+  if (act === 'rv-margin-all') {
+    const v = val('#rv-all-m');
+    if (v === '' || !(Number(v) >= 0) || Number(v) > 500) { toast('Enter a margin between 0 and 500 paise.', 'err'); return; }
+    if (!REVIEW.currencies.length) { toast('Select the currencies first.', 'err'); return; }
+    REVIEW.currencies.forEach(c => { REVIEW.margins[c] = Math.round(Number(v)); });
+    render(); toast(`${Math.round(Number(v))} paise applied to ${REVIEW.currencies.join(', ')}. Adjust any currency below.`); return;
+  }
+  if (act === 'rv-margin-derive') {
+    const usd = REVIEW.margins.USD ?? (val('#rv-all-m') !== '' ? Math.round(Number(val('#rv-all-m'))) : null);
+    if (usd == null) { toast('Set the USD margin first — the rest are derived from it.', 'err'); return; }
+    REVIEW.margins = { USD: usd };
+    render(); toast('Only the USD margin is set; other currencies derive from it with their multipliers.'); return;
+  }
   if (act === 'rv-save')   { run('onboarding.review', { smeId:t.dataset.id, config:REVIEW, submit:false }); return; }
   if (act === 'rv-submit') { run('onboarding.review', { smeId:t.dataset.id, config:REVIEW, submit:true }, { after: () => { REVIEW = null; } }); return; }
   if (act === 'rv-approve') {
@@ -840,7 +1000,7 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   if (act === 'assist-exit') {
     const was = sme(S.actingFor)?.tradingName || '';
     setSession({ ...S, actingFor:null }); resetDrafts();
-    location.hash = '#/ad2/directory';
+    location.hash = '#/ad2/dashboard';
     toast('Left the assisted journey' + (was ? ' for ' + was : '') + '.');
     return;
   }
@@ -1030,9 +1190,46 @@ document.addEventListener('change', e => {
   if (t.dataset.ork) {
     const k = t.dataset.ork;
     OR_DRAFT[k] = t.value;
-    if (k === 'currency') { OR_DRAFT.allocations = []; OR_DRAFT.rate = RATE_NONE(); }
-    if (k === 'purposeCode' && t.value) toast('Document checklist updated for ' + t.value + '.');
-    if (['currency','purposeCode','amount','debitAccountId'].includes(k)) render();
+    if (k === 'currency') { OR_DRAFT.allocations = []; OR_DRAFT.rate = RATE_NONE(); OR_DRAFT.amountFromBills = true; }
+    if (k === 'amount') {
+      OR_DRAFT.amountFromBills = false;
+      const placed = OR_DRAFT.allocations.reduce((s2, a) => s2 + a.amount, 0);
+      if (Number(t.value) + 0.001 < placed) toast(`The bills you chose add up to ${money(placed, OR_DRAFT.currency)}. Lower a bill amount or remove one.`, 'err');
+      rebookIfChanged(OR_DRAFT, t.value);
+    }
+    if (['currency','amount','debitAccountId','executionDate'].includes(k)) render();
+    return;
+  }
+  if (t.dataset.act === 'or-billpick' && t.value) {
+    const d = OR_DRAFT, b = bill(t.value);
+    if (!d.currency) d.currency = b.currency;
+    if (d.currency !== b.currency) { toast(`${b.id} is in ${b.currency}; this payment is in ${d.currency}.`, 'err'); render(); return; }
+    const free = Engine.billAvailable(DB, b, d.id);
+    const placed = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
+    const room = d.amountFromBills || !(Number(d.amount) > 0) ? free : Number(d.amount) - placed;
+    if (room <= 0.001) { toast('The amount is already placed against bills. Raise the amount or remove a bill first.', 'err'); render(); return; }
+    const use = +Math.min(free, room).toFixed(2);
+    d.allocations = [...d.allocations, { billId:b.id, amount:use }];
+    if (!Number(d.amount)) d.amountFromBills = true;
+    syncAmountToBills();
+    if (!d.beneficiary) {
+      const payee = smeBenes(d.smeId).find(x => x.name === b.counterparty);
+      if (payee) { applyBeneToDraft(payee, payee.id); toast(`${b.id} added and ${payee.name} chosen as the beneficiary.`); }
+    } else toast(`${b.id} added — ${money(use, b.currency)}.`);
+    render(); return;
+  }
+  if (t.dataset.act === 'di-billpick' && t.value) {
+    const d = DI_DRAFT, b = bill(t.value), i = inwardRec(d.inwardId);
+    const placed = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
+    const room = diAmount(d, i) - placed;
+    if (room <= 0.001) { toast('The amount to dispose is already applied to bills. Raise the amount or remove a bill first.', 'err'); render(); return; }
+    const use = +Math.min(Engine.billAvailable(DB, b), room).toFixed(2);
+    d.allocations = [...d.allocations, { billId:b.id, amount:use }];
+    render(); toast(`${b.id} added — ${money(use, b.currency)}.`); return;
+  }
+  if (t.dataset.act === 'ko-pick') {
+    const b = bill(val('#ko-bill')), r = koEligible(KO.side, ctxSmeId()).find(x => x.id === val('#ko-rem'));
+    if (b && r && b.currency === r.cur) $('#ko-amt').value = Math.min(koBillLeft(b), +(r.left - koDraftOn('remId', r.id)).toFixed(2));
     return;
   }
 
@@ -1044,6 +1241,7 @@ document.addEventListener('change', e => {
       if (Number(t.value) > i.available) toast(`Only ${money(i.available, i.currency)} is left on the receipt.`, 'err');
       let left = amt; DI_DRAFT.allocations = DI_DRAFT.allocations.map(a => ({ ...a, amount:+Math.min(a.amount, Math.max(0, left)).toFixed(2) }))
         .map(a => { left -= a.amount; return a; }).filter(a => a.amount > 0);
+      rebookIfChanged(DI_DRAFT, amt);
     }
     if (t.dataset.dik === 'creditAccountId') { const a = acct(t.value); if (a && a.currency !== 'INR') DI_DRAFT.rate = RATE_NONE(); }
     if (['amount','purposeCode','creditAccountId'].includes(t.dataset.dik)) render();
@@ -1092,16 +1290,14 @@ document.addEventListener('change', e => {
 
   /* allocations */
   if (t.dataset.act === 'or-alloc') {
-    const b = bill(t.dataset.bill), v = Number(t.value) || 0;
-    const avail = Engine.billAvailable(DB, b, OR_DRAFT.id);
-    OR_DRAFT.allocations = OR_DRAFT.allocations.filter(a => a.billId !== b.id);
-    if (v > 0) {
-      if (v > avail) toast(`Only ${money(avail, b.currency)} is available on ${b.id}.`, 'err');
-      const amount = Math.min(v, avail);
-      const other = OR_DRAFT.allocations.reduce((s, a) => s + a.amount, 0);
-      if (other + amount > Number(OR_DRAFT.amount || 0)) { toast('Total allocation cannot exceed the remittance amount. Enter the amount first.', 'err'); render(); return; }
-      OR_DRAFT.allocations.push({ billId:b.id, amount });
-    }
+    const d = OR_DRAFT, b = bill(t.dataset.bill), v = Number(t.value) || 0;
+    const avail = Engine.billAvailable(DB, b, d.id);
+    if (v > avail + 0.001) toast(`Only ${money(avail, b.currency)} is free on ${b.id}.`, 'err');
+    const amount = +Math.min(v, avail).toFixed(2);
+    d.allocations = amount > 0 ? d.allocations.map(a => a.billId === b.id ? { ...a, amount } : a) : d.allocations.filter(a => a.billId !== b.id);
+    const total = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
+    if (!d.amountFromBills && total > Number(d.amount || 0) + 0.001) { d.amountFromBills = true; toast('The amount now follows the bills you chose.'); }
+    syncAmountToBills();
     render(); return;
   }
   if (t.dataset.act === 'di-alloc') {
@@ -1136,7 +1332,12 @@ document.addEventListener('input', e => {
     $$(t.dataset.target + ' tbody tr').forEach(r => { r.hidden = !!q && !r.textContent.toLowerCase().includes(q); });
     return;
   }
-  if (t.dataset.act === 'purpose-filter') { OR_DRAFT.purposeFilter = t.value; debounceRender(); return; }
+  if (t.dataset.act === 'pp-input') {
+    ppFilter(t);
+    const d = t.dataset.pp === 'or-purpose' ? OR_DRAFT : DI_DRAFT;
+    if (d) d.purposeQuery = t.value;
+    return;
+  }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
   if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; saveObDraft(); return; }
   if (t.dataset.ork && t.tagName !== 'SELECT') { OR_DRAFT[t.dataset.ork] = t.value; return; }
@@ -1159,7 +1360,45 @@ function debounceRender() {
   }, 220);
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.act === 'pp-input') {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = t.closest('.pp').querySelector('.pp-opt:not([hidden])');
+      if (first) pickPurpose(t.dataset.pp, first.dataset.code);
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); t.closest('.pp').querySelector('.pp-opt:not([hidden])')?.focus(); return; }
+    if (e.key === 'Escape') { t.closest('.pp').querySelector('.pp-list').hidden = true; return; }
+  }
+  if (t && t.classList && t.classList.contains('pp-opt') && ['ArrowDown','ArrowUp'].includes(e.key)) {
+    e.preventDefault();
+    const opts = [...t.parentNode.querySelectorAll('.pp-opt:not([hidden])')];
+    const k = opts.indexOf(t) + (e.key === 'ArrowDown' ? 1 : -1);
+    (opts[k] || (k < 0 ? t.closest('.pp').querySelector('.pp-in') : null))?.focus();
+    return;
+  }
+  if (e.key === 'Escape') closeModal();
+});
+document.addEventListener('focusin', e => { if (e.target.dataset && e.target.dataset.act === 'pp-input') ppFilter(e.target); });
+
+/* Typing an amount and clicking a button straight away: the press blurs the
+   field, its change event re-renders the page, and the button under the
+   pointer is replaced before the mouse comes up — so the browser drops the
+   click. Replay it on the button now in the same place. */
+let PRESS = null;
+document.addEventListener('pointerdown', e => {
+  const t = e.target.closest && e.target.closest('[data-act]');
+  PRESS = t && e.button === 0 ? { el:t, act:t.dataset.act, id:t.dataset.id || '' } : null;
+}, true);
+document.addEventListener('pointerup', e => {
+  const p = PRESS; PRESS = null;
+  if (!p || document.contains(p.el)) return;
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const t = under && under.closest('[data-act]');
+  if (t && t.dataset.act === p.act && (t.dataset.id || '') === p.id && !t.disabled) setTimeout(() => t.click(), 0);
+}, true);
 
 /* ---------- boot --------------------------------------------------------------------- */
 (async function boot() {
@@ -1176,6 +1415,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
   }
   if (API.mode === 'server') { API.tokens = sessGet('ad2-tokens') || {}; S = sessGet('ad2-session'); }
   else { LOCAL = loadLocal(); S = EMBEDDED ? null : sessGet('ad2-session'); }
+  MASTER = sessGet('ad2-master');
 
   try { await pull(); }
   catch (e) {

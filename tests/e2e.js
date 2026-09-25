@@ -81,10 +81,10 @@ async function startServer() {
       await page.locator('[data-act="rv-margin"][data-c="USD"]').dispatchEvent('change');
       await click('[data-act="rv-charge-add"]'); await modalOk();
       await click('[data-act="rv-submit"]'); await idle();
-      await toastSays(/checker/i);
+      await toastSays(/Compliance/i);
     });
 
-    await step('3 checker approves', async () => {
+    await step('3 compliance approves', async () => {
       await guideNext();
       await click('[data-act="rv-approve"]'); await modalOk();
       await toastSays(/approved/i);
@@ -104,7 +104,7 @@ async function startServer() {
       await click('[data-act="bill-ai"]');
       await page.waitForSelector('.ai-field', { timeout: 5000 });
       await click('[data-act="bill-save"]'); await idle();
-      await toastSays(/lodged/);
+      await page.waitForSelector('.done-card h1:has-text("lodged")');
     });
 
     await step('6 checker accepts import bill', async () => {
@@ -118,7 +118,7 @@ async function startServer() {
       const bene = await page.locator('#or-bene option').nth(1).getAttribute('value');
       await page.selectOption('#or-bene', bene); await page.waitForTimeout(300);
       await click('[data-act="or-product"][data-id="DIR"]');
-      await click('[data-act="or-alloc-max"]');
+      await page.selectOption('#or-billpick', { index: 1 }); await page.waitForTimeout(300);
       const exec = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
       await page.fill('#or-executionDate', exec); await page.locator('#or-executionDate').dispatchEvent('change');
       const acctOpt = await page.locator('#or-debit option:not([disabled])').nth(1).getAttribute('value');
@@ -126,8 +126,9 @@ async function startServer() {
       await click('[data-act="or-book-rate"]');
       while (await page.locator('[data-act="doc-sample"][data-scope="or"]').count()) await click('[data-act="doc-sample"][data-scope="or"]');
       await page.check('[data-act="or-dec"][data-dk="fema"]'); await page.check('[data-act="or-dec"][data-dk="ofac"]');
-      await click('[data-act="or-submit"]'); await idle();
-      await page.waitForSelector('h1:has-text("Submitted")');
+      await click('[data-act="or-submit"]');
+      await page.waitForSelector('.modal .review-t'); await modalOk();
+      await page.waitForSelector('.done-card h1:has-text("submitted")');
     });
 
     await step('8 maker verifies', async () => {
@@ -157,7 +158,7 @@ async function startServer() {
       await click('[data-act="bill-ai"]');
       await page.waitForSelector('.ai-field', { timeout: 5000 });
       await click('[data-act="bill-save"]'); await idle();
-      await toastSays(/lodged/);
+      await page.waitForSelector('.done-card h1:has-text("lodged")');
     });
     await step('12 checker accepts export bill', async () => {
       await guideNext();
@@ -175,14 +176,15 @@ async function startServer() {
     });
     await step('14 sme disposes', async () => {
       await guideNext();
-      await click('[data-act="di-alloc-max"]');
+      await page.selectOption('#di-billpick', { index: 1 }); await page.waitForTimeout(300);
       const acctOpt = await page.locator('#di-acct option:not([disabled])').nth(1).getAttribute('value');
       await page.selectOption('#di-acct', acctOpt);
       await click('[data-act="di-book-rate"]');
       while (await page.locator('[data-act="doc-sample"][data-scope="di"]').count()) await click('[data-act="doc-sample"][data-scope="di"]');
       await page.check('[data-act="di-dec"][data-dk="fema"]'); await page.check('[data-act="di-dec"][data-dk="ofac"]');
-      await click('[data-act="di-submit"]'); await idle();
-      await page.waitForSelector('h1:has-text("Submitted")');
+      await click('[data-act="di-submit"]');
+      await page.waitForSelector('.modal .review-t'); await modalOk();
+      await page.waitForSelector('.done-card h1:has-text("submitted")');
     });
     await step('15 maker verifies disposal', async () => {
       await guideNext();

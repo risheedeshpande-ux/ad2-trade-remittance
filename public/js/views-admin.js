@@ -142,7 +142,7 @@ function adminSettings() {
       <label class="chk"><input type="checkbox" data-act="set-unlinked" ${st.allowUnlinked ? 'checked' : ''} ${ed}>
         <span>Permit DIR and LC payments without a linked import bill<small>Off by default: DIR and LC payments settle a lodged bill.</small></span></label>
       <label class="chk"><input type="checkbox" data-act="set-testlab" ${st.testLab !== false ? 'checked' : ''} ${ed}>
-        <span>Test data lab<small>Lets users generate test businesses, bills, receipts and parked requests. Switch off for a clean walkthrough.</small></span></label>
+        <span>Test tools<small>The test data lab, which generates test businesses, bills, receipts and parked requests, and the master test user (TEST / MASTER), which opens the platform as anyone. Switch off for a clean walkthrough.</small></span></label>
     </div>
     <div class="grid g3 fields" style="margin-top:22px;align-items:end">
       <div class="f"><label for="set-band">Assisted margin band (paise)</label>
@@ -207,16 +207,17 @@ function labCounts(s) {
   };
 }
 const LAB_SCENARIOS = [
-  ['Onboard a new business', 'Create an application below (or register one), then AD2 Maker reviews and prices it, AD2 Checker approves it, and the business signs in.', 'Maker → Checker'],
+  ['Onboard a new business', 'Create an application below (or register one, or capture it offline as Sales or Maker), then AD2 Maker reviews and prices it, AD2 Compliance approves it, and the business signs in.', 'Maker → Compliance'],
   ['Pay a supplier against a bill (DIR)', 'Sign in as any Import or Both business, open Outward remittance, pick DIR, allocate an accepted import bill, upload the three documents, book a rate and submit. Maker verifies, Checker authorises, Operations releases.', 'SME → Maker → Checker → Ops'],
   ['Settle under a letter of credit (LC)', 'Same as DIR but choose LC, enter the LC number and attach the LC copy.', 'SME → Maker → Checker → Ops'],
-  ['Advance payment, then knock-off (AIR)', 'Arcadia Components already has a completed advance, OR-5108, and its Bill of Entry, BL-24013. Propose the knock-off, and the Checker confirms it.', 'SME → Checker'],
+  ['Advance payment, then knock-off (AIR)', 'Arcadia Components already has a completed advance, OR-5108, and its Bill of Entry, BL-24013. Propose the knock-off, and a Checker or Operations confirms it — the UFI portal (IDPMS) is updated.', 'SME → Checker'],
   ['A payment that needs Form 146', 'An OTT payment above ₹5,00,000 INR equivalent (for example USD 7,000 of services) asks for Form 146. Below that, it is optional.', 'SME → Maker → Checker → Ops'],
   ['A High-risk payment', 'Every Import business created here has the beneficiary “Blocked Trading LLC” (Iran). Paying it scores High, so the maker and checker must each write a reason.', 'SME → Maker → Checker'],
   ['Partial disposal of a receipt', 'Open a receipt, dispose of part of it against a bill, then dispose of the rest in a second instruction. Each gets its own FIRC.', 'SME → Maker → Checker → Ops'],
   ['Advance receipt, knocked off later', 'Dispose of a receipt with the option “Credit as advance”. After Operations processes it, the FIRC is pending knock-off — match it to an export bill on the Knock-off screen. Meridian’s DI-9004 is ready to try.', 'SME → Maker → Checker → Ops → SME → Checker'],
   ['Credit to an EEFC account', 'On a disposal, pick the EEFC account in the receipt currency. No rate is booked and the foreign currency is credited as it is.', 'SME → Maker → Checker → Ops'],
-  ['Queries and rejections', 'As Maker, raise a query on any submitted request; the SME answers and it returns. As Checker, reject one — any bill reservation is released.', 'Maker ↔ SME, Checker'],
+  ['Report a payment from a buyer', 'As an Export business, open Inward remittance → New inward remittance → Report a payment. AD2 Operations confirms the credit (Receipts to confirm), then the business disposes of it.', 'SME → Ops → SME → Maker → Checker → Ops'],
+  ['Queries and rejections', 'As Maker, raise a query on any submitted request; the SME answers — or the maker records the answer and documents for them — and it returns. As Checker, reject one — any bill reservation is released.', 'Maker ↔ SME, Checker'],
 ];
 
 function viewLab() {
@@ -266,7 +267,7 @@ function viewLab() {
     <div class="card"><div class="card-head"><h2>Journeys to try</h2></div><div class="card-body">
       <div class="tablewrap"><table class="dt"><thead><tr><th style="width:240px">Journey</th><th>How</th><th style="width:200px">Who acts</th></tr></thead>
         <tbody>${LAB_SCENARIOS.map(([t, h, w]) => `<tr><td><b>${esc(t)}</b></td><td>${esc(h)}</td><td>${esc(w)}</td></tr>`).join('')}</tbody></table></div>
-      <p style="margin:14px 0 0;color:var(--muted);font-size:var(--fs-sm)">Demo users: two makers (Rohit, Priya), two checkers (Shalini, Vikram) and two operations users (Farhan, Neha),
+      <p style="margin:14px 0 0;color:var(--muted);font-size:var(--fs-sm)">Demo users: two makers (Rohit, Priya), two trade checkers (Shalini, Vikram), two compliance users (Meera, Arvind) and two operations users (Farhan, Neha),
         so four-eyes never blocks you. Use <b>Switch user</b> in the top bar.</p>
     </div></div>`);
 }
@@ -278,7 +279,7 @@ function viewSalesDashboard() {
   const waiting = DB.inward.filter(i => i.available > 0);
   const inflight = DB.outward.filter(o => Engine.OPEN.includes(o.status)).length + DB.disposals.filter(d => Engine.OPEN.includes(d.status)).length;
   return shell(crumb('Dashboard'), `
-    <div class="page-head"><div><h1>My customers</h1><p>Signed in as ${esc(S.role)}${S.name ? ' — ' + esc(S.name) : ''}. Raise requests on a customer's behalf; a maker verifies and a checker authorises them.</p></div>
+    <div class="page-head"><div><h1>My customers</h1><p>Signed in as ${esc(S.role)}${S.name ? ' — ' + esc(S.name) : ''}. Onboard customers and raise requests on their behalf; a maker verifies and a checker authorises them.</p></div>
       <div class="acts"><button class="btn btn-primary" type="button" data-act="offline-app">Capture an offline application</button></div></div>
     <div class="grid g4" style="margin-bottom:20px">
       ${kpi('Active customers', list.length, { go:'#/ad2/directory' })}
