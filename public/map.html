@@ -80,8 +80,9 @@
         the data their role may see.</p></div>
     <div class="arrow">↓ read → run → conditional write (replayed on conflict)</div>
     <div class="tier"><div><b>Store</b><small>server/store.js</small></div>
-      <p>Vercel Blob (private) in production, a JSON file locally. Writes are optimistic: if another user wrote first, the
-        command is replayed on the fresh state, so two people acting at once never overwrite each other.</p></div>
+      <p>Supabase Postgres in production (one row, reached over HTTPS; Vercel Blob also supported), a JSON file locally.
+        Writes are optimistic: if another user wrote first, the command is replayed on the fresh state, so two people
+        acting at once never overwrite each other.</p></div>
     <div class="tier"><div><b>Simulated services</b><small>clearly labelled in the app</small></div>
       <p>FX reference rates, SWIFT MT103 release and UTRs, PennyDrop, sanctions screening, document AI, SFTP and SAP. Uploads
         record the file name and size only — file contents never leave the user's device.</p></div>
