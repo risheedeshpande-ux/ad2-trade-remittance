@@ -18,6 +18,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+/* The row (Supabase) or path (Blob) the state lives under. Preview
+   deployments share the production database, and the server reseeds whenever
+   the stored seed version differs from its own — so a preview of a branch that
+   changes the seed would wipe production's demo data, and production would
+   wipe it back. A preview therefore keeps its own row unless STATE_PREFIX
+   says otherwise. */
+const statePrefix = () => process.env.STATE_PREFIX || (process.env.VERCEL_ENV === 'preview' ? 'ad2-trade-preview' : 'ad2-trade');
+
 class Conflict extends Error { constructor() { super('conflict'); this.conflict = true; } }
 
 const etagOf = text => crypto.createHash('sha1').update(text).digest('hex');
@@ -66,7 +74,7 @@ function blobToken() {
    the path carries a hash of the token so it cannot be guessed. */
 function blobStore(token) {
   const blob = require('@vercel/blob');
-  const base = process.env.STATE_PREFIX || 'ad2-trade';
+  const base = statePrefix();
   const secretPath = base + '-' + crypto.createHash('sha256').update('path:' + token).digest('hex').slice(0, 24);
   let access = process.env.BLOB_ACCESS === 'public' ? 'public' : 'private';
   const pathname = () => (access === 'public' ? secretPath : base) + '/state.json';
@@ -132,7 +140,7 @@ function supabaseConfig() {
    store. It talks to the Supabase REST API with fetch, so there is no client
    library to install. Only a server key can reach the table. */
 function supabaseStore({ url, key }, { fetch: doFetch = globalThis.fetch, table = process.env.SUPABASE_TABLE || 'ad2_state' } = {}) {
-  const id = process.env.STATE_PREFIX || 'ad2-trade';
+  const id = statePrefix();
   const base = `${url}/rest/v1/${encodeURIComponent(table)}`;
   const byId = 'id=eq.' + encodeURIComponent(id);
   /* legacy service-role keys are JWTs and go in Authorization too; the newer
@@ -232,4 +240,4 @@ function makeStore() {
   return memoryStore();
 }
 
-module.exports = { makeStore, memoryStore, fileStore, supabaseStore, blobToken, storeSecret, Conflict };
+module.exports = { statePrefix, makeStore, memoryStore, fileStore, supabaseStore, blobToken, storeSecret, Conflict };

@@ -30,7 +30,8 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
     return `<div class="ratebox locked">
       <div class="row"><div><div class="k">Rate booked</div>
         <div class="live">1 ${esc(cur)} = ₹ ${Number(draft.rate.customerRate).toFixed(4)}</div>
-        <div class="tick">Booked ${dmyt(draft.rate.bookedAt)} for ${money(amt, cur)} · locked until ${dmyt(draft.rate.expiresAt)} · treasury notified</div>
+        <div class="tick">Booked ${dmyt(draft.rate.bookedAt)} for ${money(amt, cur)} · <b>${esc(draft.rate.positionId || '')}</b> · locked until ${dmyt(draft.rate.expiresAt)}${typeof hoursLeft === 'function' ? ' (' + esc(hoursLeft(draft.rate.expiresAt)) + ')' : ''}</div>
+        <div class="tick">The rate is held on the treasury book; submitting uses exactly this rate.</div>
         ${ad2Note(draft.rate)}</div>
         <div class="spacer"></div>
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Release</button></div>
@@ -39,7 +40,7 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
   if (draft.rate.mode === 'deal') return `<div class="ratebox locked">
       <div class="row"><div><div class="k">FX deal applied</div>
         <div class="live">Deal ${esc(draft.rate.dealRef)} · ₹ ${Number(draft.rate.customerRate).toFixed(4)}</div>
-        <div class="tick">Rate agreed with the treasury desk, entered by AD2.</div></div>
+        <div class="tick">Issued by the treasury desk${draft.rate.positionId ? ' · position ' + esc(draft.rate.positionId) : ''}. Checked again when the request is submitted.</div></div>
         <div class="spacer"></div>
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Clear</button></div>
       ${lines(draft.rate.customerRate, fx)}</div>`;
@@ -56,7 +57,7 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
       <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>
       ${can('fx.dealRef') && isAD2() ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">FX deal reference</button>` : ''}</div>
     ${lines(live, fx)}
-    <p class="tick" style="margin:10px 0 0">${fx ? 'Booking locks this rate for 48 hours and notifies treasury.' : 'Enter the amount to see what it comes to in INR.'}</p>
+    <p class="tick" style="margin:10px 0 0">${fx ? 'Booking locks this rate for 48 hours and puts it on the treasury book straight away.' : 'Enter the amount to see what it comes to in INR.'}</p>
     ${marginIn}</div>`;
 }
 

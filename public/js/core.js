@@ -268,7 +268,8 @@ function afterSignIn(dest) {
 }
 /* Where each user starts: the master test user on its console, AD2 on its
    dashboard, a business on its portal. */
-const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
+const isTreasury = () => !!S && /Treasury/.test(S.role);
+const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isTreasury() ? '#/ad2/treasury' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
 function endMaster() { MASTER = null; sessSet('ad2-master', null); }
 
 /* Poll for changes other users make, so a checker sees the maker's work
@@ -307,7 +308,7 @@ async function resetDemo() {
         API.rev = null; API.epoch = null;
         applyServer(r);
       }
-      API.tokens = {}; sessSet('ad2-tokens', null); localSet('ad2-guide', null);
+      API.tokens = {}; sessSet('ad2-tokens', null); localSet('ad2-guide', null); localSet('ad2-guide-tr', null); sessSet('ad2-guide-pnl', null);
       setSession(null); endMaster(); resetDrafts(); closeModal();
       await pull();
       toast('Demo data reset.', 'ok');
@@ -577,6 +578,17 @@ const NI = {
   aUsers:    { href:'#/ad2/admin/users',      label:'Users',              chip:'US', tone:'--chip-pr' },
   aRoles:    { href:'#/ad2/admin/roles',      label:'Roles & permissions', chip:'RL', tone:'--chip-di' },
   aAudit:    { href:'#/ad2/admin/audit',      label:'Audit log',          chip:'AL', tone:'--chip-rc' },
+  /* treasury */
+  trDesk:    { href:'#/ad2/treasury',             label:'Desk',                chip:'TD', tone:'--chip-db' },
+  trRates:   { href:'#/ad2/treasury/rates',       label:'Rate desk',           chip:'RD', tone:'--chip-ir' },
+  trPos:     { href:'#/ad2/treasury/positions',   label:'Positions',           chip:'PS', tone:'--chip-or' },
+  trCover:   { href:'#/ad2/treasury/cover',       label:'Cover deals',         chip:'CV', tone:'--chip-bl' },
+  trAlloc:   { href:'#/ad2/treasury/allocate',    label:'Allocate cover',      chip:'AC', tone:'--chip-rc' },
+  trDeals:   { href:'#/ad2/treasury/deals',       label:'Deal references',     chip:'FX', tone:'--chip-pr' },
+  trExc:     { href:'#/ad2/treasury/exceptions',  label:'Exceptions',          chip:'EX', tone:'--chip-er', n:'trExc' },
+  trApprove: { href:'#/ad2/treasury/approvals',   label:'Approvals',           chip:'AP', tone:'--chip-di', n:'trApprove' },
+  trPnl:     { href:'#/ad2/treasury/pnl',         label:'P&L',                 chip:'PL', tone:'--chip-rp' },
+  trEvents:  { href:'#/ad2/treasury/events',      label:'Integration log',     chip:'IL', tone:'--chip-up' },
 };
 const NAV_BY_ROLE = {
   'SME User':         [['Home', 'smeDash'], ['Transact', 'smeOut', 'smeIn'], ['Bills', 'smeExp', 'smeImp', 'smeKo'],
@@ -593,7 +605,9 @@ const NAV_BY_ROLE = {
                        ['Authorise', 'outAuth', 'inwAuth', 'billsAccept', 'reconConfirm'],
                        ['Records', 'out', 'inw', 'bills', 'recon', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
   'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
-                       ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Tools', 'lab']],
+                       ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Treasury', 'trDesk', 'trPos', 'trPnl', 'trEvents'], ['Tools', 'lab']],
+  'AD2 Treasury Dealer':  [['Home', 'trDesk'], ['Dealing', 'trRates', 'trCover', 'trAlloc', 'trDeals'], ['Book', 'trPos', 'trExc'], ['Insight', 'trPnl', 'trEvents']],
+  'AD2 Treasury Checker': [['Home', 'trDesk', 'trApprove'], ['Book', 'trRates', 'trCover', 'trPos', 'trExc', 'trDeals'], ['Insight', 'trPnl', 'trEvents']],
   'Master Tester':    [['Testing', 'console']],
 };
 /* How many items wait behind a filtered menu entry. */
@@ -613,6 +627,8 @@ function navCount(key) {
     case 'inwProcess':  return DB.disposals.filter(d => d.status === 'Authorised' && free(d)).length;
     case 'billsAccept': return DB.bills.filter(b => ['Submitted','Resubmitted','Under Review'].includes(b.review) && b.lodgedBy?.key !== me).length;
     case 'reconConfirm':return DB.allocations.filter(l => l.status === 'Proposed' && l.proposedBy?.key !== me).length;
+    case 'trApprove':   return typeof trApprovalsCount === 'function' ? trApprovalsCount() : 0;
+    case 'trExc':       return DB.positions ? Engine.treasury.exceptions(DB, nowISO()).length : 0;
     default: return 0;
   }
 }
@@ -651,7 +667,7 @@ function navHTML() {
         ${n ? `<span class="navcount">${n}</span>` : ''}</a>`;
     }).join('');
   }).join('');
-  const title = master ? 'Test console' : ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
+  const title = master ? 'Test console' : ad2Home ? (isTreasury() ? 'AD2 Treasury' : 'AD2 Trade Operations') : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
   const sub = master ? 'Master test user' : ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
   return `<nav class="nav" aria-label="Main">
     <div class="brand"><span class="mark">◈</span>
@@ -757,6 +773,8 @@ const publicTop = back => `<div class="appbar"><span class="wordmark">Remit<i>4<
 /* ---------- 8. drafts shared across views --------------------------------- */
 let DRAFT = null, OR_DRAFT = null, DI_DRAFT = null, BILL_DRAFT = null, REVIEW = null, RESP = null;
 function resetDrafts() {
+  /* an unsaved draft's rate booking is released rather than left to expire */
+  [OR_DRAFT, DI_DRAFT].forEach(d => { if (d && !d.id && d.rate && d.rate.mode === 'booked' && d.rate.positionId && S) send('rate.release', { positionId: d.rate.positionId }).catch(() => {}); });
   DRAFT = null; OR_DRAFT = null; DI_DRAFT = null; BILL_DRAFT = null; REVIEW = null; RESP = null;
   /* list tabs and filters belong to the person who set them */
   try { recTab = 'Proposed'; KO = { side:'Import', currency:'', allocations:[], focus:'' }; outTab = 'All'; outSearch = ''; billSearch = '';

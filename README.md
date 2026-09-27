@@ -1,9 +1,10 @@
 # AD2 Trade Remittance
 
-A working product demo of the AD2 trade-remittance platform: the SME portal and the AD2 operations portal behind it.
-Onboard a partner, then take payments and export receipts through sales, maker, checker and operations to a UTR and
-a FIRC — with every rule enforced by a server, not just the screen. Customers book the live rate and never see AD2's
-margin; every submission is reviewed before it is sent and ends on a confirmation with its reference.
+A working product demo of the AD2 trade-remittance platform: the SME portal, the AD2 operations portal behind it,
+and the treasury desk that manages the currency. Onboard a partner, then take payments and export receipts through
+sales, maker, checker and operations to a UTR and a FIRC — with every rule enforced by a server, not just the screen.
+Customers book the live rate and never see AD2's margin. Every booking is a treasury position the moment it is made:
+treasury covers it from a bank or crosses it against an opposite booking, and the payment or FIRC settles it.
 
 **Every business and transaction is fictional.** FX rates, SWIFT, PennyDrop, sanctions screening, UFI (EDPMS/IDPMS)
 reporting, SFTP, SAP and document AI are simulated. Uploads record only the file name and size; file contents never
@@ -28,13 +29,13 @@ While you test, a dark bar at the top follows the item you are on. It shows what
 The master holds no authority itself. The server hands it the other user's own session, so every step is recorded
 against that user. Each switch is written to the audit log. Switch it off with **Test tools** in Platform settings.
 
-Or click **Demo guide** in the yellow bar. It walks one new business through 17 steps and signs in as the right
+Or click **Demo guide** in the yellow bar. It walks one new business through 21 steps, treasury included, and signs in as the right
 person at each one. To create more test data, open **Test data lab** from the sidebar.
 
 ```bash
 npm test             # engine and API tests
 npm run test:e2e     # the guided journey in a real browser, on a throwaway server
-npm run test:qa      # 36 journeys across every role and product; writes qa-report.md (see tests/qa.js)
+npm run test:qa      # 40 journeys across every role and product, treasury included; writes qa-report.md (see tests/qa.js)
 ```
 
 ## Workspaces
@@ -51,7 +52,9 @@ rail (remembered per browser), and **Switch user** in the top bar moves between 
 | AD2 Checker | Home + queue · Authorise · Records | Trade checker: authorises payments and disposals; accepts bills; confirms knock-offs |
 | AD2 Compliance | Home + queue · Onboarding · Oversight | Onboarding checker: approves, returns or rejects applications — no transaction authority |
 | AD2 Operations | Home + queue · Settle · Authorise · Records | Confirms receipts; authorises; accepts bills; releases payments; credits disposals and issues FIRCs; reverses |
-| AD2 Administrator | Configuration · Access · Oversight | Purpose codes, documents, compliance rules, users, settings, audit — no transaction authority |
+| AD2 Treasury Dealer | Desk · Dealing · Book · Insight | Rate desk proposals, bank cover deals, allocation and internal crosses, FX deal references, exceptions, P&L — no trade authority |
+| AD2 Treasury Checker | Desk · Approvals · Book · Insight | Approves rate revisions and cover deals, never its own — no dealing or trade authority |
+| AD2 Administrator | Configuration · Access · Oversight · Treasury | Purpose codes, documents, compliance rules, users, settings, audit; treasury read-only — no transaction authority |
 
 Menu entries name the work (“Verify payments”, “Authorise disposals”, “Receipts to confirm”) and open the list filtered
 to it, with a count. A role cannot open another role's screens by URL, and the API refuses anything outside its
@@ -73,6 +76,10 @@ customers; a Checker or Operations approves money.
 | FIRC pending knock-off | Advance or unapplied part of a FIRC matched to export bills later; Checker confirms; reversible |
 | Compliance | Every outward request and disposal scored on submission; High needs a written reason from maker and checker |
 | Assisted journey | Sales, Maker or Operations raises for an SME; margin adjustable within the configured band; another maker verifies |
+| Rate booking → treasury | SME (or AD2 for it) books the rate → a treasury position opens at once → submitting attaches it (the rate is fixed) → the UTR or FIRC settles it; release, rejection or the 48-hour expiry cancels it |
+| Cover | Dealer enters a bank cover deal → Treasury checker approves → dealer allocates it to positions (or crosses opposite bookings) |
+| Rate desk | Dealer proposes revised reference rates (within the band) → Treasury checker approves → new bookings use them; existing bookings keep theirs |
+| FX deal reference | Dealer issues a deal for a customer (the position opens) → the branch applies it to one request, up to its amount |
 | Queries and rejections | Maker or Checker queries; the SME answers with documents — or AD2 records the customer's answer and documents for it; rejections release reservations |
 
 ## Test data lab
@@ -90,6 +97,31 @@ The six test businesses are also created on every reset, and the named businesse
 free to use from the start (Meridian's BL-24014/15/16, Arcadia's BL-24018, receipts IR-3308/09, a reported payment
 IR-3310). There are two makers, two checkers, two compliance users and two operations users, so four-eyes never
 blocks a walkthrough. The Administrator can switch the lab off.
+
+## Treasury
+
+The treasury module (`public/treasury.js`) is the trade side's treasury management system, built from the TMP design
+(`risheedeshpande-ux/r4m`, `TMP/WORKFLOW.md`). Sign in as **AD2 / DEALER** or **AD2 / TCHECKER**.
+
+- **One idea it rests on:** a position has two independent tracks — *settlement* (has the payment or FIRC gone out?)
+  and *cover* (has treasury offset it?). They are separate columns everywhere.
+- **Bookings are positions.** Booking a rate is a server command (`rate.book`) that opens a position holding the rate.
+  A request points at it, so the rate cannot move between booking and submitting, whatever the rate desk publishes.
+  An outward payment is a sale of foreign currency (treasury short); a disposal credited in INR is a purchase (long);
+  a credit to EEFC converts nothing and opens no position.
+- **The lock and the cut-off.** A booking holds its rate for 48 hours (agreed in the 22 Sep review). Submitting freezes
+  it. At the daily cut-off (16:00 IST, set by the Administrator) any currency not flat is flagged — nothing is cancelled.
+- **Cover** is per currency, net: customer sales and purchases in one currency can cross each other internally; the rest
+  is bought or sold from a bank (entered by a dealer, approved by a treasury checker, allocated to positions).
+- **P&L**, in rupees and never mixed: *sales margin* (customer rate vs the reference at booking) and *dealing result*
+  (reference vs the cover rate, or vs the market for what is still open).
+- **Simulated market.** Rates drift gently and repeatably so the desk moves in a demo; switch it off in Platform settings.
+- **Integration contract.** Trade tells treasury four things — `position.opened`, `.attached`, `.linked`, `.cancelled` —
+  written in the same step as the trade action and listed on the Integration log. A separate treasury system would
+  subscribe to exactly these.
+- **Who sees what.** Treasury roles see the whole book; the Administrator and master test user see it read-only; the
+  branch sees positions and whether they are covered (no cover rates or P&L) and the deals it may apply; a customer sees
+  its own bookings without the reference rate; a signed-out visitor sees no rates at all.
 
 ## Purpose codes and documents
 
@@ -111,6 +143,7 @@ The Administrator can stop a code being offered, add inward purposes, add or rem
 ```
 public/            the app (static): app.html, js/*, styles.css, plus
   engine.js        every business rule — runs on the server; in the browser only for offline previews
+  treasury.js      the treasury module: positions, rate desk, cover, crosses, deals, P&L — loaded by engine.js
   data.js          masters (purpose codes, products, documents, compliance rules, roles, test profiles) and seed data
 api/*.js           Vercel serverless functions → server/app.js
 server/app.js      /api/health, session, state, command, status, reset
@@ -146,6 +179,8 @@ through the portal, or a user added with a password, signs in with its own passw
 | AD2 | CHECKER, CHECKER2 | AD2 Checker |
 | AD2 | COMPLIANCE, COMPLIANCE2 | AD2 Compliance |
 | AD2 | OPS, OPS2 | AD2 Operations |
+| AD2 | DEALER, DEALER2 | AD2 Treasury Dealer |
+| AD2 | TCHECKER, TCHECKER2 | AD2 Treasury Checker |
 | AD2 | ADMIN | AD2 Administrator |
 
 ## Deploying to Vercel
@@ -183,7 +218,7 @@ up a free plan's monthly allowance quickly.
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Yes | The database. Set by the Vercel Supabase integration. `SUPABASE_SECRET_KEY` (a newer `sb_secret_…` key) works in place of the service role key. Server-side only; never sent to a browser. |
 | `SESSION_SECRET` | Recommended | Signs session tokens. Falls back to a value derived from the store's key. |
 | `DEMO_PASSCODE` | Optional | Replaces `demo` for the demo accounts, the master test user and **Reset demo data**. Set it before sharing a link publicly. |
-| `STATE_PREFIX` | Optional | The row (Supabase) or path (Blob) the state is kept under, to run two demos from one store. |
+| `STATE_PREFIX` | Optional | The row (Supabase) or path (Blob) the state is kept under, to run two demos from one store. Preview deployments default to `ad2-trade-preview`, so a preview never reseeds production's row; set it locally too if you run with production's keys. |
 | `STATE_STORE` | Optional | `supabase`, `blob`, `file` or `memory`, when more than one is configured. |
 | `BLOB_READ_WRITE_TOKEN` | Alternative | Vercel Blob instead of Supabase (see above). |
 
@@ -209,6 +244,7 @@ up a free plan's monthly allowance quickly.
 
 ## Not in scope yet
 
-The FX quotation formula (treasury), transaction limits (risk), real sanctions and UFI connectivity, SFTP and SAP
-contracts, document storage and retention, SME-side maker-checker, and a relational database in place of the
-single-document store. The PRD in `public/docs/` lists the open decisions.
+The FX quotation formula and a live rate feed (the market is simulated), counterparty bank credit lines on cover deals,
+forward covers, transaction limits (risk), real sanctions and UFI connectivity, SFTP and SAP contracts, document storage
+and retention, SME-side maker-checker, and a relational database in place of the single-document store. The PRD in
+`public/docs/` lists the open decisions.

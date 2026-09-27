@@ -47,7 +47,7 @@ function render(opts = {}) {
     else if (parts[0] === 'ad2') {
       if (!isAD2()) { location.hash = homeHash(); return; }
       if (acting()) setSession({ ...S, actingFor:null });
-      if (!navAllows(hash)) { toast('That screen is not part of the ' + S.role + ' workspace.', 'err'); location.hash = '#/ad2/dashboard'; return; }
+      if (!navAllows(hash)) { toast('That screen is not part of the ' + S.role + ' workspace.', 'err'); location.hash = homeHash(); return; }
       switch (parts[1]) {
         case 'dashboard':      html = viewAd2Dashboard(); break;
         case 'queue':          html = viewQueue(); break;
@@ -61,6 +61,7 @@ function render(opts = {}) {
         case 'reports':        html = viewReports(); break;
         case 'admin':          html = viewAdmin(parts[2]); break;
         case 'lab':            html = viewLab(); break;
+        case 'treasury':       html = viewTreasury(parts[2], parts[3]); break;
         default: location.hash = '#/ad2/dashboard'; return;
       }
     }
@@ -161,51 +162,62 @@ function startAssist(smeId, dest) {
   const target = sme(smeId);
   if (!target || target.status !== 'Approved') { toast('Only an approved SME can be transacted for.', 'err'); return; }
   send('assist.open', { smeId }).catch(() => {});
+  resetDrafts();
   setSession({ ...S, actingFor: target.id });
-  resetDrafts(); closeModal();
+  closeModal();
   location.hash = dest || '#/sme/dashboard';
   render({ keepScroll:false });
   toast('Acting for ' + (target.tradingName || target.legalName) + '.', 'ok');
 }
 
-function rateBook(draft, cur, smeRec, dir, amount) {
+/* Booking is a server action: it opens a treasury position and fixes the
+   customer's rate there, so the rate cannot move before the request is
+   submitted. The draft keeps only the reference and what to show. A new
+   booking for the same draft replaces the previous one. */
+async function rateBook(draft, cur, smeRec, dir, amount) {
   if (!(Number(amount) > 0)) { toast('Enter the amount first — the rate is booked for that amount.', 'err'); return false; }
-  const assisted = acting() && isAD2();
-  let m;
-  if (seesMargin()) {
-    const approved = marginFor(smeRec, cur);
-    m = assisted && draft.marginOverride != null && draft.marginOverride !== '' ? Math.round(Number(draft.marginOverride)) : approved;
-    const band = DB.settings.marginBand ?? 5;
-    if (m < Math.max(0, approved - band) || m > approved + 100) { toast(`Margin must be between ${Math.max(0, approved - band)} and ${approved + 100} paise.`, 'err'); return false; }
-  }
-  /* the customer never holds the margin: its rate comes ready-made */
-  draft.rate = { mode:'booked', customerRate: liveRate(smeRec, cur, dir, assisted ? m : null), bookedAmount: Number(amount),
-    ...(seesMargin() ? { refRate: currency(cur).refRate, margin: m } : {}),
-    bookedAt:nowISO(), expiresAt:new Date(Date.now() + 48 * 3600000).toISOString(), dealRef:null };
-  return true;
+  const payload = { dir, currency: cur, amount: Number(amount) };
+  if (draft.rate.mode === 'booked' && draft.rate.positionId) payload.replaces = draft.rate.positionId;
+  if (acting() && isAD2() && draft.marginOverride != null && draft.marginOverride !== '') payload.margin = Math.round(Number(draft.marginOverride));
+  const r = await run('rate.book', payload, { quiet:true, after: res => {
+    draft.rate = { mode:'booked', positionId:res.positionId, customerRate:res.customerRate, bookedAmount:Number(amount),
+      bookedAt:res.bookedAt, expiresAt:res.expiresAt, dealRef:null, ...(res.refRate != null ? { refRate:res.refRate, margin:res.margin } : {}) };
+  } });
+  return !!r;
+}
+/* Drop a draft's rate, releasing its booking on the server. */
+function releaseRate(draft) {
+  if (!draft) return;
+  if (draft.rate && draft.rate.mode === 'booked' && draft.rate.positionId) send('rate.release', { positionId: draft.rate.positionId }).catch(() => {});
+  draft.rate = RATE_NONE();
 }
 /* A booking is for an amount: change the amount and it has to be booked again. */
 function rebookIfChanged(draft, amount) {
   if (draft.rate.mode === 'booked' && Math.abs((draft.rate.bookedAmount || 0) - (Number(amount) || 0)) > 0.001) {
-    draft.rate = RATE_NONE();
+    releaseRate(draft);
     toast('The amount changed, so the booked rate was released. Book it again for the new amount.');
   }
 }
+/* Apply a deal the treasury desk issued for this customer. Only issued,
+   unexpired deals for the same customer, currency and direction are offered;
+   the server checks again when the request is submitted. */
 function dealModal(draft, cur, smeRec, dir) {
-  const m = marginFor(smeRec, cur);
-  const suggested = customerRate(cur, dir === 'out' ? m : -m);
-  modal({ title:'FX deal reference', okLabel:'Apply deal', body:`
-    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">If you negotiated a rate with the treasury desk by phone, enter the deal reference and the agreed rate. It must be within 3% of the reference rate.</p>
-    <div class="f"><label for="dref">FX deal reference</label><input id="dref" type="text" placeholder="e.g. FXD-2026-77412"></div>
-    <div class="f" style="margin-top:12px"><label for="drate">Agreed rate (₹ per ${esc(cur)})</label>
-      <input id="drate" type="number" step="0.0001" value="${suggested.toFixed(4)}"></div>`,
+  const side = dir === 'out' ? 'SELL' : 'BUY';
+  const deals = (DB.deals || []).filter(d => d.smeId === smeRec.id && d.currency === cur && d.side === side && d.status === 'Issued' && d.validUntil > nowISO());
+  modal({ title:'Apply an FX deal reference', okLabel:'Apply deal', body:`
+    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">Deals the treasury desk has issued for ${esc(smeRec.tradingName)} in ${esc(cur)}.
+      A deal can be used once, for up to its amount; any unused part goes back to treasury.</p>
+    ${deals.length ? `<div class="f"><label for="dref">Deal</label><select id="dref">${deals.map(d => `<option value="${esc(d.id)}">${esc(d.id)} · up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)} · valid until ${dmyt(d.validUntil)}</option>`).join('')}</select></div>`
+      : `<div class="note note-warn"><span>No deal is open for ${esc(smeRec.tradingName)} in ${esc(cur)}. Ask the treasury desk to issue one, or book the live rate.</span></div>
+         <div class="f" style="margin-top:12px"><label for="dref">Deal reference, if the desk gave you one</label><input id="dref" type="text" placeholder="e.g. FXD-2026-77521"></div>`}`,
     onOk: () => {
-      const ref = val('#dref'), rt = parseFloat(val('#drate'));
-      if (!/^[A-Za-z0-9\-\/]{4,30}$/.test(ref)) { toast('Enter a deal reference of 4–30 letters, digits or dashes.', 'err'); return; }
-      const refRate = currency(cur).refRate;
-      if (!(rt > 0) || Math.abs(rt - refRate) / refRate > 0.03) { toast('The agreed rate must be within 3% of the reference rate ₹' + refRate + '.', 'err'); return; }
-      draft.rate = { mode:'deal', refRate, margin:m, customerRate:rt, bookedAt:null, expiresAt:null, dealRef:ref, bookedAmount: null };
-      closeModal(); render(); toast('Deal reference applied.', 'ok');
+      const ref = val('#dref').toUpperCase();
+      if (!/^[A-Z0-9\-\/]{4,30}$/.test(ref)) { toast('Choose a deal, or enter the reference the desk gave you.', 'err'); return; }
+      const d = (DB.deals || []).find(x => x.id === ref);
+      releaseRate(draft);
+      draft.rate = { mode:'deal', dealRef:ref, positionId:d ? d.positionId : null, customerRate:d ? d.rate : 0, bookedAt:null, expiresAt:null, bookedAmount:null,
+        ...(d ? { refRate: currency(cur)?.refRate } : {}) };
+      closeModal(); render(); toast('Deal ' + ref + ' applied. Treasury already holds the position.', 'ok');
     } });
 }
 
@@ -291,7 +303,14 @@ document.addEventListener('click', async e => {
 
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
-  if (act === 'logout')    { setSession(null); endMaster(); resetDrafts(); location.hash = '#/login'; render(); return; }
+  if (act === 'logout')    { resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
+  if (act.startsWith('tr-')) { treasuryClick(act, t); return; }
+  if (act === 'bk-release') {
+    commandModal({ title:'Release rate booking ' + t.dataset.id, okLabel:'Release', okClass:'btn-danger', cmd:'rate.release',
+      body:'<p style="font-size:var(--fs-md)">Release this booking? Its rate is no longer held for you, and treasury stops holding the currency for it.</p>',
+      read: () => ({ positionId: t.dataset.id }) });
+    return;
+  }
   if (act === 'reset-demo'){ resetDemo(); return; }
   if (act === 'nav-toggle'){ document.body.classList.toggle('nav-open'); return; }
   if (act === 'nav-mini')  { if (window.innerWidth <= 1024) { document.body.classList.toggle('nav-open'); return; } setNavMini(!navMini()); render({ keepScroll:true }); return; }
@@ -315,7 +334,7 @@ document.addEventListener('click', async e => {
   if (act === 'guide-open')  { GUIDE_OPEN = true; sessSet('ad2-guide-open', true); render(); return; }
   if (act === 'guide-close') { GUIDE_OPEN = false; sessSet('ad2-guide-open', null); render(); return; }
   if (act === 'guide-go')    { guideGo(+t.dataset.i); return; }
-  if (act === 'guide-restart') { localSet(GUIDE_KEY, null); setSession(null); resetDrafts(); clearObDraft(); DRAFT = newDraft(); location.hash = '#/register'; render(); return; }
+  if (act === 'guide-restart') { localSet(GUIDE_KEY, null); localSet('ad2-guide-tr', null); sessSet('ad2-guide-pnl', null); setSession(null); resetDrafts(); clearObDraft(); DRAFT = newDraft(); location.hash = '#/register'; render(); return; }
   if (act === 'notifications') { openNotifications(); return; }
   if (act === 'notif-open') { closeModal(); return; }
   if (act === 'vchk-all')   { $$('[data-vchk]').forEach(x => { x.checked = true; }); return; }
@@ -504,11 +523,12 @@ document.addEventListener('click', async e => {
   }
   if (act === 'or-book-rate') {
     if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; }
-    if (!rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount)) return;
-    render(); toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours. Treasury notified.`, 'ok'); return;
+    if (await rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount))
+      toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours — ${OR_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
+    return;
   }
   if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out'); return; }
-  if (act === 'or-rate-clear') { OR_DRAFT.rate = RATE_NONE(); render(); return; }
+  if (act === 'or-rate-clear') { releaseRate(OR_DRAFT); render(); return; }
   if (act === 'or-save') {
     run('outward.saveDraft', { draft: OR_DRAFT }, { after: r => { OR_DRAFT.id = r.id; } });
     return;
@@ -620,11 +640,12 @@ document.addEventListener('click', async e => {
   }
   if (act === 'di-book-rate') {
     const i = inwardRec(DI_DRAFT.inwardId), amt = diAmount(DI_DRAFT, i);
-    if (!rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in', amt)) return;
-    render(); toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours. Treasury notified.`, 'ok'); return;
+    if (await rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in', amt))
+      toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours — ${DI_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
+    return;
   }
   if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in'); return; }
-  if (act === 'di-rate-clear'){ DI_DRAFT.rate = RATE_NONE(); render(); return; }
+  if (act === 'di-rate-clear'){ releaseRate(DI_DRAFT); render(); return; }
   if (act === 'di-submit') {
     const d = DI_DRAFT, errs = [], i = inwardRec(d.inwardId), acc = acct(d.creditAccountId);
     const amt = Number(d.amount);
@@ -999,7 +1020,7 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   }
   if (act === 'assist-exit') {
     const was = sme(S.actingFor)?.tradingName || '';
-    setSession({ ...S, actingFor:null }); resetDrafts();
+    resetDrafts(); setSession({ ...S, actingFor:null });
     location.hash = '#/ad2/dashboard';
     toast('Left the assisted journey' + (was ? ' for ' + was : '') + '.');
     return;
@@ -1032,6 +1053,7 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
     return;
   }
   if (act === 'set-band-save') { run('settings.update', { marginBand: val('#set-band') }); return; }
+  if (act === 'set-treasury-save') { run('settings.update', { cutoff: val('#set-cutoff'), maxOpenBookings: val('#set-maxbk'), rateBand: val('#set-rband'), agedDays: val('#set-aged') }); return; }
   if (act === 'user-add') {
     const ad2Roles = DB.roles.filter(r => r.portal === 'AD2').sort((a, b) => a.order - b.order);
     const domains = DB.smes.filter(x => x.status === 'Approved');
@@ -1138,6 +1160,7 @@ document.addEventListener('submit', async e => {
 /* ---------- change events ------------------------------------------------------------ */
 document.addEventListener('change', e => {
   const t = e.target;
+  if (t.dataset && t.dataset.act && t.dataset.act.startsWith('tr-') && treasuryChange(t)) return;
 
   if (t.id === 'file-pick') {
     const file = t.files && t.files[0];
@@ -1190,7 +1213,7 @@ document.addEventListener('change', e => {
   if (t.dataset.ork) {
     const k = t.dataset.ork;
     OR_DRAFT[k] = t.value;
-    if (k === 'currency') { OR_DRAFT.allocations = []; OR_DRAFT.rate = RATE_NONE(); OR_DRAFT.amountFromBills = true; }
+    if (k === 'currency') { OR_DRAFT.allocations = []; releaseRate(OR_DRAFT); OR_DRAFT.amountFromBills = true; }
     if (k === 'amount') {
       OR_DRAFT.amountFromBills = false;
       const placed = OR_DRAFT.allocations.reduce((s2, a) => s2 + a.amount, 0);
@@ -1243,7 +1266,7 @@ document.addEventListener('change', e => {
         .map(a => { left -= a.amount; return a; }).filter(a => a.amount > 0);
       rebookIfChanged(DI_DRAFT, amt);
     }
-    if (t.dataset.dik === 'creditAccountId') { const a = acct(t.value); if (a && a.currency !== 'INR') DI_DRAFT.rate = RATE_NONE(); }
+    if (t.dataset.dik === 'creditAccountId') { const a = acct(t.value); if (a && a.currency !== 'INR') releaseRate(DI_DRAFT); }
     if (['amount','purposeCode','creditAccountId'].includes(t.dataset.dik)) render();
     return;
   }
@@ -1280,6 +1303,7 @@ document.addEventListener('change', e => {
   /* admin */
   if (t.dataset.act === 'set-autochecker') { run('settings.update', { autoChecker:t.checked }); return; }
   if (t.dataset.act === 'set-testlab')     { run('settings.update', { testLab:t.checked }); return; }
+  if (t.dataset.act === 'set-marketsim')   { run('settings.update', { marketSim:t.checked }); return; }
   if (t.dataset.act === 'inpurpose-toggle'){ run('purpose.setInwardEnabled', { code:t.dataset.code, enabled:t.checked }); return; }
   if (t.dataset.act === 'policy-threshold'){ run('policy.setRule', { product:t.dataset.product, docId:t.dataset.doc, rule:'threshold', threshold:t.value }); return; }
   if (t.dataset.act === 'rule-toggle')     { run('compliance.setRule', { id:t.dataset.id, enabled:t.checked }); return; }
@@ -1318,6 +1342,7 @@ document.addEventListener('change', e => {
 /* live typing: keep drafts in sync without re-rendering and losing focus */
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset && t.dataset.act && t.dataset.act.startsWith('tr-') && treasuryInput(t)) return;
   if (t.dataset.act === 'sw-filter') {
     const q = t.value.trim().toLowerCase();
     $$('.swrow').forEach(r => { r.hidden = !!q && !r.dataset.q.includes(q); });

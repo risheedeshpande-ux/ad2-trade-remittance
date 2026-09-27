@@ -131,6 +131,36 @@ async function startServer() {
       await page.waitForSelector('.done-card h1:has-text("submitted")');
     });
 
+    /* treasury: the booking is already a position on the desk */
+    let posId, covId;
+    await step('7a dealer enters cover', async () => {
+      await guideNext();
+      await page.waitForSelector('h1:has-text("Treasury desk")');
+      const p = await page.evaluate(() => { const x = DB.positions.find(q => q.status === 'Attached' && q.side === 'SELL'); return { id: x.id, cur: x.currency, amt: x.amount }; });
+      posId = p.id;
+      console.log('    position', p.id, p.cur, p.amt);
+      await page.evaluate(q => coverModal({ cur: q.cur, side: 'BUY', amt: q.amt }), p);
+      await page.waitForSelector('#cv-amt');
+      await modalOk();
+      await toastSays(/checker/);
+      covId = await page.evaluate(() => DB.covers[0].id);
+    });
+    await step('7b treasury checker approves', async () => {
+      await guideNext();
+      await click(`[data-act="tr-cover-approve"][data-id="${covId}"]`);
+      await modalOk();
+      await toastSays(/approved/);
+    });
+    await step('7c dealer allocates', async () => {
+      await guideNext();
+      await page.waitForSelector('h1:has-text("Allocate")');
+      await page.check(`[data-act="tr-alloc-tick"][data-id="${posId}"]`); await page.waitForTimeout(300);
+      await click('[data-act="tr-alloc-confirm"]'); await idle();
+      await toastSays(/Allocated/);
+      const state = await page.evaluate(id => Engine.treasury.coverState(DB.positions.find(p => p.id === id)), posId);
+      if (state !== 'Covered') throw new Error('Position not covered: ' + state);
+    });
+
     await step('8 maker verifies', async () => {
       await guideNext();
       await click('[data-act="or-verify"]');
@@ -151,6 +181,13 @@ async function startServer() {
       console.log('    UTR', utr);
       await click('[data-act="modal-close"]');
       await page.waitForSelector('h1:has-text("Completed")');
+    });
+
+    await step('10a dealer sees the position concluded', async () => {
+      await guideNext();
+      await page.waitForSelector('h1:has-text("Concluded")');
+      const t = await page.locator('.card:has(h2:has-text("Cover and P&L"))').textContent();
+      if (!/Sales margin/.test(t) || !/realised/.test(t)) throw new Error('No P&L on the position');
     });
 
     await step('11 sme lodges export bill', async () => {

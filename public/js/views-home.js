@@ -48,6 +48,7 @@ function viewSmeDashboard() {
     ${reported.length ? `<div class="note note-info" style="margin-bottom:18px"><span><b>${plural(reported.length, 'payment')}</b> you reported ${reported.length === 1 ? 'is' : 'are'} with AD2 Operations to confirm:
       ${reported.map(i => `<a href="#/sme/inward/${i.id}">${esc(i.remitter)} (${money(i.amount, i.currency)})</a>`).join(', ')}.</span></div>` : ''}
 
+    ${myBookingsCard()}
     <div class="grid g4" style="margin-bottom:20px">
       ${kpi('In flight with AD2', inFlight.filter(x => x.with !== 'SME').length, { tone:'accent', go: pm.importSide ? '#/sme/outward' : '#/sme/inward' })}
       ${kpi('Awaiting your action', queries + awaiting.length, { tone: queries + awaiting.length ? 'warn' : '' })}
@@ -181,6 +182,7 @@ function viewQueue() {
 
 /* ---------- AD2 dashboard ------------------------------------------------------ */
 function viewAd2Dashboard() {
+  if (isTreasury()) return viewTreasury('desk');
   if (S.role === 'AD2 Sales') return viewSalesDashboard();
   if (S.role === 'AD2 Administrator') return viewAdminDashboard();
   const q = myQueue();
