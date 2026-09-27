@@ -72,7 +72,10 @@ function newOutwardDraft(from) {
     declarations:{ fema:false, ofac:false }, marginOverride:null, amountFromBills:true,
   };
   if (!from) return base;
-  return { ...base, ...clone(from), rate:RATE_NONE(), purposeQuery:null, allocations:clone(from.allocations || []), docs:clone(from.docs || {}),
+  /* a saved draft keeps its rate booking while the lock lasts */
+  const kept = from.rate && from.rate.mode === 'booked' && from.rate.positionId
+    && (DB.positions || []).some(p => p.id === from.rate.positionId && Engine.treasury.positionStatus(p, nowISO()) === 'Open');
+  return { ...base, ...clone(from), rate: kept ? clone(from.rate) : RATE_NONE(), purposeQuery:null, allocations:clone(from.allocations || []), docs:clone(from.docs || {}),
            executionDate: from.executionDate && from.executionDate >= todayISO() ? from.executionDate : todayISO(),
            declarations:{ fema:false, ofac:false }, amountFromBills:false };
 }
@@ -382,6 +385,7 @@ function viewOutwardDetail(id) {
               : 'No rate yet (draft).'}</span></div>
           <div class="calc">
             <div class="line"><span>Amount</span><b>${money(o.amount, o.currency)}</b></div>
+            ${positionLine(o)}
             ${seesMargin() ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${(o.rate.refRate || 0).toFixed(4)}</b></div>
             <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${o.rate.margin || 0} paise</b></div>` : ''}
             <div class="line"><span>${seesMargin() ? 'Customer rate' : 'Your rate'}</span><b>₹ ${(o.rate.customerRate || 0).toFixed(4)}</b></div>

@@ -149,7 +149,19 @@ function adminSettings() {
         <input id="set-band" type="number" min="0" max="50" value="${st.marginBand ?? 5}" ${ed}>
         <div class="hint">How far below the approved margin AD2 may price in an assisted journey.</div></div>
       <div>${ed ? '' : `<button class="btn btn-ghost" type="button" data-act="set-band-save">Save band</button>`}</div>
-    </div></div></div>`;
+    </div>
+    <h3 style="margin:28px 0 6px;font-size:var(--fs-md)">Treasury</h3>
+    <div class="checks"><label class="chk"><input type="checkbox" data-act="set-marketsim" ${st.marketSim !== false ? 'checked' : ''} ${ed}>
+      <span>Simulated market<small>Rates drift gently during the day so the rate desk, exceptions and unrealised P&L move in a demo. Off: the market equals the published rate.</small></span></label></div>
+    <div class="grid g4 fields" style="margin-top:14px;align-items:end">
+      <div class="f"><label for="set-cutoff">Daily cut-off (IST)</label><input id="set-cutoff" type="time" value="${esc(st.cutoff || '16:00')}" ${ed}>
+        <div class="hint">After it, uncovered currencies are flagged. Nothing is cancelled.</div></div>
+      <div class="f"><label for="set-maxbk">Open rate bookings per customer</label><input id="set-maxbk" type="number" min="1" max="20" value="${st.maxOpenBookings ?? 5}" ${ed}></div>
+      <div class="f"><label for="set-rband">Rate revision band (%)</label><input id="set-rband" type="number" step="0.5" min="0.5" max="5" value="${st.rateBand ?? 2}" ${ed}></div>
+      <div class="f"><label for="set-aged">Aged after (days)</label><input id="set-aged" type="number" min="1" max="30" value="${st.agedDays ?? 3}" ${ed}></div>
+    </div>
+    ${ed ? '' : `<div style="margin-top:12px"><button class="btn btn-ghost" type="button" data-act="set-treasury-save">Save treasury settings</button></div>`}
+    </div></div>`;
 }
 
 function adminUsers() {

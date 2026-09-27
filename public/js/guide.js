@@ -38,6 +38,22 @@ function guideSteps() {
   const st = x => x && x.status;
   const at = (x, list) => !!x && list.includes(st(x));
   const MAKER = ['AD2','MAKER'], CHECKER = ['AD2','CHECKER'], OPS = ['AD2','OPS'], COMPLIANCE = ['AD2','COMPLIANCE'];
+  const DEALER = ['AD2','DEALER'], TCHECKER = ['AD2','TCHECKER'];
+  /* the treasury side of the payment: its position and the cover behind it */
+  const op = o && o.rate && (DB.positions || []).find(p => p.id === o.rate.positionId);
+  const cov = op && (DB.covers || []).find(c => c.currency === op.currency && c.side === 'BUY' && c.enteredAt >= op.bookedAt);
+  /* A customer cannot see the treasury book, so progress seen by a treasury
+     or branch user is remembered for when the guide is read by the customer. */
+  const seen = localGet('ad2-guide-tr') || {};
+  let tr = (op && seen[op.id]) || {};
+  if (op) {
+    const covered = (op.covered || 0) > 0 || ['Covered', 'Partial'].includes(op.coverState);
+    const sees = (DB.covers || []).length > 0;
+    if (sees || covered) {
+      tr = { entered: tr.entered || !!cov || covered, approved: tr.approved || (cov && cov.status === 'Active') || covered, covered: tr.covered || covered };
+      if (JSON.stringify(seen[op.id]) !== JSON.stringify(tr)) localSet('ad2-guide-tr', { [op.id]: tr });
+    }
+  }
 
   return [
     { part:'Onboard the partner' },
@@ -57,12 +73,20 @@ function guideSteps() {
       done: imp && imp.review === 'Accepted', acct:CHECKER, dest:'#/ad2/bills/import', skip: s && !pm.importSide },
     { who:'SME', title:'Raise a DIR payment against the bill', hint:'Choose DIR, pick the bill from the dropdown (the amount follows it), book the rate for that amount, attach the three documents, accept the declarations, review and confirm.',
       done: !!o, acct:smeAcct, dest:'#/sme/outward/new', skip: s && !pm.importSide },
+    { who:'AD2 Treasury Dealer', title:'See the booking on the treasury desk and buy cover', hint:'The desk shows the currency short by the payment. Follow the suggestion: “Enter cover deal”.',
+      done: !!tr.entered, acct:DEALER, dest:'#/ad2/treasury', skip: s && !pm.importSide },
+    { who:'AD2 Treasury Checker', title:'Approve the cover deal', hint:'Approvals → Approve. The checker cannot approve a deal they entered.',
+      done: !!tr.approved, acct:TCHECKER, dest:'#/ad2/treasury/approvals', skip: s && !pm.importSide },
+    { who:'AD2 Treasury Dealer', title:'Allocate the cover to the booking', hint:'Allocate cover → tick the position (or “Suggest — oldest first”) → Confirm.',
+      done: !!tr.covered, acct:DEALER, dest: cov ? '#/ad2/treasury/allocate?src=' + cov.id : '#/ad2/treasury/allocate', skip: s && !pm.importSide },
     { who:'AD2 Maker', title:'Verify the payment', hint:'Tick the document, sanctions, purpose and beneficiary checks.',
       done: at(o, ['Verified','Authorised','Completed']), acct:MAKER, dest: o && '#/ad2/outward/' + o.id, skip: s && !pm.importSide },
     { who:'AD2 Checker', title:'Authorise the payment', hint:'A different person from the maker.',
       done: at(o, ['Authorised','Completed']), acct:CHECKER, dest: o && '#/ad2/outward/' + o.id, skip: s && !pm.importSide },
     { who:'AD2 Operations', title:'Release the payment', hint:'Debits the INR account, generates the UTR and the SWIFT MT103.',
       done: at(o, ['Completed']), acct:OPS, dest: o && '#/ad2/outward/' + o.id, skip: s && !pm.importSide },
+    { who:'AD2 Treasury Dealer', title:'See the position concluded and its P&L', hint:'Settled by the UTR and covered: sales margin and dealing result, in rupees.',
+      done: at(o, ['Completed']) && !!sessGet('ad2-guide-pnl'), acct:DEALER, dest: op ? '#/ad2/treasury/positions/' + op.id : '#/ad2/treasury/pnl', skip: s && !pm.importSide },
 
     { part:'Inward receipt (export)', skip: s && !pm.exportSide },
     { who:'SME', title:'Lodge the export bill', hint:'Export Bill Lodgement → New bill.',
@@ -108,7 +132,7 @@ function guideHTML() {
           ${isNext && x.dest ? `<button class="btn btn-primary btn-sm" type="button" data-act="guide-go" data-i="${idx}">Do this step</button>` : ''}
           ${!isNext && !x.done && x.dest && x.acct ? `<button class="btn btn-link" type="button" data-act="guide-go" data-i="${idx}">Go</button>` : ''}</div></li>`;
     }).join('')}</ol>
-    ${!next ? `<div class="note note-ok" style="margin:12px"><span><b>Journey complete.</b> Payment released with a UTR, export proceeds credited and the FIRC issued.
+    ${!next ? `<div class="note note-ok" style="margin:12px"><span><b>Journey complete.</b> The booking was covered by treasury, the payment released with a UTR, export proceeds credited and the FIRC issued.
       Open Reports or Reconciliation to see it all line up.</span></div>` : ''}
     <div class="guide-foot">
       <button class="btn btn-plain btn-sm" type="button" data-act="guide-restart">Start over with a new business</button>

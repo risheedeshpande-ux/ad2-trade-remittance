@@ -10,6 +10,7 @@ const ctx = (over = {}) => ({ now: NOW, hashPassword: pw => 'plain$' + pw, ...ov
 const who = (d, l) => ({ domainId: d, loginId: l });
 const MAKER = who('AD2', 'MAKER'), MAKER2 = who('AD2', 'MAKER2'), CHECKER = who('AD2', 'CHECKER'), OPS = who('AD2', 'OPS'), ADMIN = who('AD2', 'ADMIN');
 const COMPLIANCE = who('AD2', 'COMPLIANCE'), OPS2 = who('AD2', 'OPS2'), CHECKER2 = who('AD2', 'CHECKER2');
+const DEALER = who('AD2', 'DEALER');
 const run = (db, w, cmd, p, c) => Engine.execute(db, w, cmd, p, ctx(c));
 const refuses = (fn, re) => assert.throws(fn, e => e instanceof Engine.EngineError && (!re || re.test(e.message)));
 const doc = n => ({ filename: n + '.pdf', size: '100 KB', type: 'application/pdf' });
@@ -108,7 +109,9 @@ test('end to end: onboard a partner, pay a supplier, dispose export proceeds', (
   refuses(() => run(db, SME, 'outward.submit', { draft }), /Bill of Entry/);
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, purposeCode: 'S1006', docs: { ...draft.docs, boe: doc('boe') } } }), /not available under DIR/);
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, allocations: [], docs: { ...draft.docs, boe: doc('boe') } } }), /import bill/);
-  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, rate: { mode: 'booked', bookedAt: '2026-09-20T09:00:00.000Z' }, docs: { ...draft.docs, boe: doc('boe') } } }), /expired/);
+  /* a booking made three days ago has run past its 48-hour lock */
+  const stale = run(db, SME, 'rate.book', { dir: 'out', currency: 'EUR', amount: 40000 }, { now: '2026-09-21T09:00:00.000Z' }).positionId;
+  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, rate: { mode: 'booked', positionId: stale }, docs: { ...draft.docs, boe: doc('boe') } } }), /expired/);
   const orId = run(db, SME, 'outward.submit', { draft: { ...draft, docs: { ...draft.docs, boe: doc('boe') } } }).id;
   const o = db.outward.find(x => x.id === orId);
   assert.equal(o.status, 'Submitted');
@@ -173,8 +176,10 @@ test('four eyes: an assisted request cannot be verified by the maker who raised 
     beneficiaryId: 'BEN-002', beneficiary: 'Northgate Advisory Ltd', beneficiaryCountry: 'United Kingdom', beneficiaryAccount: 'GB82WEST12345698765432',
     beneficiaryBank: 'Barclays', beneficiaryBankCountry: 'United Kingdom', swift: 'BARCGB22', currency: 'GBP', amount: 3000,
     remittanceType: 'OTT', purposeCode: 'S1006', executionDate: '2026-09-30', debitAccountId: 'BA-001',
-    rate: { mode: 'deal', dealRef: 'FXD-2026-1', customerRate: 113 }, docs: { invoice: doc('i'), form145: doc('f') }, declarations: DEC,
+    rate: { mode: 'deal', dealRef: 'FXD-2026-1' }, docs: { invoice: doc('i'), form145: doc('f') }, declarations: DEC,
   };
+  refuses(() => run(db, MAKER, 'outward.submit', { ...acting, draft: d }), /not issued by treasury/);
+  d.rate.dealRef = run(db, DEALER, 'deal.issue', { smeId: 'SME-1001', dir: 'out', currency: 'GBP', amount: 3000, rate: 113, validHours: 24 }).id;
   const id = run(db, MAKER, 'outward.submit', { ...acting, draft: d }).id;
   assert.equal(db.outward.find(o => o.id === id).source, 'AD2 Assisted');
   refuses(() => run(db, MAKER, 'outward.verify', { id, checks: { documents: true, sanctions: true, purpose: true, beneficiary: true } }), /another user/);
@@ -424,7 +429,7 @@ test('pricing: the customer books the live rate, never a deal, and never sees th
   const id = run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'booked', bookedAt: NOW } } }).id;
   /* AD2 in an assisted journey may apply a deal */
   run(db, MAKER, 'outward.submit', { actingFor: 'SME-1001', draft: { ...base, amount: 10000, allocations: [{ billId: 'BL-24015', amount: 10000 }],
-    rate: { mode: 'deal', dealRef: 'FXD-2026-88', customerRate: 96.1 } } });
+    rate: { mode: 'deal', dealRef: run(db, DEALER, 'deal.issue', { smeId: 'SME-1001', dir: 'out', currency: 'EUR', amount: 10000, rate: 96.1 }).id } } });
   const view = Engine.scopeState(db, MER);
   const cfg = view.smes[0].config;
   assert.ok(!cfg.margins, 'no margins in the customer view');

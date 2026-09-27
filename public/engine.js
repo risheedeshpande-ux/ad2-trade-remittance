@@ -11,9 +11,9 @@
    command, whatever the interface did or did not show.
    ========================================================================== */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.Engine = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./treasury.js'));
+  else root.Engine = factory(root.Treasury);
+})(typeof self !== 'undefined' ? self : this, function (installTreasury) {
   'use strict';
 
   /* ---------- errors ------------------------------------------------------ */
@@ -186,44 +186,8 @@
     return { score, level: score >= 60 ? 'High' : score >= 25 ? 'Medium' : 'Low', flags };
   }
 
-  /* A booked rate is recomputed here from the currency master — the client's
-     figure is never trusted. A deal reference must sit within 3% of the
-     reference rate. */
-  function settleRate(db, s, cur, rate, dir, now, a) {
-    let m = marginFor(db, s, cur);
-    /* A branch / AD2 user in the assisted journey may adjust the margin within
-       the configured band below the approved margin (and never above +100). */
-    if (rate && rate.margin != null && rate.margin !== '' && Number(rate.margin) !== m) {
-      const want = Math.round(Number(rate.margin));
-      if (!(a && a.actingFor && isAD2(a))) fail('Only AD2 in an assisted journey can change the margin.');
-      const band = Number((db.settings || {}).marginBand ?? 5);
-      if (!isFinite(want) || want < Math.max(0, m - band) || want > m + 100)
-        fail(`Margin must be between ${Math.max(0, m - band)} and ${m + 100} paise (approved ${m}, band ${band}).`);
-      m = want;
-    }
-    const ref = (currencyOf(db, cur) || {}).refRate || 0;
-    const expect = customerRate(db, cur, dir === 'out' ? m : -m);
-    rate = rate || {};
-    if (rate.mode === 'booked') {
-      const at = rate.bookedAt && !isNaN(new Date(rate.bookedAt)) ? new Date(rate.bookedAt).toISOString() : now;
-      const age = (new Date(now) - new Date(at)) / 3600000;
-      if (age > 48) fail('The booked rate has expired (48-hour lock). Book the rate again.');
-      if (age < -0.1) fail('The rate booking time is in the future.');
-      return { mode: 'booked', refRate: ref, margin: m, customerRate: expect, bookedAt: at,
-               expiresAt: addHours(at, 48), dealRef: null };
-    }
-    if (rate.mode === 'deal') {
-      if (!can(db, a, 'fx.dealRef') || !isAD2(a))
-        fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
-      const dealRef = txt(rate.dealRef, 'FX deal reference', { max: 30, pattern: /^[A-Za-z0-9\-\/]{4,30}$/,
-        patternMsg: 'FX deal reference should be 4–30 letters, digits or dashes.' });
-      let r = Number(rate.customerRate);
-      if (!isFinite(r) || r <= 0) r = expect;
-      if (Math.abs(r - ref) / ref > 0.03) fail(`The agreed rate ${r} is more than 3% away from the reference rate ${ref}. Check the deal.`);
-      return { mode: 'deal', refRate: ref, margin: m, customerRate: +r.toFixed(4), bookedAt: null, expiresAt: null, dealRef };
-    }
-    fail('Book a rate or enter an FX deal reference.');
-  }
+  /* Rates are settled by the treasury module (treasury.js): a request points
+     at a booking or a treasury deal, and uses the rate stored there. */
 
   /* ---------- actors, capabilities, four-eyes ----------------------------- */
   const actorKey = a => a ? `${a.domainId}/${a.loginId}` : '';
@@ -357,7 +321,8 @@
     const now = nowIso || new Date().toISOString();
     db.rev = Math.max(0, Number(opts && opts.rev) || 0);
     db.epoch = now + '~' + Math.random().toString(36).slice(2, 8);
-    db.settings = { autoChecker: false, allowUnlinked: false, testLab: true, marginBand: 5, ...(db.settings || {}) };
+    db.settings = { autoChecker: false, allowUnlinked: false, testLab: true, marginBand: 5,
+      cutoff: '16:00', marketSim: true, maxOpenBookings: 5, rateBand: 2, agedDays: 3, ...(db.settings || {}) };
     /* Seeded transactions carry the documents their policy asked for. */
     const fill = (rec, product, purpose, inrAmt, opts) => {
       if (rec.status === 'Draft') return;
@@ -407,6 +372,8 @@
     /* Ready-to-use test businesses, each with its own accounts, bills and
        receipts, so every journey can be tried on more than one business. */
     (db.testSmes || []).forEach(prof => labCreateSme(db, prof, 'approved', now));
+    /* The treasury book behind the seeded payments and disposals. */
+    T.seed(db, now);
     return db;
   }
   const smePendingWith = st => ({ 'Submitted': 'AD2 Maker', 'Under Review': 'AD2 Maker', 'Pending Approval': 'AD2 Compliance',
@@ -416,6 +383,9 @@
   /*  Commands                                                                */
   /* ======================================================================== */
   const C = {};
+  const T = installTreasury({ C, EngineError, fail, need, forbid, missing, txt, amount, date, oneOf, bool, round2, addHours, clone,
+    find, smeOf, currencyOf, marginFor, customerRate, can, requireCap, isAD2, actorKey, actorLabel, stamp, distinct, audit, notify,
+    seq, fmt, inr, ownSme, requireApproved });
 
   /* ---------- onboarding -------------------------------------------------- */
   function readApplication(db, app) {
@@ -763,7 +733,8 @@
 
   function finishOutward(db, a, s, o, d, now, excludeId) {
     const prod = productOf(db, o.remittanceType);
-    o.rate = settleRate(db, s, o.currency, d.rate, 'out', now, a);
+    const rr = T.resolveRate(db, a, s, o.currency, 'out', o.amount, d.rate, now);
+    o.rate = rr.rate;
     const inrAmt = round2(o.amount * o.rate.customerRate);
     const list = checklist(db, o.remittanceType, o.purposeCode, inrAmt);
     o.docs = docsIn(d.docs, list.map(x => x.id));
@@ -788,6 +759,7 @@
       first: !db.outward.some(x => x.id !== o.id && x.smeId === s.id && x.status === 'Completed'),
       files: Object.values(o.docs).map(f => f.filename),
     });
+    T.attach(db, a, rr, 'outward', o.id, o.amount, now);
   }
 
   /* A High risk score needs a written reason at each approval stage. */
@@ -813,6 +785,13 @@
         db.outward.unshift(o);
         audit(db, a, ctx.now, o.id, 'Draft saved');
       }
+      /* A saved draft keeps its rate booking, so continuing it later does not
+         leave the booking behind. */
+      const bk = d.rate && d.rate.mode === 'booked' && d.rate.positionId && find(db.positions, d.rate.positionId);
+      o.rate = bk && bk.smeId === s.id && bk.source === 'Booked' && T.positionStatus(bk, ctx.now) === 'Open'
+        ? { mode: 'booked', positionId: bk.id, refRate: bk.refRate, margin: bk.margin, customerRate: bk.customerRate,
+            bookedAt: bk.bookedAt, expiresAt: bk.expiresAt, dealRef: null, bookedAmount: bk.amount }
+        : { mode: 'none' };
       return { id: o.id, message: `Draft ${o.id} saved.` };
     },
   };
@@ -824,6 +803,7 @@
       const o = find(db.outward, p.id);
       if (!o || o.smeId !== s.id) missing('Draft');
       need(o.status === 'Draft', 'Only a draft can be discarded.');
+      T.release(db, a, o, 'Draft discarded', ctx.now);
       db.outward = db.outward.filter(x => x.id !== o.id);
       audit(db, a, ctx.now, o.id, 'Draft discarded');
       return { message: 'Draft discarded.' };
@@ -853,8 +833,8 @@
       audit(db, a, ctx.now, o.id, `Compliance check — risk ${o.risk.level} (${o.risk.score})${o.risk.flags.length ? ': ' + o.risk.flags.map(f => f.label).join(', ') : ''}`, true);
       if (o.rate.margin !== marginFor(db, s, o.currency)) audit(db, a, ctx.now, o.id, `Margin set to ${o.rate.margin} paise by ${a.name || a.role} within the branch band`, true);
       audit(db, a, ctx.now, o.id, o.rate.mode === 'booked'
-        ? `Rate booked at ${o.rate.customerRate.toFixed(4)}, locked until ${o.rate.expiresAt.slice(0, 16).replace('T', ' ')} UTC — treasury notified`
-        : `FX deal reference ${o.rate.dealRef} applied at ${o.rate.customerRate.toFixed(4)}`);
+        ? `Booked rate ${o.rate.customerRate.toFixed(4)} applied — treasury position ${o.rate.positionId}`
+        : `FX deal ${o.rate.dealRef} applied at ${o.rate.customerRate.toFixed(4)} — treasury position ${o.rate.positionId}`);
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Outward ${o.id} from ${s.tradingName} — ${fmt(o.amount, o.currency)} to verify`, link: '#/ad2/outward/' + o.id });
       return { id: o.id, message: `Outward request ${o.id} submitted. It is now with the AD2 maker.` };
     },
@@ -926,6 +906,7 @@
                                      currency: o.currency, source: 'Outward payment' });
       });
       if (o.remittanceType === 'AIR') o.boeDueDate = addDays(ctx.now, 90).slice(0, 10);
+      T.link(db, a, o, o.utr, ctx.now);
       audit(db, a, ctx.now, o.id, `Payment released over SWIFT — UTR ${o.utr}, ${inr(debit)} debited from ${acc.bank} ${acc.accountNumber}`);
       notify(db, ctx.now, { toSmeId: o.smeId, text: `Payment ${o.id} sent — UTR ${o.utr}`, link: '#/sme/outward/' + o.id });
       return { utr: o.utr, message: `Payment released. UTR ${o.utr}.` };
@@ -992,10 +973,11 @@
     cap: 'outward.reject',
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
-      need(['Submitted', 'Verified', 'Authorised'].includes(o.status), 'This request can no longer be rejected.');
+      need(OPEN.includes(o.status), 'This request can no longer be rejected.');
       const r = txt(p.reason, 'Reason for rejection', { max: 500 });
       o.status = 'Rejected'; o.pendingWith = '—'; o.rejectReason = r;
       o.wf = o.wf || {}; o.wf.rejected = stamp(a, ctx.now, 'rejected');
+      T.release(db, a, o, 'Request rejected: ' + r, ctx.now);
       audit(db, a, ctx.now, o.id, 'Request rejected: ' + r);
       notify(db, ctx.now, { toSmeId: o.smeId, text: `Outward ${o.id} was rejected`, link: '#/sme/outward/' + o.id });
       return { message: 'Request rejected. Bill reservations are released.' };
@@ -1135,7 +1117,10 @@
     need(acc.verified, `Account ${acc.accountNumber} is not verified yet. Verify it with PennyDrop first.`);
     need(acc.currency === 'INR' || acc.currency === i.currency,
       `Credit an INR account (converted at the booked rate) or an EEFC account in ${i.currency}.`);
-    const rate = acc.currency === 'INR' ? settleRate(db, s, i.currency, d.rate, 'in', now, a)
+    /* Crediting INR converts at a booked rate (a treasury position); crediting
+       EEFC converts nothing and opens no position. */
+    const rr = acc.currency === 'INR' ? T.resolveRate(db, a, s, i.currency, 'in', amt, d.rate, now) : null;
+    const rate = rr ? rr.rate
       : { mode: 'none', refRate: (currencyOf(db, i.currency) || {}).refRate || 0, margin: 0, customerRate: 0, bookedAt: null, expiresAt: null, dealRef: null };
     const list = checklist(db, 'TRADE', purposeCode, 0, { option });
     const docs = docsIn(d.docs, list.map(x => x.id));
@@ -1143,7 +1128,7 @@
     need(!missingDocs.length, 'Upload the required documents: ' + missingDocs.join(', ') + '.', missingDocs);
     const dec = d.declarations || {};
     need(bool(dec.fema) && bool(dec.ofac), 'Accept the FEMA and sanctions (OFAC) declarations before submitting.');
-    return { amt, option, purposeCode, al, total, acc, rate, docs, declarations: { fema: true, ofac: true, at: now } };
+    return { amt, option, purposeCode, al, total, acc, rate, rr, docs, declarations: { fema: true, ofac: true, at: now } };
   }
 
   C['disposal.submit'] = {
@@ -1175,6 +1160,7 @@
         files: Object.values(v.docs).map(f => f.filename),
       });
       db.disposals.unshift(rec);
+      if (v.rr) T.attach(db, a, v.rr, 'disposal', id, v.amt, ctx.now);
       i.available = round2(i.available - v.amt);
       i.status = inwardStatus(db, i);
       const what = v.option === 'knockoff'
@@ -1253,6 +1239,7 @@
       d.unallocated = round2(d.amount - applied);
       d.fircUfi = ufiReport(db, ctx.now, 'Export', 'FIRC / realisation');
       d.wf.processed = stamp(a, ctx.now, 'processed');
+      T.link(db, a, d, d.firc, ctx.now);
       d.status = 'Processed'; d.pendingWith = '—';
       const i = find(db.inward, d.inwardId);
       if (i) { i.firc = d.firc; (i.fircs = i.fircs || []).push(d.firc); i.status = inwardStatus(db, i); }
@@ -1321,6 +1308,7 @@
       const r = txt(p.reason, 'Reason for rejection', { max: 500 });
       d.status = 'Rejected'; d.pendingWith = '—'; d.rejectReason = r;
       d.wf.rejected = stamp(a, ctx.now, 'rejected');
+      T.release(db, a, d, 'Instruction rejected: ' + r, ctx.now);
       const i = find(db.inward, d.inwardId);
       if (i) { i.available = round2(i.available + d.amount); i.status = inwardStatus(db, i); }
       audit(db, a, ctx.now, d.id, 'Instruction rejected: ' + r);
@@ -1601,7 +1589,18 @@
     cap: 'admin.settings',
     run(db, a, p, ctx) {
       const changes = [];
-      ['autoChecker', 'allowUnlinked', 'testLab'].forEach(k => {
+      if (p.cutoff !== undefined) {
+        need(/^([01]\d|2[0-3]):[0-5]\d$/.test(String(p.cutoff)), 'The treasury cut-off must be a time like 16:00.');
+        db.settings.cutoff = String(p.cutoff); changes.push(`cut-off ${db.settings.cutoff} IST`);
+      }
+      [['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged']]
+        .forEach(([k, lo, hi, label]) => {
+          if (p[k] === undefined) return;
+          const v = Number(p[k]);
+          need(isFinite(v) && v >= lo && v <= hi, `The ${label} must be between ${lo} and ${hi}.`);
+          db.settings[k] = v; changes.push(`${k} ${v}`);
+        });
+      ['autoChecker', 'allowUnlinked', 'testLab', 'marketSim'].forEach(k => {
         if (p[k] === undefined) return;
         db.settings[k] = bool(p[k]);
         changes.push(`${k} ${db.settings[k] ? 'on' : 'off'}`);
@@ -2056,6 +2055,7 @@
       if (own && own.status === 'Rejected') forbid('This application was rejected. Access is not available.');
     }
     if (def.cap) requireCap(db, a, def.cap);
+    T.sweep(db, ctx.now);
     const result = def.run(db, a, payload, ctx) || {};
     db.rev = (db.rev || 0) + 1;
     return result;
@@ -2078,11 +2078,15 @@
        visible only to AD2 and to its own business. */
     const master = !!a && can(db, a, 'test.master');
     out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || master || l.smeId === a.smeId))).map(publicLogin(db));
-    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); out.scope = 'public'; return out; }
+    /* Reference rates are AD2's: a customer (or anyone signed out) sees only
+       its own ready-made rate, never the rate its margin is added to. */
+    const hideRef = () => { out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, marketBase, ...rest } = c; return rest; }); };
+    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); T.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
     if (isAD2(a) || master) {
       BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
       out.complianceRules = clone(db.complianceRules || []);
       out.notifications = out.notifications.filter(n => n.toRole === a.role);
+      T.scope(out, db, a, master || can(db, a, 'treasury.view') ? 'treasury' : 'ad2');
       out.scope = master ? 'master' : 'ad2';
       return out;
     }
@@ -2092,7 +2096,8 @@
        rate it is built from. */
     const hideMargin = r => { if (r.rate) { delete r.rate.margin; delete r.rate.refRate; } return r; };
     const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return hideMargin(r); };
-    out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, ...rest } = c; return rest; });
+    hideRef();
+    T.scope(out, db, a, 'sme');
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
       delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
       if (s.config) {
@@ -2111,7 +2116,7 @@
     out.outward = clone(db.outward.filter(mine)).map(strip);
     out.disposals = clone(db.disposals.filter(mine)).map(strip);
     const ids = new Set([sid, ...out.outward.map(x => x.id), ...out.inward.map(x => x.id), ...out.disposals.map(x => x.id),
-                         ...out.bills.map(x => x.id), ...out.jobs.map(x => x.id)]);
+                         ...out.bills.map(x => x.id), ...out.jobs.map(x => x.id), ...out.positions.map(x => x.id)]);
     out.audit = clone(db.audit.filter(x => ids.has(x.record) && !x.internal));
     out.notifications = clone((db.notifications || []).filter(n => n.toSmeId === sid));
     out.scope = 'sme';
@@ -2132,5 +2137,9 @@
     EngineError, freshState, execute, scopeState, publicStatus, resolveActor,
     checklist, purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
     actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C),
+    /* read-only treasury views, shared by every screen so they agree */
+    treasury: { positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
+      netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate, pnl: T.pnl, exceptions: T.exceptions,
+      pastCutoff: T.pastCutoff, istDate: T.istDate },
   };
 });

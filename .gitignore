@@ -5,3 +5,5 @@ node_modules/
 .data/
 .env*
 test-results/
+.claude/CHANGELOG.md
+supertool

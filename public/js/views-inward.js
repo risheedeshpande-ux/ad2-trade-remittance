@@ -363,7 +363,7 @@ function viewDisposalDetail(id) {
             <div class="line"><span>Amount</span><b>${money(d.amount, d.currency)}</b></div>
             <div class="line"><span>Applied to bills</span><b>${money(d.allocatedTotal ?? d.allocations.reduce((t, x) => t + x.amount, 0), d.currency)}</b></div>
             <div class="line"><span>Pending knock-off</span><b>${money(d.unallocated || 0, d.currency)}</b></div>
-            ${fcy ? '' : `${seesMargin() && d.rate.refRate ? `<div class="line"><span>Reference / margin <small>(AD2 only)</small></span><b>₹ ${Number(d.rate.refRate).toFixed(4)} · ${d.rate.margin}p</b></div>` : ''}
+            ${fcy ? '' : `${positionLine(d)}${seesMargin() && d.rate.refRate ? `<div class="line"><span>Reference / margin <small>(AD2 only)</small></span><b>₹ ${Number(d.rate.refRate).toFixed(4)} · ${d.rate.margin}p</b></div>` : ''}
               <div class="line"><span>Rate</span><b>₹ ${(d.rate.customerRate || 0).toFixed(4)}${d.rate.dealRef ? ' · ' + esc(d.rate.dealRef) : ''}</b></div>`}
             <div class="line total"><span>${d.status === 'Processed' ? 'Credited' : 'To credit'}</span><b>${credited}</b></div>
           </div>

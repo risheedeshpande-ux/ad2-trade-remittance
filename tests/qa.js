@@ -101,7 +101,9 @@ async function startServer() {
     await select('#or-debit', o.account || await page.locator('#or-debit option:not([disabled])').nth(1).getAttribute('value'));
     if (o.margin != null) await setVal('#or-margin', o.margin);
     if (o.deal) {
-      await click('[data-act="or-deal-ref"]'); await page.fill('#dref', o.deal); await modalOk();
+      await click('[data-act="or-deal-ref"]');
+      if (await page.locator('select#dref').count()) await page.selectOption('#dref', o.deal); else await page.fill('#dref', o.deal);
+      await modalOk();
     } else await click('[data-act="or-book-rate"]');
     await samples('or'); await declare('or');
     if (o.shot) await shot(o.shot, true);
@@ -598,16 +600,20 @@ async function startServer() {
     });
 
     /* ================= assisted ================= */
-    await scenario('Assisted', 'Sales books a payment for a customer at a branch margin with a treasury deal; Ops authorises, Ops2 releases', 'Sales (for SME) → Maker → Ops → Ops2', async () => {
+    await scenario('Assisted', 'Treasury issues a deal; Sales applies it to a customer payment; Ops authorises, Ops2 releases', 'Dealer → Sales (for SME) → Maker → Ops → Ops2', async () => {
+      await signAs('AD2', 'DEALER');
+      const issued = await api('deal.issue', { smeId: 'SME-1001', dir: 'out', currency: 'GBP', amount: 1500, rate: 113.2, validHours: 24, note: 'QA' });
+      check(issued.ok && /^FXD-/.test(issued.r.id), 'the treasury dealer issues a deal reference, and it is on the book at once');
+      const dealId = issued.r.id;
       await signAs('AD2', 'SALES'); await go('#/ad2/directory');
       await click('[data-act="assist-start"][data-id="SME-1001"]');
       await click('.modal [data-act="assist-go"][data-dest="#/sme/outward/new"]');
       await page.waitForSelector('h1:has-text("New outward request")');
       check(await page.locator('.sim-bar:has-text("Transacting for a customer")').count() === 1, 'a banner says who is being served');
       const id = await newOutward({ bene: 'BEN-002', product: 'OTT', purpose: 'S1006', purposeSearch: 'management consultancy', currency: 'GBP', amount: 1500, account: 'BA-001',
-        deal: 'FXD-2026-90210' });
+        deal: dealId });
       const o = await state(i => outwardRec(i), id);
-      check(o.source === 'AD2 Assisted' && o.rate.dealRef === 'FXD-2026-90210', 'the request is stamped as assisted with the deal reference');
+      check(o.source === 'AD2 Assisted' && o.rate.dealRef === dealId, 'the request is stamped as assisted with the deal reference');
       await click('[data-act="assist-exit"]');
       check((await page.evaluate(() => location.hash)).startsWith('#/ad2/dashboard'), '“Done” returns to the AD2 workspace');
       await approveOutward(id, { auth: ['AD2', 'OPS'], release: ['AD2', 'OPS2'] });
@@ -650,6 +656,77 @@ async function startServer() {
       await signAs('AD2', 'CHECKER'); await go('#/ad2/bills?s=accept');
       await click(`tr:has-text("${billId}") [data-act="bill-accept"]`); await toastSays(/accepted/);
       check(await state(i => bill(i).review, billId) === 'Accepted', 'the bill is accepted and can be disposed against');
+    });
+
+    /* ================= treasury ================= */
+    await scenario('Treasury', 'A customer books a rate; it is on the treasury desk at once; a rate revision after it does not change it', 'SME → Dealer → Treasury checker → SME', async () => {
+      await signAs('MERIDIANTEX', 'SMEUSER');
+      const b = await api('rate.book', { dir: 'out', currency: 'EUR', amount: 12000 });
+      check(b.ok && /^POS-/.test(b.r.positionId) && b.r.refRate === undefined, 'booking returns a position and never the reference rate');
+      await go('#/sme/dashboard'); await page.evaluate(() => render()); await wait(200);
+      check(await page.locator(`.card:has-text("Your rate bookings") td.id:has-text("${b.r.positionId}")`).count() === 1, 'the customer sees its booking with the lock on its dashboard');
+      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury');
+      await page.waitForSelector('h1:has-text("Treasury desk")');
+      await go('#/ad2/treasury/positions');
+      check(await page.locator(`td.id:has-text("${b.r.positionId}")`).count() === 1, 'the dealer sees the new position on the blotter');
+      await go('#/ad2/treasury/rates');
+      await page.fill('[data-rate="EUR"]', String((await state(() => currency('EUR').refRate)) + 0.4));
+      await page.fill('#rr-reason', 'QA revision'); await click('[data-act="tr-rate-propose"]');
+      check(await page.locator('[data-act="tr-rate-approve"]').count() === 0, 'the dealer cannot approve a revision');
+      await signAs('AD2', 'TCHECKER'); await go('#/ad2/treasury/approvals');
+      await click('[data-act="tr-rate-approve"]');
+      await signAs('MERIDIANTEX', 'SMEUSER');
+      const pos = await state(id => DB.positions.find(p => p.id === id), b.r.positionId);
+      check(pos.customerRate === b.r.customerRate, 'the booked rate did not move when treasury published a new rate');
+      const again = await api('rate.book', { dir: 'out', currency: 'EUR', amount: 1000 });
+      check(again.r.customerRate > b.r.customerRate, 'a new booking uses the newly published rate');
+      await go('#/sme/dashboard'); await page.evaluate(() => render()); await wait(200);
+      await click(`[data-act="bk-release"][data-id="${again.r.positionId}"]`); await modalOk();
+      check(await state(id => DB.positions.find(p => p.id === id)?.status, again.r.positionId) === 'Cancelled', 'the customer releases a booking it no longer needs');
+    });
+    await scenario('Treasury', 'Cover: the dealer enters a bank deal, a second checker approves it, the dealer allocates it; over-allocation is blocked', 'Dealer → Treasury checker → Dealer', async () => {
+      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury');
+      await click('[data-act="tr-cover-new"]');
+      await select('#cv-cur', 'USD'); await page.fill('#cv-amt', '30000'); await modalOk();
+      const cov = await state(() => DB.covers[0].id);
+      await signAs('AD2', 'TCHECKER'); await go('#/ad2/treasury/approvals');
+      await click(`[data-act="tr-cover-approve"][data-id="${cov}"]`); await modalOk();
+      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury/allocate?src=' + cov);
+      await page.waitForSelector('h1:has-text("Allocate")');
+      const first = await page.locator('[data-act="tr-alloc-tick"]').first().getAttribute('data-id');
+      await page.check(`[data-act="tr-alloc-tick"][data-id="${first}"]`); await wait(300);
+      await page.fill(`[data-act="tr-alloc-amt"][data-id="${first}"]`, '999999'); await wait(200);
+      check(await page.locator('.note-err:has-text("Over-allocated")').count() === 1 && await page.locator('[data-act="tr-alloc-confirm"][disabled]').count() === 1,
+        'over-allocation shows at once and confirm is disabled');
+      await click('[data-act="tr-alloc-clear"]'); await click('[data-act="tr-alloc-fifo"]');
+      await click('[data-act="tr-alloc-confirm"]'); await toastSays(/Allocated/);
+      check(await state(id => DB.covers.find(c => c.id === id).allocated, cov) > 0, 'the cover is allocated to the oldest open sales first');
+      await shot('treasury-allocated');
+    });
+    await scenario('Treasury', 'Internal cross: a customer purchase offsets customer sales in the same currency, no bank deal', 'Dealer', async () => {
+      await signAs('AD2', 'DEALER');
+      const src = await state(() => Engine.treasury.suggestions(DB, nowISO()).find(s => s.kind === 'cross')?.source);
+      check(!!src, 'the desk suggests a cross where both sides are open');
+      await go('#/ad2/treasury/allocate?src=' + src);
+      await click('[data-act="tr-alloc-fifo"]'); await click('[data-act="tr-alloc-confirm"]'); await toastSays(/Allocated/);
+      const cur = await state(id => DB.positions.find(p => p.id === id).currency, src);
+      check(await state(c => Engine.treasury.netByCurrency(DB, nowISO())[c]?.crossable || 0, cur) === 0, 'nothing is left to cross in ' + cur);
+      await go('#/ad2/treasury/pnl'); await page.waitForSelector('h1:has-text("P&L")');
+      check(await page.locator('text=Sales margin').count() >= 1 && await page.locator('text=Dealing — realised').count() >= 1, 'P&L shows sales margin and dealing result apart');
+      await go('#/ad2/treasury/events');
+      check(await page.locator('code:has-text("position.opened")').count() > 0, 'the integration log lists what trade sent treasury');
+      await go('#/ad2/treasury/exceptions'); await page.waitForSelector('h1:has-text("Exceptions")');
+    });
+    await scenario('Treasury', 'Who sees what: the branch cannot open treasury screens; the customer never sees cover or the reference rate', 'Maker, SME, signed out', async () => {
+      await signAs('AD2', 'MAKER'); await go('#/ad2/treasury');
+      check(!(await page.evaluate(() => location.hash)).startsWith('#/ad2/treasury'), 'a branch maker is turned away from the treasury desk');
+      check(await state(() => (DB.covers || []).length) === 0, 'the branch receives no cover deals');
+      await go('#/ad2/outward/OR-5106');
+      check(await page.locator('.line:has-text("Treasury position")').count() === 1, 'the branch sees the treasury position behind a payment');
+      await signAs('ARCADIACOMP', 'SMEUSER');
+      check(await state(() => DB.positions.every(p => p.refRate === undefined && p.covered === undefined)), 'the customer’s bookings carry no reference rate or cover');
+      const pub = await page.evaluate(() => fetch('/api/state').then(r => r.json()));
+      check(pub.state.currencies.every(c => c.refRate === undefined), 'signed out, no reference rates are published');
     });
 
     /* ================= bills ================= */

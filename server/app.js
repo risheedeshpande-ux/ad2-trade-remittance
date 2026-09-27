@@ -96,8 +96,19 @@ async function handle({ method, route, query, headers, body, ip }) {
       const s = getStore();
       let storeOk = true, storeError = null;
       try { await readState(); } catch (e) { storeOk = false; storeError = String(e && e.message || e).slice(0, 300); }
+      /* The treasury book at a glance, so a broken link between trade and
+         treasury shows without signing in. Counts only — no amounts. */
+      let treasury = null;
+      if (storeOk && cache && cache.state.positions) {
+        const st = cache.state, now = new Date().toISOString(), T = Engine.treasury;
+        const day = T.istDate(now);
+        treasury = { open: st.positions.filter(p => ['Open', 'Attached'].includes(T.positionStatus(p, now))).length,
+          uncoveredCurrencies: Object.values(T.netByCurrency(st, now)).filter(r => Math.abs(r.net) > 0.005).length,
+          pastCutoff: T.pastCutoff(st, now), expiredToday: st.positions.filter(p => p.status === 'Cancelled' && /expired/i.test(p.cancelReason || '') && T.istDate(p.cancelledAt || now) === day).length,
+          events: (st.tmsEvents || []).length, lastEventAt: ((st.tmsEvents || [])[0] || {}).at || null };
+      }
       return json(200, { ok: true, mode: 'server', store: s.kind, access: s.access || null, persistent: s.persistent, storeOk, storeError,
-                         passcodeRequired: auth.passcodeRequired(), seedVersion: SEED.version, time: new Date().toISOString() });
+                         passcodeRequired: auth.passcodeRequired(), seedVersion: SEED.version, time: new Date().toISOString(), treasury });
     }
 
     if (route === 'status' && method === 'GET') {

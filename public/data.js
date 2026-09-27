@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v8';
+const SEED_VERSION = 'ad2-trade-v9';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -351,6 +351,10 @@ const CAPABILITIES = [
   { id:'lab.use',              group:'Test data',      label:'Generate test businesses, bills, receipts and requests' },
   { id:'test.master',          group:'Test data',      label:'Open the platform as any user, to run a journey end to end' },
 
+  { id:'treasury.view',        group:'Treasury',       label:'See the treasury book: positions, cover, deals, P&L and the integration log' },
+  { id:'treasury.deal',        group:'Treasury',       label:'Propose rates, enter and allocate bank cover, cross positions and issue FX deal references' },
+  { id:'treasury.approve',     group:'Treasury',       label:'Approve rate revisions and bank cover deals (treasury checker)' },
+
   { id:'admin.masters',        group:'Administration', label:'Maintain purpose codes, document policy and compliance rules' },
   { id:'admin.users',          group:'Administration', label:'Manage users and roles' },
   { id:'admin.settings',       group:'Administration', label:'Change platform settings' },
@@ -407,16 +411,28 @@ const ROLES = [
     segregated:['onboard.approve','onboard.review','outward.verify','inward.verifyDisposal'],
     note:'Two operations users (Farhan, Neha) let one authorise and the other release the same request.' },
 
-  { id:'AD2 Administrator', portal:'AD2', order:8,
+  { id:'AD2 Treasury Dealer', portal:'AD2', order:8,
+    summary:'Runs the treasury book. Publishes rates (with a checker), sees every customer booking as a position the moment it is made, buys cover from banks, allocates it or crosses opposite bookings internally, and issues FX deal references for negotiated rates. Holds no trade authority.',
+    can:['treasury.view','treasury.deal','reports.view'],
+    segregated:['treasury.approve','outward.create','outward.verify','outward.approve','outward.complete','inward.dispose',
+                'inward.approveDisposal','inward.processDisposal','fx.dealRef'],
+    note:'The dealer issues a deal reference; the branch applies it to the customer’s request. Neither can do the other’s step.' },
+
+  { id:'AD2 Treasury Checker', portal:'AD2', order:9,
+    summary:'The second pair of eyes in treasury. Approves or rejects rate revisions and bank cover deals — never its own — and oversees the book, exceptions and P&L.',
+    can:['treasury.view','treasury.approve','reports.view'],
+    segregated:['treasury.deal','outward.approve','inward.approveDisposal'] },
+
+  { id:'AD2 Administrator', portal:'AD2', order:10,
     summary:'Maintains the platform rather than the book: purpose codes, document policy, users, roles and settings. Deliberately holds no transaction authority.',
     can:['admin.masters','admin.users','admin.settings','outward.viewAll','inward.viewAll',
-         'bills.viewAll','reports.view','lab.use'],
+         'bills.viewAll','reports.view','lab.use','treasury.view'],
     segregated:['onboard.approve','outward.approve','recon.confirm','inward.dispose'],
     note:'Kept out of the transaction path on purpose: whoever configures the controls should not also be able to transact through them.' },
 
-  { id:'Master Tester', portal:'TEST', order:9,
+  { id:'Master Tester', portal:'TEST', order:11,
     summary:'One sign-in for testing and demos. Sees the whole platform and opens it as any customer or AD2 user in one click, so a journey runs end to end without signing in and out. Holds no authority of its own: each step is taken as, and recorded against, the user it opens, so four-eyes still applies. Every switch is written to the audit log.',
-    can:['test.master','outward.viewAll','inward.viewAll','bills.viewAll','reports.view'],
+    can:['test.master','outward.viewAll','inward.viewAll','bills.viewAll','reports.view','treasury.view'],
     note:'Not assignable to a user. Switched off with the test tools in Platform settings.' },
 ];
 
@@ -835,6 +851,10 @@ const ACCOUNTS = [
   { domainId:'AD2',         loginId:'COMPLIANCE2',role:'AD2 Compliance',   smeId:null,       name:'Arvind Rao',         demo:true },
   { domainId:'AD2',         loginId:'OPS',      role:'AD2 Operations',     smeId:null,       name:'Farhan Qureshi',     demo:true },
   { domainId:'AD2',         loginId:'OPS2',     role:'AD2 Operations',     smeId:null,       name:'Neha Kapoor',        demo:true },
+  { domainId:'AD2',         loginId:'DEALER',   role:'AD2 Treasury Dealer', smeId:null,      name:'Nikhil Bansal',      demo:true },
+  { domainId:'AD2',         loginId:'DEALER2',  role:'AD2 Treasury Dealer', smeId:null,      name:'Sana Sheikh',        demo:true },
+  { domainId:'AD2',         loginId:'TCHECKER', role:'AD2 Treasury Checker', smeId:null,     name:'Leela Varghese',     demo:true },
+  { domainId:'AD2',         loginId:'TCHECKER2',role:'AD2 Treasury Checker', smeId:null,     name:'Manoj Pillai',       demo:true },
   { domainId:'AD2',         loginId:'ADMIN',    role:'AD2 Administrator',  smeId:null,       name:'Anita Desai',        demo:true },
 ];
 
@@ -847,8 +867,8 @@ const SEED = {
   smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,
   disposals:DISPOSALS, allocations:ALLOCATIONS, jobs:JOBS, audit:AUDIT, logins:ACCOUNTS,
   notifications:[],
-  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5 },
-  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, ufi:4100, lab:0 },
+  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3 },
+  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { SEED };
