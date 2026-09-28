@@ -1,16 +1,18 @@
 # AD2 Trade Remittance — QA report
 
-25 September 2026 · run with `npm run test:qa` (rerun any time; it writes a fresh `qa-report.md`)
+28 September 2026 · run with `npm run test:qa` (rerun any time; it writes a fresh `qa-report.md`)
 
-**Result: all 36 journeys pass, 144 checks.** Also green: 28 engine and API tests (`npm test`) and the 18-step guided
-journey (`npm run test:e2e`). Every journey is driven through the real screens as the role that does it, on a server,
-with a different person at each approval stage.
+**Result: all 45 journeys pass, 198 checks.** Also green: 63 engine, treasury, treasury-portal and API tests
+(`npm test`) and the guided journey through both portals (`npm run test:e2e`). Every journey is driven through the real
+screens as the role that does it, on a server, with a different person at each approval stage. Nine journeys run in the
+Treasury Management Portal and across the two portals.
 
 ## Master test user
 
 **Domain ID `TEST`, Login ID `MASTER`, passcode `demo`** is the first account on the sign-in page. It opens a
 **test console**:
-- **Start a journey:** ten common journeys, each opened as the right person.
+- **Start a journey:** ten common journeys, and eight in the treasury portal, each opened as the right person.
+- **Waiting in treasury:** approvals and branch deals waiting on a bill, each with someone eligible to act.
 - **Waiting on AD2 / Waiting on a customer:** every open item, its next step, and a button that opens the platform as
   someone who can take that step.
 - **Open the platform as:** every customer, applicant and AD2 user, one click each, with no password.
@@ -24,6 +26,27 @@ has **Open as…** to jump to anyone, and **Test console** to go back.
 The master cannot approve anything itself. The server gives it the chosen user's own session, so every step is
 recorded against that user and four-eyes holds. Journey 31 below, and new engine and API tests, prove this.
 
+
+## Treasury Management Portal (28 Sep)
+
+The treasury portal (`/treasury/`) is the TMP design built out on the same platform as the trade portal. What the
+QA journeys prove, across the two portals:
+
+| Where | What is checked |
+|---|---|
+| Trade → treasury | A customer's booking is on the treasury book the moment it is made, at its home branch (Mumbai Fort for a Maharashtra GSTIN), as an outward remittance from the trade portal; a rate the checker publishes afterwards leaves it unchanged, while new bookings take the new base |
+| Rate desk gates quoting | A card rate that is not published cannot be quoted (the form says so); the dealer proposes the missing rates, a second checker publishes them, and quoting opens |
+| Branch counter | First quote takes the stepped review; booking needs the review ticked; a bill with the position reference links itself; the rest is knocked off; the deal concludes and USD 2,000 leaves the branch's stock |
+| Cut-off | Keeping a deal needs a reason; cancelling releases the residual and its cover |
+| Cover | A spot deal is live when saved and pays the INR from its settlement account; over-allocation is flagged at once and confirm is disabled |
+| Treasury → trade | A branch quote for a trade customer becomes an FX deal reference that Sales applies to the customer's payment in the trade portal; the UTR concludes the treasury position and the USD Nostro falls by the payment |
+| Limits | A tightened limit (maker, then checker) makes the next booking held; the customer sees it held; a second checker releases it |
+| Approvals | A rejection needs a reason; the maker resubmits as version 2; exceptions resolve with notes; an internal cross; P&L shows sales margin and dealing result apart |
+| Who sees what | Trade staff have no treasury screens and are turned back by the treasury portal; a branch sees only its branch without base rates or approvals; an agent only its own deals; a customer never the base or card rate |
+
+Also checked in a browser: every treasury screen opens without error for every persona (dealer, checker, viewer,
+branch, agent, regional bulk, finance, administrator, master); the portal works in local mode, at phone width with no
+horizontal scroll, and in the screen index's previews.
 
 ## What the 24 Sep review found, and what changed
 
@@ -54,40 +77,49 @@ recorded against that user and four-eyes holds. Journey 31 below, and new engine
 |---|---|---|---|---|
 | 1 | Roles | Each role has its own menu of the work it does, and every screen renders | All | 11 |
 | 2 | Roles | Four-eyes and segregation are enforced by the server, not just the screen | Maker, Checker, Compliance, Ops, Admin, SME | 6 |
-| 3 | Customer | The customer never sees AD2's margin or a deal-reference box | SME | 12 |
-| 4 | Outward | DIR: pick the bill, amount follows, book the rate for it, review, confirm, then maker, checker, operations | SME → Maker → Checker → Ops | 13 |
+| 3 | Customer | The customer never sees AD2’s margin or a deal-reference box | SME | 12 |
+| 4 | Outward | DIR: pick the bill, amount follows, book the rate for it, review, confirm — then maker, checker, operations | SME → Maker → Checker → Ops | 13 |
 | 5 | Outward | Pay part of a bill; the rest stays free; a rejection releases the reservation | SME → Maker → Checker | 3 |
 | 6 | Outward | LC to a watchlist beneficiary scores High; Operations authorises, a second operations user releases | SME → Maker → Ops → Ops2 | 5 |
-| 7 | Outward | AIR advance, its Bill of Entry by document AI, then a knock-off that updates the balances as you go | SME → Maker → Checker → Ops → SME → Ops → SME → Checker | 8 |
+| 7 | Outward | AIR advance, then its Bill of Entry by document AI, then a knock-off that updates the balances as you go | SME → Maker → Checker → Ops → SME → Ops → SME → Checker | 8 |
 | 8 | Outward | OTT: type a word to find the purpose code; Form 146 appears above ₹5 lakh | SME | 3 |
 | 9 | Outward | Save a draft, continue it later and submit | SME | 2 |
 | 10 | Outward | Query: the maker asks, the SME answers with a document, another maker verifies | Maker → SME → Maker2 | 2 |
 | 11 | Outward | Query answered by AD2 for the customer, with the documents it sent in | Maker (for SME) → Maker2 → Checker → Ops | 3 |
-| 12 | Outward | Release a payment already authorised and see the account debited | Ops | 2 |
-| 13 | Inward | SME reports a buyer's payment; Operations confirms it; the SME disposes; FIRC issued and downloadable | SME → Ops → SME → Maker → Checker → Ops | 6 |
-| 14 | Inward | Partial disposal: part against a bill, the rest as an advance, two FIRCs; the advance knocked off later | SME → Maker → Checker → Ops → SME → Checker2 | 5 |
-| 15 | Inward | Advance receipt credited now, knocked off later; a reversal restores it | SME → Maker → Checker → Ops → SME → Checker → Ops | 5 |
-| 16 | Inward | Credit to an EEFC account: foreign currency, no conversion | SME → Maker → Checker → Ops | 2 |
-| 17 | Inward | Operations records a credit; the SME starts the disposal from "New inward remittance" | Ops → SME → Maker → Checker → Ops | 2 |
+| 12 | Outward | Release a payment already authorised (seeded) and see the account debited | Ops | 2 |
+| 13 | Inward | SME reports a buyer’s payment; Operations confirms it; the SME disposes of it; FIRC issued and downloadable | SME → Ops → SME → Maker → Checker → Ops | 6 |
+| 14 | Inward | Partial disposal: part against a bill, the rest as an advance — two FIRCs; the advance is knocked off later | SME → Maker → Checker → Ops → SME → Checker2 | 5 |
+| 15 | Inward | Advance receipt credited now, knocked off against the export bill later; a reversal restores it | SME → Maker → Checker → Ops → SME → Checker → Ops | 5 |
+| 16 | Inward | Credit to an EEFC account: foreign currency, no conversion, no rate | SME → Maker → Checker → Ops | 2 |
+| 17 | Inward | Operations records a credit; the SME starts the disposal from “New inward remittance” | Ops → SME → Maker → Checker → Ops | 2 |
 | 18 | Inward | Operations cannot match a reported payment and tells the SME why | SME → Ops | 1 |
-| 19 | Assisted | Sales books a payment for a customer at a branch margin with a treasury deal | Sales (for SME) → Maker → Ops → Ops2 | 4 |
-| 20 | Assisted | Maker disposes of a receipt on the customer's behalf | Maker (for SME) → Maker2 → Checker → Ops | 3 |
+| 19 | Assisted | Treasury issues a deal; Sales applies it to a customer payment; Ops authorises, Ops2 releases | Dealer → Sales (for SME) → Maker → Ops → Ops2 | 5 |
+| 20 | Assisted | Maker disposes of a receipt on the customer’s behalf from the AD2 inward list | Maker (for SME) → Maker2 → Checker → Ops | 3 |
 | 21 | Assisted | Sales lodges an export bill for a customer; the checker accepts it | Sales (for SME) → Checker | 1 |
-| 22 | Bills | CSV upload keeps failed rows; a bill query is answered for the customer; Operations accepts | SME → Checker → Maker (for SME) → Ops | 3 |
-| 23 | Onboarding | Digital: register, maker prices (select all, one margin, no charge), Compliance approves, the business trades | Applicant → Maker → Compliance → SME | 6 |
-| 24 | Onboarding | Offline by Sales: credentials shown; Compliance returns it; the maker reprices; a second Compliance user approves | Sales → Maker → Compliance → Maker → Compliance2 | 2 |
-| 25 | Onboarding | Clarification: the applicant supplies its IEC; the maker prices; Compliance approves | Applicant → Maker → Compliance | 1 |
-| 26 | Onboarding | Compliance rejects an application; the applicant can no longer sign in | Compliance | 1 |
-| 27 | Onboarding | A duplicate PAN is flagged to the maker | Applicant → Maker | 1 |
-| 28 | Admin | Administrator adds a Compliance user and changes the controls; the audit log records it | Admin | 3 |
-| 29 | Reports | Bill amount beside outstanding, aging with rows, UFI status, FIRC downloads, CSV export | SME, Ops | 5 |
-| 30 | Lab | A new test business with parked requests that carry on through the real workflow | Maker, Ops | 2 |
-| 31 | Testing | Master test user: one sign-in; “Do it as …” carries a payment through every stage, never to someone who already handled it | Master → SME → Maker → Checker → Ops | 13 |
-| 32 | Platform | Type an amount and click straight away: the first click counts | SME | 2 |
-| 33 | Platform | The browser never goes back to an older copy of the state | Any | 1 |
-| 34 | Platform | Phone width: drawer navigation, no horizontal scroll | SME | 1 |
-| 35 | Platform | A half-filled registration survives a reload | Applicant | 1 |
-| 36 | Platform | Reset demo data restores the starting data for everyone | Any | 3 |
+| 22 | Treasury | Trade → treasury: a customer’s booking is a position on the treasury book at its branch at once; a rate published after it does not change it | SME → Dealer → Treasury checker → SME | 10 |
+| 23 | Treasury | The rate desk gates quoting: a card rate that is not published cannot be quoted until a checker publishes it | Branch → Dealer → Treasury checker 2 → Branch | 5 |
+| 24 | Treasury | Branch counter: quote, stepped review, book; the FX Plus bill links back on punch; knock off the rest; concluded and stock moves | Branch (Delhi CP) | 7 |
+| 25 | Treasury | Cut-off: keep one deal past cut-off with a reason, cancel another — its residual and cover go back to the pool | Branch (Mumbai Fort) | 4 |
+| 26 | Treasury | Cover: a spot deal is live when saved and pays from its settlement account; over-allocation is blocked; then allocated | Dealer | 4 |
+| 27 | Treasury | Treasury → trade: a branch quote for a trade customer becomes an FX deal AD2 applies to the payment; the UTR concludes it and moves the Nostro | Dealer → Branch → Sales (for SME) → Maker → Checker → Ops → Dealer | 4 |
+| 28 | Treasury | Limits: a trade booking over the customer’s treasury limit is held until a treasury checker releases it | Dealer → Treasury checker → SME → Treasury checker 2 | 4 |
+| 29 | Treasury | Approvals, exceptions, an internal cross and P&L — reasons are mandatory and a rejected entry is resubmitted as a new version | Dealer → Treasury checker → Dealer | 5 |
+| 30 | Treasury | Who sees what across the two portals: trade staff, branch, agent, customer and the public | Maker, Branch, Agent, SME, signed out | 10 |
+| 31 | Bills | CSV upload keeps failed rows; a query on a bill is answered for the customer; Operations accepts | SME → Checker → Maker (for SME) → Ops | 3 |
+| 32 | Onboarding | Digital: register, maker prices (select all, one margin, no charge), Compliance approves, the business trades | Applicant → Maker → Compliance → SME | 6 |
+| 33 | Onboarding | Offline by Sales: credentials shown; Compliance returns it; the maker reprices; a second Compliance user approves | Sales → Maker → Compliance → Maker → Compliance2 | 2 |
+| 34 | Onboarding | Clarification: the applicant supplies its IEC; the maker prices; Compliance approves | Applicant → Maker → Compliance | 1 |
+| 35 | Onboarding | Compliance rejects an application; the applicant can no longer sign in | Compliance | 1 |
+| 36 | Onboarding | A duplicate PAN is flagged to the maker | Applicant → Maker | 1 |
+| 37 | Admin | Administrator adds a Compliance user and changes the controls; the audit log records it | Admin | 3 |
+| 38 | Reports | Reports: bill amount beside outstanding, aging with rows, UFI status, FIRC downloads, CSV export | SME, Ops | 5 |
+| 39 | Lab | Test data lab: a new business with parked requests that carry on through the real workflow | Maker, Ops | 2 |
+| 40 | Testing | Master test user: one sign-in; “Do it as …” carries a payment through every stage, never to someone who already handled it | Master → SME → Maker → Checker → Ops | 13 |
+| 41 | Platform | Type an amount and click straight away: the first click counts | SME | 2 |
+| 42 | Platform | The browser never goes back to an older copy of the state | Any | 1 |
+| 43 | Platform | Phone width: drawer navigation, no horizontal scroll | SME | 1 |
+| 44 | Platform | A half-filled registration survives a reload | Applicant | 1 |
+| 45 | Platform | Reset demo data restores the starting data for everyone | Any | 3 |
 
 ## Try it yourself
 
@@ -98,7 +130,8 @@ supplier against a bill*. Choose DIR, pick BL-24014 from the dropdown, book the 
 To sign in as each role separately instead, use the passcode **demo** with:
 - **MERIDIANTEX / SMEUSER**, **AD2 / MAKER**, **AD2 / CHECKER** and **AD2 / OPS** for payments;
 - **NILGIRISPICE / SMEUSER** for inward; its reported payment waits for **AD2 / OPS** under Receipts to confirm;
-- **AD2 / COMPLIANCE** for onboarding approvals.
+- **AD2 / COMPLIANCE** for onboarding approvals;
+- **AD2 / DEALER**, **AD2 / TCHECKER** and **AD2 / BRANCH** for the treasury portal (`/treasury/`) — signing in as any of them from either portal lands there.
 
 ## Decisions taken
 
