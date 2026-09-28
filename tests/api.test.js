@@ -157,3 +157,26 @@ test('master test user: the server hands over the other user’s own session', a
   const maker = await signIn('AD2', 'MAKER');
   assert.equal((await call('POST', 'session', { token: maker, body: { as: { domainId: 'AD2', loginId: 'OPS' } } })).status, 403);
 });
+
+test('treasury portal over the API: one sign-in, scoped views, a branch deal lands on the dealer’s book', async () => {
+  const br = await signIn('AD2', 'BRANCH');
+  const st = await call('GET', 'state', { token: br });
+  assert.equal(st.body.state.scope, 'tmp-branch');
+  assert.ok(st.body.state.positions.every(p => p.branchId === 'BR-MUMFORT'));
+  assert.equal(st.body.state.covers.length, 0, 'no cover reaches a branch');
+  const q = await call('POST', 'command', { token: br, body: { cmd: 'quote.get', payload: { product: 'CSH', currency: 'USD', side: 'SELL', amount: 500 } } });
+  assert.equal(q.status, 200, JSON.stringify(q.body));
+  const bk = await call('POST', 'command', { token: br, body: { cmd: 'quote.book', payload: { id: q.body.result.quote.id, reviewed: true } } });
+  assert.equal(bk.status, 200, JSON.stringify(bk.body));
+  const dl = await signIn('AD2', 'DEALER');
+  const ds = await call('GET', 'state', { token: dl });
+  assert.equal(ds.body.state.scope, 'tmp-full');
+  assert.ok(ds.body.state.positions.some(p => p.id === bk.body.result.positionId), 'the dealer sees the branch deal at once');
+  /* the branch cannot approve; a customer cannot touch treasury */
+  const apr = ds.body.state.approvals.find(a => a.status === 'Pending');
+  assert.equal((await call('POST', 'command', { token: br, body: { cmd: 'approval.approve', payload: { id: apr.id } } })).status, 403);
+  const sme = await signIn('MERIDIANTEX', 'SMEUSER');
+  assert.equal((await call('POST', 'command', { token: sme, body: { cmd: 'quote.get', payload: { product: 'REM', currency: 'USD', side: 'SELL', amount: 1 } } })).status, 403);
+  const ss = await call('GET', 'state', { token: sme });
+  assert.ok(ss.body.state.rateDesk.length && ss.body.state.rateDesk.every(r => r.card === undefined), 'the customer sees whether it can book, never the card rate');
+});

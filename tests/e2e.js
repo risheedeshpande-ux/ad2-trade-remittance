@@ -131,34 +131,31 @@ async function startServer() {
       await page.waitForSelector('.done-card h1:has-text("submitted")');
     });
 
-    /* treasury: the booking is already a position on the desk */
-    let posId, covId;
-    await step('7a dealer enters cover', async () => {
+    /* treasury, in the Treasury Management Portal: the booking is already a
+       position on the book; the dealer covers it and allocates the cover */
+    let posId;
+    const backToTrade = async () => { await page.goto(srv.base + '/app.html'); await page.waitForSelector('.guide'); await page.waitForTimeout(300); };
+    await step('7a dealer enters cover in the treasury portal', async () => {
       await guideNext();
-      await page.waitForSelector('h1:has-text("Treasury desk")');
-      const p = await page.evaluate(() => { const x = DB.positions.find(q => q.status === 'Attached' && q.side === 'SELL'); return { id: x.id, cur: x.currency, amt: x.amount }; });
-      posId = p.id;
-      console.log('    position', p.id, p.cur, p.amt);
-      await page.evaluate(q => coverModal({ cur: q.cur, side: 'BUY', amt: q.amt }), p);
-      await page.waitForSelector('#cv-amt');
-      await modalOk();
-      await toastSays(/checker/);
-      covId = await page.evaluate(() => DB.covers[0].id);
+      await page.waitForSelector('.pagehead h1:has-text("Bank cover deal entry")');
+      posId = await page.evaluate(() => { const x = DB.positions.filter(q => q.status === 'Attached' && q.side === 'SELL' && q.channel === 'Trade portal')
+        .sort((a, b) => String(b.bookedAt).localeCompare(String(a.bookedAt)))[0]; return x.id; });
+      console.log('    position', posId);
+      const mid = await page.locator('#cv-rate').getAttribute('placeholder');
+      await page.fill('#cv-rate', mid);
+      await click('[data-act="cv-save"]:not([data-alloc])'); await page.waitForTimeout(600);
+      await toastSays(/cover COV-/);
+      await backToTrade();
     });
-    await step('7b treasury checker approves', async () => {
+    await step('7b dealer allocates the cover to the booking', async () => {
       await guideNext();
-      await click(`[data-act="tr-cover-approve"][data-id="${covId}"]`);
-      await modalOk();
-      await toastSays(/approved/);
-    });
-    await step('7c dealer allocates', async () => {
-      await guideNext();
-      await page.waitForSelector('h1:has-text("Allocate")');
-      await page.check(`[data-act="tr-alloc-tick"][data-id="${posId}"]`); await page.waitForTimeout(300);
-      await click('[data-act="tr-alloc-confirm"]'); await idle();
+      await page.waitForSelector('.pagehead h1:has-text("Allocate bank cover")');
+      if (!(await page.locator(`[data-al="${posId}"]`).isChecked())) await page.check(`[data-al="${posId}"]`);
+      await click('[data-act="al-confirm"]'); await page.waitForTimeout(600);
       await toastSays(/Allocated/);
       const state = await page.evaluate(id => Engine.treasury.coverState(DB.positions.find(p => p.id === id)), posId);
-      if (state !== 'Covered') throw new Error('Position not covered: ' + state);
+      if (!['Covered', 'Partial'].includes(state)) throw new Error('Position not covered: ' + state);
+      await backToTrade();
     });
 
     await step('8 maker verifies', async () => {
@@ -183,11 +180,13 @@ async function startServer() {
       await page.waitForSelector('h1:has-text("Completed")');
     });
 
-    await step('10a dealer sees the position concluded', async () => {
+    await step('10a dealer sees the position concluded and the Nostro move', async () => {
       await guideNext();
-      await page.waitForSelector('h1:has-text("Concluded")');
-      const t = await page.locator('.card:has(h2:has-text("Cover and P&L"))').textContent();
-      if (!/Sales margin/.test(t) || !/realised/.test(t)) throw new Error('No P&L on the position');
+      await page.waitForSelector('.pagehead h1:has-text("Trade desk")');
+      const row = page.locator(`tr:has(a[data-pos="${posId}"])`).first();
+      const t = await row.textContent();
+      if (!/Complete/.test(t) || !/AD2O\d+/.test(t)) throw new Error('Position not concluded by the UTR: ' + t);
+      await backToTrade();
     });
 
     await step('11 sme lodges export bill', async () => {

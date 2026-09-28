@@ -1,0 +1,93 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-02 — Position by currency and product · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html" class=on>Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Dealer</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-02</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><span aria-current=page>Positions</span><span class=sep>/</span><span aria-current=page>Position by currency and product</span></nav><span class=sp></span><div class=pager><span class=off>&lsaquo; Prev</span><span class=count>1 of 3</span><a href="T-03.html" title="Open position calculation">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Positions"><a href="T-02.html" class=on>Position by currency and product</a><a href="T-03.html">Open position calculation</a><a href="T-20.html">Open position rates and P&amp;L</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <div class=pagehead><h1>Position by currency and product</h1><span class=sp></span><div class=pageacts><button class="btn" data-dlg="dlg-saveallocate">Save and allocate</button><button class="btn sec" data-dlg="dlg-export">Export</button></div></div>
+    <p class=sub>All branches &nbsp;·&nbsp; Today &nbsp;·&nbsp; amounts in row currency &nbsp;·&nbsp; View: uncovered FCY</p>
+    <div class=statustabs role=tablist><button class=on data-toggle-status>All<span class=n>38</span></button><button data-toggle-status>Uncovered<span class=n>12</span></button><button data-toggle-status>Part covered<span class=n>9</span></button><button data-toggle-status>Fully covered<span class=n>14</span></button><button data-toggle-status>Cancelled<span class=n>3</span></button></div>
+    
+    <div class=note><b>Design note</b>Product and branch drill-downs preserve the currency filter. Never total mixed FCY amounts. Short/long labels follow the agreed company-side sign rules.</div>
+    
+<div class=filters><span class="chip on">Uncovered FCY</span><span class=chip>Booked FCY</span>
+ <span class=chip>Covered FCY</span><span class=sp></span>
+ <span class=src>Inward shown in brackets &mdash; opposite direction</span>
+ <button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">Export</button></div>
+<div class=tbl><table class=dt>
+<thead><tr><th>CCY</th><th class=num>Remittance</th><th class=num>Forex card</th><th class=num>Cash</th>
+<th class=num>Inward</th><th class=num>Net uncovered</th><th>Position</th></tr></thead>
+<tbody>
+<tr class=sel><td class=ref>USD</td><td class=num>150,000</td><td class=num>260,000</td><td class=num>10,000</td>
+ <td class="num dim">(40,000)</td><td class="num v-bad">380,000</td><td><span class="pill bad">Short</span></td></tr>
+<tr><td class=ref>EUR</td><td class=num>50,000</td><td class=num>15,000</td><td class=num>5,000</td>
+ <td class="num dim">(10,000)</td><td class="num v-bad">60,000</td><td><span class="pill bad">Short</span></td></tr>
+<tr><td class=ref>GBP</td><td class=num>20,000</td><td class=num>15,000</td><td class=num>2,000</td>
+ <td class="num dim">(5,000)</td><td class="num v-bad">32,000</td><td><span class="pill bad">Short</span></td></tr>
+<tr><td class=ref>AED</td><td class=num>12,000</td><td class="num dim">0</td><td class=num>3,000</td>
+ <td class="num dim">(15,000)</td><td class="num v-dim">0</td><td><span class=pill>Flat</span></td></tr>
+</tbody></table></div>
+<p class=src style="margin:-8px 0 20px">Columns are per-currency. There is deliberately no grand total row &mdash; USD, EUR, GBP and AED are never summed.</p>
+<h2 style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px">USD selected &mdash; branch contribution</h2>
+<div class=tbl><table class=dt>
+<thead><tr><th>Branch</th><th class=num>Uncovered USD</th><th>Oldest open</th><th>Positions</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td class=ref>Mumbai Fort</td><td class=num>200,000</td><td class=dim>10:15</td><td class=dim>8</td><td><a href="T-05.html">View bills</a></td></tr>
+<tr><td class=ref>Delhi</td><td class=num>120,000</td><td class=dim>11:20</td><td class=dim>5</td><td><a href="T-05.html">View bills</a></td></tr>
+<tr><td class=ref>Airport</td><td class=num>60,000</td><td class=dim>12:05</td><td class=dim>3</td><td><a href="T-05.html">View bills</a></td></tr>
+</tbody>
+<tfoot><tr><td>Total &mdash; USD only</td><td class=num>380,000</td><td colspan=3></td></tr></tfoot>
+</table></div>
+
+    <div class=related><span>Where to next</span><a href="T-03.html">Open position calculation</a><a href="T-04.html">Bank cover deal entry</a><a href="T-05.html">Allocate bank cover</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-export"><h2>Export</h2><div class=body>
+<p>Exports <b data-ctx data-ctx="the current view">the current view</b> with all active filters applied.</p>
+<label for="dlg-export-f1">Format</label><select id="dlg-export-f1"><option>Excel (.xlsx)</option><option>CSV (.csv)</option><option>PDF (print layout)</option></select>
+<div style="height:10px"></div><label for="dlg-export-f2">Scope</label>
+<select id="dlg-export-f2"><option>Current filtered rows</option><option>All rows, ignoring filters</option><option>Selected rows only</option></select>
+<div style="height:10px"></div><label for="dlg-export-f3">Include</label>
+<select id="dlg-export-f3"><option>Values as displayed</option><option>Values plus source and sync time</option></select>
+<p class=hint style="margin-top:10px">Amounts keep their currency code. Mixed-currency totals are never combined.</p>
+</div><div class=foot><button class="btn sec" data-close>Cancel</button>
+<button class=btn data-confirm="Export queued — download will start shortly">Export</button></div></dialog>
+<dialog id="dlg-saveallocate"><h2>Save and allocate</h2><div class=body><p>Records the deal and opens the allocation workspace with it loaded.</p><dl><dt>Deal</dt><dd>COV-2051 · USD 100,000</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="COV-2051 saved — opening allocation" data-kind="ok">Save and allocate</button></div></dialog>
+<script src="tmp.js?v=2"></script>

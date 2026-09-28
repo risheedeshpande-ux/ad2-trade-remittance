@@ -171,7 +171,8 @@ function masterBarHTML() {
       }
     }
   }
-  const groups = [['Businesses', l => l.role.startsWith('SME')], ['AD2 staff', l => l.domainId === 'AD2']];
+  const groups = [['Businesses', l => l.role.startsWith('SME')], ['AD2 trade staff', l => l.domainId === 'AD2' && portalOf(l.role) !== 'TMP'],
+    ['Treasury portal', l => portalOf(l.role) === 'TMP']];
   const opts = groups.map(([g, f]) => `<optgroup label="${g}">${personas().filter(f).map(l => `<option value="${esc(keyOf(l))}" ${S && keyOf(l) === myKey() ? 'selected' : ''}>
       ${esc(l.name || l.loginId)} — ${esc(l.role.startsWith('SME') ? (l.tradingName || l.domainId) : shortRole(l.role))}</option>`).join('')}</optgroup>`).join('');
   return `<div class="mbar" role="region" aria-label="Master test user">
@@ -189,7 +190,10 @@ function masterBarHTML() {
 async function masterAs(d, l, dest, focus) {
   if (!MASTER) return;
   if (focus) { MASTER.focus = focus; sessSet('ad2-master', MASTER); }
-  if (S && S.domainId === d && S.loginId === l) { location.hash = dest || homeHash(); render({ keepScroll:false }); return; }
+  if (S && S.domainId === d && S.loginId === l) {
+    if ((dest && dest.startsWith('treasury/')) || isTreasury()) { location.href = dest && dest.startsWith('treasury/') ? dest : TMP_HOME; return; }
+    location.hash = dest || homeHash(); render({ keepScroll:false }); return;
+  }
   if (IN_FLIGHT) return;
   IN_FLIGHT = true; document.body.classList.add('busy');
   try {
@@ -207,6 +211,8 @@ async function masterAs(d, l, dest, focus) {
       applyServer(r);
     }
     resetDrafts();
+    /* treasury personas and treasury steps open the Treasury Management Portal */
+    if ((dest && dest.startsWith('treasury/')) || isTreasury()) { location.href = dest && dest.startsWith('treasury/') ? dest : TMP_HOME; return; }
     location.hash = dest || homeHash();
     render({ keepScroll: false });
     toast('Now testing as ' + (S.name || S.loginId) + ' — ' + S.role + '.', 'ok');
@@ -251,6 +257,37 @@ const QUICK = [
   ['Transact for a customer', 'Sales opens a customer’s portal and books a payment on its behalf.', 'AD2', 'SALES', '#/ad2/directory'],
   ['Change the controls', 'Administrator: purpose codes, documents, users, settings and the audit log.', 'AD2', 'ADMIN', '#/ad2/admin/settings'],
 ];
+/* Journeys in the Treasury Management Portal — the same platform: a trade
+   booking above is already a position there. */
+const QUICK_TMP = [
+  ['Quote and book at the counter', 'Branch: take a rate, book it (the exposure goes to treasury), punch the FX Plus bill so it links back.', 'AD2', 'BRANCH', 'treasury/index.html#/B-02'],
+  ['Quote a trade customer at the branch', 'The rate becomes an FX deal reference; AD2 applies it to the customer’s payment here.', 'AD2', 'BRANCH', 'treasury/index.html#/B-02'],
+  ['Cover the book', 'Dealer: see trade bookings and branch deals by currency, enter bank cover, allocate it.', 'AD2', 'DEALER', 'treasury/index.html#/T-02'],
+  ['Publish card rates', 'Dealer proposes base and card rates; a checker publishes them. No card rate, no trade booking.', 'AD2', 'DEALER', 'treasury/index.html#/T-24'],
+  ['Issue an FX deal', 'Dealer issues a negotiated rate for a trade customer; AD2 applies it in the trade portal.', 'AD2', 'DEALER', 'treasury/index.html#/T-28'],
+  ['Approve treasury entries', 'Checker: card rates, forward settlements, held deals, Nostro replacements — before and after.', 'AD2', 'TCHECKER', 'treasury/index.html#/T-21'],
+  ['Work the cut-off queue', 'Branch: residuals cancel at cut-off unless linked, kept with a reason, or cancelled now.', 'AD2', 'BRANCH', 'treasury/index.html#/B-06'],
+  ['Book as an agent', 'Agent partner quotes for its servicing branch, with its spread on top.', 'SUNDARFX', 'AGENT', 'treasury/index.html#/B-02a'],
+];
+/* What treasury has waiting: approvals (never for their maker), and branch
+   deals still waiting on a bill before cut-off. */
+function treasuryItems() {
+  const out = [];
+  const logins = DB.logins.filter(l => l.active !== false);
+  const can2 = (l, cap) => { const r = roleDef(l.role); return r && r.can.includes(cap); };
+  (DB.approvals || []).filter(a => a.status === 'Pending').forEach(a => {
+    const who = logins.filter(l => can2(l, 'treasury.approve') && keyOf(l) !== a.makerKey);
+    out.push({ ref: a.id, what: a.type + ' — ' + a.title, amount: a.amount != null ? (a.currency === 'INR' ? inr(a.amount) : money(a.amount, a.currency || '')) : '—',
+      next: 'Approve or reject', who, dest: 'treasury/index.html#/T-21?id=' + a.id });
+  });
+  const now = nowISO();
+  (DB.positions || []).filter(p => !p.smeId && p.status === 'Open' && p.cutoffAt && Engine.treasury.remaining(p) > 0.005).forEach(p => {
+    const who = logins.filter(l => can2(l, 'tmp.link') && (!l.branchScope || l.branchScope === p.branchId));
+    out.push({ ref: p.id, what: `${p.product} ${p.currency} at ${Engine.tmp.nodeName(DB, p.branchId)} — cut-off ${Engine.tmp.istClock(p.cutoffAt)} IST`, amount: money(Engine.treasury.remaining(p), p.currency),
+      next: (p.linkedAmount || 0) > 0 ? 'Link the rest of the bill' : 'Link the FX Plus bill', who, dest: 'treasury/index.html#/B-05?pos=' + p.id });
+  });
+  return out;
+}
 
 function viewTestConsole() {
   const off = DB.settings.testLab === false;
@@ -291,9 +328,22 @@ function viewTestConsole() {
     return `<div class="mt-quick"><b>${esc(t)}</b><p>${esc(blurb)}</p>${btn}</div>`;
   }).join('');
 
+  const quickTmp = QUICK_TMP.map(([t, blurb, d, l, dest]) => {
+    const who = DB.logins.find(x => x.domainId === d && x.loginId === l && x.active !== false);
+    return `<div class="mt-quick"><b>${esc(t)}</b><p>${esc(blurb)}</p>${who ? goBtn(who, dest, `Start as ${esc(who.name)}`, null, 'btn btn-plain btn-sm') : ''}</div>`;
+  }).join('');
+  const tItems = treasuryItems();
+  const tRow = x => `<tr><td><b>${esc(x.ref)}</b></td><td>${esc(x.what)}</td><td class="num">${x.amount}</td><td>${esc(x.next)}</td>
+    <td>${x.who[0] ? goBtn(x.who[0], x.dest, `As ${esc(x.who[0].name || x.who[0].loginId)}`) + `<br><small style="color:var(--muted)">${esc(x.who[0].role)}</small>` : '<small style="color:var(--r4m-red)">No eligible user left</small>'}</td></tr>`;
+  const tAll = MT_ALL.tmp || tItems.length <= LIMIT;
+  const tTable = tItems.length ? `<div class="tablewrap"><table class="dt"><thead><tr><th>Item</th><th>What</th><th class="num">Amount</th><th>Next step</th><th>Who does it</th></tr></thead>
+    <tbody>${(tAll ? tItems : tItems.slice(0, LIMIT)).map(tRow).join('')}</tbody></table></div>
+    ${tItems.length > LIMIT ? `<div class="card-body" style="padding-top:var(--s2)"><button type="button" class="btn btn-link" data-act="mt-all" data-k="tmp">${tAll ? 'Show the first ' + LIMIT : 'Show all ' + tItems.length}</button></div>` : ''}`
+    : `<div class="card-body"><p style="color:var(--muted);margin:0">Nothing is waiting in treasury.</p></div>`;
+
   const people = personas();
   const groups = [['Customers', people.filter(l => l.role === 'SME User')], ['Applications in progress', people.filter(l => l.role === 'SME Applicant')],
-    ...[...new Set(people.filter(l => l.domainId === 'AD2').map(l => l.role))].map(r => [r, people.filter(l => l.role === r)])];
+    ...[...new Set(people.filter(l => !l.role.startsWith('SME')).map(l => l.role))].map(r => [portalOf(r) === 'TMP' ? r + ' — treasury portal' : r, people.filter(l => l.role === r)])];
   const card = l => `<div class="mt-person">
       <div><b>${esc(l.name || l.loginId)}</b>
         <span>${esc(l.role.startsWith('SME') ? (l.tradingName || l.domainId) : shortRole(l.role))}${l.test ? ' · test' : ''}${l.demo ? '' : ' · registered'}</span>
@@ -324,6 +374,11 @@ function viewTestConsole() {
       ${table('ad2', withAd2, 'Nothing is waiting on AD2. Start a journey above.')}</div>
     <div class="card" style="margin-bottom:var(--s5)"><div class="card-head"><h2>Waiting on a customer (${withCust.length})</h2></div>
       ${table('cust', withCust, 'Nothing is waiting on a customer.')}</div>
+    <div class="card" style="margin-bottom:var(--s5)"><div class="card-head"><h2>Treasury Management Portal</h2>
+      <div class="acts"><a class="btn btn-plain btn-sm" href="${TMP_HOME}">Open it as the master (read-only)</a></div></div>
+      <div class="card-body"><p style="margin:0 0 12px;color:var(--muted)">The treasury portal runs on this same platform: every rate booked above is a position there, deals
+        treasury issues are applied here, and UTRs and FIRCs conclude the positions and move the Nostro.</p><div class="mt-quicks">${quickTmp}</div></div>
+      <div class="card-head" style="border-top:1px solid var(--line)"><h2>Waiting in treasury (${tItems.length})</h2></div>${tTable}</div>
     <div class="card" style="margin-bottom:var(--s5)"><div class="card-head"><h2>Open the platform as</h2></div>
       <div class="card-body">${peopleHTML}</div></div>
     <div class="card"><div class="card-head"><h2>Latest activity</h2>

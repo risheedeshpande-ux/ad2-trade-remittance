@@ -55,14 +55,35 @@ async function startServer() {
   const select = async (sel, v) => { await page.selectOption(sel, v); await wait(300); };
   const noCrash = async where => {
     if (await page.locator('text=Something went wrong rendering this screen').count()) throw new Error('Render error at ' + where);
+    if (await page.locator('.banner b:has-text("This screen could not be shown")').count()) throw new Error('Treasury portal render error at ' + where);
   };
   const go = async hash => { await page.evaluate(h => { location.hash = h; }, hash); await wait(400); await noCrash(hash); };
+  /* Two front ends on one platform: trade users work in app.html, treasury
+     users in treasury/. Switching to a treasury persona lands in the
+     treasury portal on the same session. */
+  const inTmp = () => page.url().includes('/treasury/');
+  const toTrade = async () => {
+    await page.goto(srv.base + '/app.html');
+    await page.waitForFunction(() => typeof switchTo === 'function' && typeof DB !== 'undefined' && !!DB, null, { timeout: 15000 });
+    await wait(300);
+  };
   const signAs = async (d, l) => {
+    if (inTmp()) await toTrade();
     await closeModal();
-    const ok = await page.evaluate(([d, l]) => switchTo(d, l), [d, l]);
+    const tmp = await page.evaluate(([d, l]) => portalOf((DB.logins.find(x => x.domainId === d && x.loginId === l) || {}).role) === 'TMP', [d, l]);
+    let ok = true;
+    try { ok = await page.evaluate(([d, l]) => switchTo(d, l), [d, l]); } catch (e) { /* navigating to the treasury portal */ }
+    if (tmp) {
+      await page.waitForURL(/\/treasury\//, { timeout: 15000 });
+      await page.waitForSelector('#root .app .nav', { timeout: 15000 }); await wait(300);
+      return;
+    }
     await idle(); await wait(450);
     if (!ok) throw new Error(`Could not sign in as ${d}/${l}`);
   };
+  /* treasury portal: native dialogs */
+  const dlgOk = async () => { await click('dialog[open] [data-dlg-ok]'); await wait(400); };
+  const tmpCount = (sel) => page.locator(sel).count();
   const api = (c, p) => page.evaluate(([c, p]) => send(c, p).then(r => ({ ok: true, r })).catch(e => ({ ok: false, status: e.status, msg: e.message })), [c, p]);
   const state = (fn, arg) => page.evaluate(fn, arg);
   const toastSays = re => page.waitForFunction(r => [...document.querySelectorAll('.toast')].some(t => new RegExp(r, 'i').test(t.textContent)), re.source, { timeout: 10000 });
@@ -658,23 +679,32 @@ async function startServer() {
       check(await state(i => bill(i).review, billId) === 'Accepted', 'the bill is accepted and can be disposed against');
     });
 
-    /* ================= treasury ================= */
-    await scenario('Treasury', 'A customer books a rate; it is on the treasury desk at once; a rate revision after it does not change it', 'SME → Dealer → Treasury checker → SME', async () => {
+    /* ================= treasury: the Treasury Management Portal, and trade ⇄ treasury ================= */
+    await scenario('Treasury', 'Trade → treasury: a customer’s booking is a position on the treasury book at its branch at once; a rate published after it does not change it', 'SME → Dealer → Treasury checker → SME', async () => {
       await signAs('MERIDIANTEX', 'SMEUSER');
       const b = await api('rate.book', { dir: 'out', currency: 'EUR', amount: 12000 });
       check(b.ok && /^POS-/.test(b.r.positionId) && b.r.refRate === undefined, 'booking returns a position and never the reference rate');
       await go('#/sme/dashboard'); await page.evaluate(() => render()); await wait(200);
       check(await page.locator(`.card:has-text("Your rate bookings") td.id:has-text("${b.r.positionId}")`).count() === 1, 'the customer sees its booking with the lock on its dashboard');
-      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury');
-      await page.waitForSelector('h1:has-text("Treasury desk")');
-      await go('#/ad2/treasury/positions');
-      check(await page.locator(`td.id:has-text("${b.r.positionId}")`).count() === 1, 'the dealer sees the new position on the blotter');
-      await go('#/ad2/treasury/rates');
-      await page.fill('[data-rate="EUR"]', String((await state(() => currency('EUR').refRate)) + 0.4));
-      await page.fill('#rr-reason', 'QA revision'); await click('[data-act="tr-rate-propose"]');
-      check(await page.locator('[data-act="tr-rate-approve"]').count() === 0, 'the dealer cannot approve a revision');
-      await signAs('AD2', 'TCHECKER'); await go('#/ad2/treasury/approvals');
-      await click('[data-act="tr-rate-approve"]');
+      await signAs('AD2', 'DEALER'); await go('#/T-28');
+      await page.waitForSelector('.pagehead h1:has-text("Trade desk")');
+      check(await tmpCount(`a[data-pos="${b.r.positionId}"]`) >= 1, 'the dealer sees the booking on the trade desk of the treasury portal');
+      const p = await state(id => DB.positions.find(x => x.id === id), b.r.positionId);
+      check(p.branchId === 'BR-MUMFORT' && p.product === 'REM' && p.channel === 'Trade portal', 'it sits at Mumbai Fort (the customer’s GSTIN state) as an outward remittance from the trade portal');
+      await click(`a[data-pos="${b.r.positionId}"]`); await page.waitForSelector('.drawer');
+      check(/Trade portal|Not submitted/.test(await text('.drawer')), 'the position drawer shows both tracks: not yet submitted, uncovered');
+      await click('.drawer .x');
+      await go('#/T-24');
+      const base = await state(() => DB.currencies.find(c => c.code === 'EUR').refRate);
+      await click('button[data-act="rd-propose"][data-p="REM"][data-c="EUR"]'); await page.waitForSelector('dialog[open]');
+      await page.fill('dialog[open] [data-k=base]', (base + 0.4).toFixed(4)); await page.fill('dialog[open] [data-k=card]', (base + 1.3).toFixed(4));
+      await page.fill('#rp-reason', 'QA revision'); await dlgOk(); await toastSays(/checker/);
+      const apr = await state(() => DB.approvals.find(a => a.type === 'Card rate' && a.status === 'Pending' && a.note === 'QA revision').id);
+      await go('#/T-21');
+      check(await tmpCount('[data-act="apr-ok"]') === 0, 'the dealer holds no approval control at all');
+      await signAs('AD2', 'TCHECKER'); await go('#/T-21?id=' + apr);
+      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
+      check(Math.abs(await state(() => DB.currencies.find(c => c.code === 'EUR').refRate) - (base + 0.4)) < 0.0001, 'the checker publishes the new base: the trade reference for EUR');
       await signAs('MERIDIANTEX', 'SMEUSER');
       const pos = await state(id => DB.positions.find(p => p.id === id), b.r.positionId);
       check(pos.customerRate === b.r.customerRate, 'the booked rate did not move when treasury published a new rate');
@@ -684,47 +714,170 @@ async function startServer() {
       await click(`[data-act="bk-release"][data-id="${again.r.positionId}"]`); await modalOk();
       check(await state(id => DB.positions.find(p => p.id === id)?.status, again.r.positionId) === 'Cancelled', 'the customer releases a booking it no longer needs');
     });
-    await scenario('Treasury', 'Cover: the dealer enters a bank deal, a second checker approves it, the dealer allocates it; over-allocation is blocked', 'Dealer → Treasury checker → Dealer', async () => {
-      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury');
-      await click('[data-act="tr-cover-new"]');
-      await select('#cv-cur', 'USD'); await page.fill('#cv-amt', '30000'); await modalOk();
-      const cov = await state(() => DB.covers[0].id);
-      await signAs('AD2', 'TCHECKER'); await go('#/ad2/treasury/approvals');
-      await click(`[data-act="tr-cover-approve"][data-id="${cov}"]`); await modalOk();
-      await signAs('AD2', 'DEALER'); await go('#/ad2/treasury/allocate?src=' + cov);
-      await page.waitForSelector('h1:has-text("Allocate")');
-      const first = await page.locator('[data-act="tr-alloc-tick"]').first().getAttribute('data-id');
-      await page.check(`[data-act="tr-alloc-tick"][data-id="${first}"]`); await wait(300);
-      await page.fill(`[data-act="tr-alloc-amt"][data-id="${first}"]`, '999999'); await wait(200);
-      check(await page.locator('.note-err:has-text("Over-allocated")').count() === 1 && await page.locator('[data-act="tr-alloc-confirm"][disabled]').count() === 1,
-        'over-allocation shows at once and confirm is disabled');
-      await click('[data-act="tr-alloc-clear"]'); await click('[data-act="tr-alloc-fifo"]');
-      await click('[data-act="tr-alloc-confirm"]'); await toastSays(/Allocated/);
-      check(await state(id => DB.covers.find(c => c.id === id).allocated, cov) > 0, 'the cover is allocated to the oldest open sales first');
-      await shot('treasury-allocated');
+    await scenario('Treasury', 'The rate desk gates quoting: a card rate that is not published cannot be quoted until a checker publishes it', 'Branch → Dealer → Treasury checker 2 → Branch', async () => {
+      await signAs('AD2', 'BRANCH');
+      const r = await api('quote.get', { product: 'FXC', currency: 'JPY', side: 'SELL', amount: 100000 });
+      check(!r.ok && /no published card rate/i.test(r.msg), 'a branch cannot quote a forex card in JPY while its card rate is unpublished');
+      await go('#/B-02'); await select('#bq-product', 'FXC');
+      check(/not published/.test(await text('#bq-currency option[value="JPY"]')), 'the quote form marks JPY as not published');
+      await signAs('AD2', 'DEALER'); await go('#/T-24');
+      check(await tmpCount('.banner.bad:has-text("not published")') === 1, 'the rate desk lists the unpublished card rates');
+      await click('.pageacts [data-act="rd-propose"]'); await page.waitForSelector('dialog[open]');
+      check(await tmpCount('dialog[open] [data-k=card]') >= 3, 'proposing starts from every unpublished rate, with a suggested card rate');
+      await page.fill('#rp-reason', 'Publish missing cards'); await dlgOk(); await toastSays(/checker/);
+      const apr = await state(() => DB.approvals.find(a => a.type === 'Card rate' && a.status === 'Pending' && a.note === 'Publish missing cards').id);
+      await signAs('AD2', 'TCHECKER2'); await go('#/T-21?id=' + apr);
+      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
+      await signAs('AD2', 'BRANCH');
+      const r2 = await api('quote.get', { product: 'FXC', currency: 'JPY', side: 'SELL', amount: 100000 });
+      check(r2.ok && r2.r.quote.rate > 0, 'once published, the branch quotes JPY forex cards');
     });
-    await scenario('Treasury', 'Internal cross: a customer purchase offsets customer sales in the same currency, no bank deal', 'Dealer', async () => {
+    await scenario('Treasury', 'Branch counter: quote, stepped review, book; the FX Plus bill links back on punch; knock off the rest; concluded and stock moves', 'Branch (Delhi CP)', async () => {
+      await signAs('AD2', 'BRANCH2'); await go('#/B-02');
+      await select('#bq-product', 'CSH'); await select('#bq-currency', 'USD');
+      await setVal('#bq-amount', 2000); await setVal('#bq-customerName', 'Walk-in — QA');
+      await click('[data-act="bq-quote"]'); await toastSays(/Rate quoted/);
+      check(await tmpCount('.ratebox .big') === 1, 'the rate, principal, validity and the card-rate ceiling appear beside the form');
+      await click('a:has-text("Review and confirm")'); await page.waitForSelector('.pagehead h1:has-text("Review and confirm rate")');
+      check(await tmpCount('.steps div.on:has-text("Review rate")') === 1 && /First quote/.test(await text('#main')), 'a first quote by this user takes the stepped review');
+      await click('[data-act="b03-book"]'); await wait(200);
+      check(await tmpCount('.toast:has-text("Tick the review confirmation")') >= 1, 'booking needs the review ticked');
+      await page.check('#b03-ok'); await click('[data-act="b03-book"]'); await toastSays(/exposure transferred/);
+      await page.waitForSelector('.drawer');
+      const posId = (await text('.drawer .hd h2')).trim();
+      const stock0 = await state(() => Engine.tmp.inventory(DB, new Date().toISOString()).filter(i => i.locationId === 'BR-DELCP' && i.currency === 'USD').reduce((t, i) => t + i.qty, 0));
+      await click('.drawer [data-act="punch"]'); await page.waitForSelector('dialog[open]');
+      await page.fill('#pb-amt', '1200'); await dlgOk(); await toastSays(/linked to/);
+      check(await state(id => Engine.treasury.remaining(DB.positions.find(p => p.id === id)), posId) === 800, 'a bill carrying the position reference links itself: 800 left');
+      await go('#/B-05?pos=' + posId);
+      await click('.pageacts [data-act="punch"]'); await page.waitForSelector('dialog[open]');
+      await select('#pb-ref', 'no'); await dlgOk(); await toastSays(/knock-off queue/);
+      await page.check('[data-ko]'); await wait(200);
+      check(/800/.test(await text('#ko-sel')), 'ticking the bill updates the reconciliation strip');
+      await click('[data-act="ko-confirm"]'); await toastSays(/complete/);
+      check(await state(id => DB.positions.find(p => p.id === id).status, posId) === 'Concluded', 'the position is concluded when fully linked');
+      const stock1 = await state(() => Engine.tmp.inventory(DB, new Date().toISOString()).filter(i => i.locationId === 'BR-DELCP' && i.currency === 'USD').reduce((t, i) => t + i.qty, 0));
+      check(Math.abs(stock0 - stock1 - 2000) < 0.01, 'the cash deal took USD 2,000 out of the branch’s stock');
+      await shot('tmp-branch-concluded');
+    });
+    await scenario('Treasury', 'Cut-off: keep one deal past cut-off with a reason, cancel another — its residual and cover go back to the pool', 'Branch (Mumbai Fort)', async () => {
+      await signAs('AD2', 'BRANCH');
+      const book = async amt => { const q = await api('quote.get', { product: 'REM', currency: 'GBP', side: 'SELL', amount: amt, customerName: 'QA cut-off' }); return (await api('quote.book', { id: q.r.quote.id, reviewed: true })).r.positionId; };
+      const p1 = await book(700), p2 = await book(900);
+      await go('#/B-06');
+      check(await tmpCount(`a[data-pos="${p1}"]`) === 1 && await tmpCount(`a[data-pos="${p2}"]`) === 1, 'both deals are in the cut-off queue with a countdown');
+      await click(`tr:has(a[data-pos="${p1}"]) [data-act="keep"]`); await page.waitForSelector('dialog[open]');
+      await dlgOk();
+      check(await tmpCount('dialog[open] .err:not([hidden])') === 1, 'keeping a deal needs a reason');
+      await page.fill('#dlg-reason', 'Customer returns tomorrow with the balance'); await dlgOk(); await toastSays(/held past cut-off/);
+      await click(`tr:has(a[data-pos="${p2}"]) [data-act="cancel-pos"]`); await page.waitForSelector('dialog[open]');
+      await page.fill('#dlg-reason', 'Customer withdrew'); await page.check('#cx-dead'); await dlgOk(); await toastSays(/cancelled/);
+      check(await state(id => DB.positions.find(p => p.id === id).status, p2) === 'Cancelled', 'the cancelled deal leaves the book');
+      check(!!(await state(id => DB.positions.find(p => p.id === id).kept, p1)), 'the kept deal records who kept it and why');
+    });
+    await scenario('Treasury', 'Cover: a spot deal is live when saved and pays from its settlement account; over-allocation is blocked; then allocated', 'Dealer', async () => {
       await signAs('AD2', 'DEALER');
-      const src = await state(() => Engine.treasury.suggestions(DB, nowISO()).find(s => s.kind === 'cross')?.source);
-      check(!!src, 'the desk suggests a cross where both sides are open');
-      await go('#/ad2/treasury/allocate?src=' + src);
-      await click('[data-act="tr-alloc-fifo"]'); await click('[data-act="tr-alloc-confirm"]'); await toastSays(/Allocated/);
-      const cur = await state(id => DB.positions.find(p => p.id === id).currency, src);
-      check(await state(c => Engine.treasury.netByCurrency(DB, nowISO())[c]?.crossable || 0, cur) === 0, 'nothing is left to cross in ' + cur);
-      await go('#/ad2/treasury/pnl'); await page.waitForSelector('h1:has-text("P&L")');
-      check(await page.locator('text=Sales margin').count() >= 1 && await page.locator('text=Dealing — realised').count() >= 1, 'P&L shows sales margin and dealing result apart');
-      await go('#/ad2/treasury/events');
-      check(await page.locator('code:has-text("position.opened")').count() > 0, 'the integration log lists what trade sent treasury');
-      await go('#/ad2/treasury/exceptions'); await page.waitForSelector('h1:has-text("Exceptions")');
+      const hdfc0 = await state(() => DB.bankAccounts.find(b => b.id === 'BK-HDFC-1042').ledger);
+      await go('#/T-04?cur=USD&side=BUY&amt=30000');
+      const mid = await page.locator('#cv-rate').getAttribute('placeholder');
+      await page.fill('#cv-rate', mid); await click('[data-act="cv-save"]:not([data-alloc])'); await toastSays(/ready to allocate/);
+      const cov = await state(() => DB.covers[0]);
+      check(cov.status === 'Active' && cov.type === 'Spot', 'the cover deal is active the moment it is saved');
+      check(Math.abs(hdfc0 - await state(() => DB.bankAccounts.find(b => b.id === 'BK-HDFC-1042').ledger) - Math.round(30000 * cov.rate * 100) / 100) < 1, 'spot cover pays the INR from HDFC at once');
+      await go('#/T-05?src=' + cov.id);
+      const first = await page.locator('[data-al]').first().getAttribute('data-al');
+      await page.check(`[data-al="${first}"]`); await page.fill(`[data-alamt="${first}"]`, '999999'); await page.locator(`[data-alamt="${first}"]`).dispatchEvent('input'); await wait(200);
+      check(await tmpCount('#al-over:not([hidden])') === 1 && await tmpCount('[data-act="al-confirm"][disabled]') === 1, 'over-allocation shows at once and confirm is disabled');
+      const unc = await state(id => Engine.treasury.uncovered(DB.positions.find(p => p.id === id)), first);
+      await page.fill(`[data-alamt="${first}"]`, String(Math.min(unc, 30000))); await page.locator(`[data-alamt="${first}"]`).dispatchEvent('input'); await wait(200);
+      await click('[data-act="al-confirm"]'); await toastSays(/Allocated/);
+      check(await state(id => DB.covers.find(c => c.id === id).allocated, cov.id) > 0, 'the cover is allocated to the position');
+      await shot('tmp-treasury-allocated');
     });
-    await scenario('Treasury', 'Who sees what: the branch cannot open treasury screens; the customer never sees cover or the reference rate', 'Maker, SME, signed out', async () => {
+    await scenario('Treasury', 'Treasury → trade: a branch quote for a trade customer becomes an FX deal AD2 applies to the payment; the UTR concludes it and moves the Nostro', 'Dealer → Branch → Sales (for SME) → Maker → Checker → Ops → Dealer', async () => {
+      await signAs('AD2', 'DEALER');
+      const nostro0 = await state(() => DB.nostro.find(n => n.kind === 'Correspondent' && n.currency === 'USD' && n.status === 'Current').balance);
+      await signAs('AD2', 'BRANCH');
+      const q = await api('quote.get', { product: 'REM', currency: 'USD', side: 'SELL', amount: 5000, smeId: 'SME-1001', customerRef: 'QA-DEAL' });
+      const bk = await api('quote.book', { id: q.r.quote.id, reviewed: true });
+      check(bk.ok && /^FXD-/.test(bk.r.dealId), 'booking a trade customer’s quote issues an FX deal reference');
+      await signAs('AD2', 'SALES'); await go('#/ad2/directory');
+      await click('[data-act="assist-start"][data-id="SME-1001"]');
+      await click('.modal [data-act="assist-go"][data-dest="#/sme/outward/new"]');
+      await page.waitForSelector('h1:has-text("New outward request")');
+      const id = await newOutward({ bene: 'BEN-002', product: 'OTT', purpose: 'S1006', purposeSearch: 'management consultancy', currency: 'USD', amount: 5000, account: 'BA-001', deal: bk.r.dealId });
+      check(await state(i => outwardRec(i).rate.dealRef, id) === bk.r.dealId, 'AD2 applies the branch’s deal to the customer’s payment in the trade portal');
+      await click('[data-act="assist-exit"]');
+      await approveOutward(id);
+      await signAs('AD2', 'DEALER'); await go('#/T-28?tab=Concluded');
+      const row = await text(`.tbl:has(th:has-text("Txn link")) tr:has(a[data-pos="${bk.r.positionId}"])`);
+      check(/Complete/.test(row) && /AD2O\d+/.test(row), 'the treasury position is concluded by the payment’s UTR');
+      const nostro1 = await state(() => DB.nostro.find(n => n.kind === 'Correspondent' && n.currency === 'USD' && n.status === 'Current').balance);
+      check(Math.abs(nostro0 - nostro1 - 5000) < 0.01, 'the USD correspondent Nostro fell by the payment');
+    });
+    await scenario('Treasury', 'Limits: a trade booking over the customer’s treasury limit is held until a treasury checker releases it', 'Dealer → Treasury checker → SME → Treasury checker 2', async () => {
+      await signAs('AD2', 'DEALER'); await go('#/T-25');
+      const lim = await state(() => Engine.tmp.limits(DB, new Date().toISOString()).find(l => l.smeId === 'SME-1003'));
+      await click(`tr:has-text("${lim.name}") [data-act="lim-raise"]`); await page.waitForSelector('dialog[open]');
+      await page.fill('#lr-amt', String(Math.round(lim.outstanding + 1000000))); await page.fill('#dlg-reason', 'QA: tighten after review'); await dlgOk(); await toastSays(/checker/);
+      check(await state(id => DB.limits.find(l => l.id === id).limit, lim.id) === lim.limit, 'nothing changes before a checker approves');
+      await signAs('AD2', 'TCHECKER');
+      const apr = await state(id => DB.approvals.find(a => a.type === 'Limit change' && a.status === 'Pending' && a.ref === id).id, lim.id);
+      await go('#/T-21?id=' + apr); await click(`tr:has(a:has-text("${apr}")) [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
+      await signAs('NILGIRISPICE', 'SMEUSER');
+      const b = await api('rate.book', { dir: 'in', currency: 'USD', amount: 30000 });
+      check(b.ok && b.r.held, 'a booking over the limit is made but held');
+      await go('#/sme/dashboard'); await page.evaluate(() => render()); await wait(200);
+      check(await page.locator(`tr:has-text("${b.r.positionId}") .badge:has-text("Held")`).count() === 1, 'the customer sees the booking held by treasury');
+      await signAs('AD2', 'TCHECKER2'); await go('#/T-21?type=Held deal');
+      await click(`tr:has-text("${b.r.positionId}") [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
+      check(await state(id => DB.positions.find(p => p.id === id).status, b.r.positionId) === 'Open', 'released by a second checker, the booking can be used');
+    });
+    await scenario('Treasury', 'Approvals, exceptions, an internal cross and P&L — reasons are mandatory and a rejected entry is resubmitted as a new version', 'Dealer → Treasury checker → Dealer', async () => {
+      await signAs('AD2', 'DEALER');
+      const src = await state(() => Engine.treasury.suggestions(DB, new Date().toISOString()).find(s => s.kind === 'cross')?.source);
+      check(!!src, 'the book suggests an internal cross where both sides are open');
+      await go('#/T-05?src=' + src);
+      const n = await page.locator('[data-al]').count();
+      for (let i = 0; i < n; i++) await page.locator('[data-al]').nth(i).check();
+      await wait(200); await click('[data-act="al-confirm"]'); await toastSays(/Allocated/);
+      await go('#/T-16');
+      check(await tmpCount('.stat:has-text("Sales margin")') === 1 && await tmpCount('.stat:has-text("Dealing — realised")') === 1, 'P&L shows sales margin and dealing result apart, in INR');
+      await go('#/T-06');
+      check(await tmpCount('.statustabs button') === 5, 'exceptions are separate queues, each with a count');
+      await click('#main [data-act="exc-note"]'); await page.waitForSelector('dialog[open]');
+      await page.fill('#dlg-reason', 'QA: checked with the branch'); await select('#ex-status', 'resolve'); await dlgOk(); await toastSays(/resolved/);
+      await go('#/T-12');
+      const fw = await state(() => DB.covers.find(c => c.type === 'Forward' && c.status === 'Active' && (c.settled || 0) < c.amount && !DB.approvals.some(a => a.status === 'Pending' && a.payload.coverId === c.id)));
+      await go('#/T-12?tab=' + encodeURIComponent((fw.valueDate < await state(() => Engine.tmp.istDate(new Date().toISOString())) ? 'Overdue' : fw.valueDate === await state(() => Engine.tmp.istDate(new Date().toISOString())) ? 'Due today' : 'Pending')));
+      await click(`tr:has-text("${fw.id}") [data-act="fw-settle"]`); await page.waitForSelector('dialog[open]');
+      await page.fill('#fs-amt', '1000'); await page.fill('#fs-ev', 'QA-EVIDENCE'); await dlgOk(); await toastSays(/checker/);
+      const apr = await state(id => DB.approvals.find(a => a.type === 'Forward settlement' && a.status === 'Pending' && a.payload.coverId === id).id, fw.id);
+      await signAs('AD2', 'TCHECKER'); await go('#/T-21?id=' + apr);
+      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-no"]`); await page.waitForSelector('dialog[open]'); await dlgOk();
+      check(await tmpCount('dialog[open] .err:not([hidden])') === 1, 'a rejection needs a reason');
+      await page.fill('#dlg-reason', 'Evidence does not match the bank confirmation'); await dlgOk(); await toastSays(/Rejected/);
+      await signAs('AD2', 'DEALER'); await go('#/T-21?tab=Rejected&id=' + apr);
+      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-resubmit"]`); await page.waitForSelector('dialog[open]');
+      await page.fill('#dlg-reason', 'Attached the right confirmation'); await dlgOk(); await toastSays(/Resubmitted/);
+      check(await state(id => DB.approvals.find(a => a.supersedes === id)?.version, apr) === 2, 'the maker resubmits it as version 2; version 1 is kept');
+    });
+    await scenario('Treasury', 'Who sees what across the two portals: trade staff, branch, agent, customer and the public', 'Maker, Branch, Agent, SME, signed out', async () => {
       await signAs('AD2', 'MAKER'); await go('#/ad2/treasury');
-      check(!(await page.evaluate(() => location.hash)).startsWith('#/ad2/treasury'), 'a branch maker is turned away from the treasury desk');
-      check(await state(() => (DB.covers || []).length) === 0, 'the branch receives no cover deals');
+      check(!(await page.evaluate(() => location.hash)).startsWith('#/ad2/treasury'), 'a trade maker has no treasury screens in the trade portal');
+      check(await state(() => (DB.covers || []).length) === 0, 'the trade maker receives no cover deals');
       await go('#/ad2/outward/OR-5106');
-      check(await page.locator('.line:has-text("Treasury position")').count() === 1, 'the branch sees the treasury position behind a payment');
+      check(await page.locator('.line:has-text("Treasury position")').count() === 1, 'the trade maker sees the treasury position behind a payment');
+      await page.goto(srv.base + '/treasury/index.html'); await page.waitForSelector('#root .state, #root .app', { timeout: 15000 });
+      check(await tmpCount('h3:has-text("Your role works in the trade portal")') === 1, 'the treasury portal turns a trade role back to the trade portal');
+      await signAs('AD2', 'BRANCH');
+      check(await state(() => DB.positions.length > 0 && DB.positions.every(p => p.branchId === 'BR-MUMFORT' && p.refRate === undefined)), 'the branch sees only its own branch’s positions, without base rates');
+      check(await state(() => DB.covers.length + DB.approvals.length + DB.bankAccounts.length) === 0, 'no cover, approvals or bank balances reach a branch');
+      await signAs('SUNDARFX', 'AGENT');
+      check(await state(() => DB.positions.every(p => p.bookedByKey === 'SUNDARFX/AGENT')), 'an agent sees only the deals it booked');
       await signAs('ARCADIACOMP', 'SMEUSER');
       check(await state(() => DB.positions.every(p => p.refRate === undefined && p.covered === undefined)), 'the customer’s bookings carry no reference rate or cover');
+      check(await state(() => DB.rateDesk.every(r => r.card === undefined)), 'the customer learns whether it can book today, never the card rate');
       const pub = await page.evaluate(() => fetch('/api/state').then(r => r.json()));
       check(pub.state.currencies.every(c => c.refRate === undefined), 'signed out, no reference rates are published');
     });

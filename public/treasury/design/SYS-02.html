@@ -1,0 +1,68 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>SYS-02 — Access restricted · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html" class=on>Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Maker</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>SYS-02</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><span aria-current=page>Access restricted</span></nav><span class=sp></span></div>
+  
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Access restricted</h1>
+    <p class=sub>You do not have permission for this action</p>
+    
+    
+    <div class=note><b>Design note</b>New screen. A blocked action explains why and offers a route forward &mdash; it never shows a blank page or a raw error code.</div>
+    
+<div class="state error" style="max-width:600px;text-align:left;padding:28px">
+ <h2>Approval is limited to Treasury Checker</h2>
+ <p>You are signed in as <b>Maker A</b> with the role <b>Treasury Maker</b>. Approving forward settlements requires the Treasury Checker role, and a checker can never approve their own entry.</p>
+ <p style="margin-bottom:16px">SET-3101 has been routed to the checker queue. You will be notified if it is rejected and returned to you.</p>
+ <div class=bar style="padding-bottom:0"><a class=btn href="T-12.html">Return to forward covers</a>
+  <a class="btn sec" href="T-01.html">Go to overview</a></div>
+</div>
+<div class=tbl style="max-width:600px"><table class=dt>
+<thead><tr><th>If you need this access</th><th></th></tr></thead>
+<tbody>
+<tr><td class=dim>Request a role change</td><td><a href="ADM-01.html">Contact your administrator</a></td></tr>
+<tr><td class=dim>See what your role can do</td><td><a href="ADM-02.html">View the permission matrix</a></td></tr>
+</tbody></table></div>
+
+    
+  </div>
+</div>
+</div>
+
+<script src="tmp.js?v=2"></script>

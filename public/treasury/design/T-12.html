@@ -1,0 +1,103 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-12 — Forward covers by value date · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html" class=on>Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Dealer</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-12</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><a href="T-04.html">Covers</a><span class=sep>/</span><span aria-current=page>Forward covers by value date</span></nav><span class=sp></span><div class=pager><a href="T-05.html" title="Allocate bank cover">&lsaquo; Prev</a><span class=count>3 of 4</span><a href="T-13.html" title="Forward settlement approval">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Covers"><a href="T-04.html">Bank cover deal entry</a><a href="T-05.html">Allocate bank cover</a><a href="T-12.html" class=on>Forward covers by value date</a><a href="T-13.html">Forward settlement approval</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <div class=pagehead><h1>Forward covers by value date</h1><span class=sp></span><div class=pageacts><button class="btn" data-dlg="dlg-tochecker">Update settlement</button><button class="btn sec" data-dlg="dlg-export">Export</button></div></div>
+    <p class=sub>Pending covers &nbsp;·&nbsp; today / next 7 days / overdue &nbsp;·&nbsp; bank and currency filters</p>
+    <div class=statustabs role=tablist><button class=on data-toggle-status>Pending<span class=n>7</span></button><button data-toggle-status>Due today<span class=n>4</span></button><button data-toggle-status>Settled<span class=n>21</span></button><button data-toggle-status>Overdue<span class=n>2</span></button></div>
+    
+    <div class=note><b>Design note</b>Value-date views expose partial settlements and residuals. Pending checker updates do not change the approved balance until approval.</div>
+    
+<div class=strip>
+ <div class=stat><b class=alert>1</b><span>Overdue</span></div>
+ <div class=stat><b class=warn>1</b><span>Due today</span></div>
+ <div class=stat><b>USD 60,000</b><span>Largest pending</span></div>
+ <div class="stat plain"><b>1</b><span>Awaiting checker</span></div>
+</div>
+<div class=filters><span class="chip on">All</span><span class=chip>Today</span><span class=chip>Next 7 days</span>
+ <span class=chip>Overdue</span><span class=sp></span><span class=chip><b>Bank</b> All</span>
+ <button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">Export</button></div>
+<div class=tbl><table class=dt>
+<thead><tr><th>Cover</th><th>Bank / CCY</th><th class=num>Booked FCY</th><th class=num>Settled FCY</th>
+<th class=num>Pending FCY</th><th>Value date</th><th>State</th></tr></thead>
+<tbody>
+<tr class=sel><td class=ref>FWD-3101</td><td>HDFC / USD</td><td class=num>100,000</td><td class=num>40,000</td><td class=num>60,000</td>
+ <td class=dim>11 Sep</td><td><span class="pill warn">Due</span></td></tr>
+<tr><td class=ref>FWD-3102</td><td>ICICI / EUR</td><td class=num>50,000</td><td class="num dim">0</td><td class=num>50,000</td>
+ <td class=dim>14 Sep</td><td><span class=pill>Scheduled</span></td></tr>
+<tr><td class=ref>FWD-3103</td><td>SBI / GBP</td><td class=num>20,000</td><td class="num dim">0</td><td class=num>20,000</td>
+ <td class=dim>10 Sep</td><td><span class="pill bad">Overdue</span></td></tr>
+<tr><td class=ref>FWD-3104</td><td>HDFC / USD</td><td class=num>75,000</td><td class=num>75,000</td><td class="num dim">0</td>
+ <td class=dim>09 Sep</td><td><span class="pill ok">Settled</span></td></tr>
+</tbody></table></div>
+<div class=row>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">FWD-3101 selected</h2>
+ <table class=dt>
+  <tr><td class=dim>Booked rate</td><td class=fig>INR 84.1000 per USD</td></tr>
+  <tr><td class=dim>Pending approved amount</td><td class=num>USD 60,000.00</td></tr>
+  <tr><td class=dim>Draft settlement</td><td class="num v-warn">USD 20,000.00</td></tr>
+  <tr><td class=dim>Evidence</td><td>Bank confirmation HDFC-S0911</td></tr>
+ </table>
+ <div class=bar><a class=btn href="T-13.html">Update settlement</a><button class="btn sec" data-dlg="dlg-detail">View history</button>
+  <span class=sp></span><span class=why>Submitting sends the update to a checker. The approved balance does not change until approval.</span></div>
+</div>
+<div style="width:260px"><div class="banner warn" style="margin:0"><span>&#9888;</span><div>
+ <b>Prescribed format pending</b>FR-06 requires the cover list in a prescribed format that the BRD does not attach. Columns shown are inferred.</div></div></div>
+</div>
+
+    <div class=related><span>Where to next</span><a href="T-13.html">Forward settlement approval</a><a href="T-04.html">Bank cover deal entry</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-detail"><h2>Detail</h2><div class=body><p>Full record for the selected row, with its audit trail reachable from here.</p><dl><dt>Reference</dt><dd>&mdash;</dd><dt>Source</dt><dd>FX Plus API</dd><dt>Last sync</dt><dd>14:32 IST</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Closed" data-kind="ok">Close</button></div></dialog>
+<dialog id="dlg-export"><h2>Export</h2><div class=body>
+<p>Exports <b data-ctx data-ctx="the current view">the current view</b> with all active filters applied.</p>
+<label for="dlg-export-f1">Format</label><select id="dlg-export-f1"><option>Excel (.xlsx)</option><option>CSV (.csv)</option><option>PDF (print layout)</option></select>
+<div style="height:10px"></div><label for="dlg-export-f2">Scope</label>
+<select id="dlg-export-f2"><option>Current filtered rows</option><option>All rows, ignoring filters</option><option>Selected rows only</option></select>
+<div style="height:10px"></div><label for="dlg-export-f3">Include</label>
+<select id="dlg-export-f3"><option>Values as displayed</option><option>Values plus source and sync time</option></select>
+<p class=hint style="margin-top:10px">Amounts keep their currency code. Mixed-currency totals are never combined.</p>
+</div><div class=foot><button class="btn sec" data-close>Cancel</button>
+<button class=btn data-confirm="Export queued — download will start shortly">Export</button></div></dialog>
+<dialog id="dlg-tochecker"><h2>Send to checker</h2><div class=body><p>Saves your entry and queues it for authorisation. It does not take effect until a checker approves.</p><dl><dt>Goes to</dt><dd>Treasury Checker queue</dd><dt>You are</dt><dd>Maker — you cannot approve this yourself</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Sent to checker — awaiting authorisation" data-kind="ok">Send to checker</button></div></dialog>
+<script src="tmp.js?v=2"></script>

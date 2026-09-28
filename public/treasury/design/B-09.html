@@ -1,0 +1,72 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>B-09 — Reminders · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="B-01.html">Overview</a>
+  <a href="B-02.html">Take FX rate</a>
+  <a href="B-04.html">My positions</a>
+  <a href="B-05.html">Knock-off</a>
+  <a href="B-06.html">Cut-off queue</a>
+  <a href="B-09.html" class=on>Reminders</a>
+  <a href="B-07.html">Balances</a>
+  <a href="B-08.html">Reports</a>
+  <a href="B-10.html">Offline capture</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Branch / <b>Mumbai Fort</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>B-09</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="B-01.html">Branch</a><span class=sep>/</span><a href="B-06.html">Cut-off</a><span class=sep>/</span><span aria-current=page>Reminders</span></nav><span class=sp></span><div class=pager><a href="B-06.html" title="Cut-off and cancellation queue">&lsaquo; Prev</a><span class=count>2 of 2</span><span class=off>Next &rsaquo;</span></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Cut-off"><a href="B-06.html">Cut-off and cancellation queue</a><a href="B-09.html" class=on>Reminders</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <div class=pagehead><h1>Reminders</h1><span class=sp></span><div class=pageacts><button class="btn" data-dlg="dlg-ack">Acknowledge selected</button><button class="btn sec" data-dlg="dlg-filters">Adjust filters</button></div></div>
+    <p class=sub>Raised to this branch &nbsp;·&nbsp; link the Txn Ref, or ask Treasury to cancel</p>
+    
+    
+    <div class=note><b>Design note</b>New screen &mdash; the architecture diagram shows a reminder loop back to the branch that v1 never drew. Reminders escalate on age; acknowledgement is recorded against the position.</div>
+    
+<div class=strip>
+ <div class=stat><b class=alert>2</b><span>Escalated &mdash; over 2 hours</span></div>
+ <div class=stat><b>4</b><span>Open reminders</span></div>
+ <div class=stat><b>1</b><span>Acknowledged, action pending</span></div>
+ <div class="stat plain"><b>14:47</b><span>Last reminder raised</span></div>
+</div>
+<div class=tbl><table class=dt>
+<thead><tr><th>Raised</th><th>Position</th><th class=num>Residual</th><th>Reason</th><th>Age</th><th>State</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td class=dim>12:32</td><td class=ref>POS-1043</td><td class=num>EUR 10,000</td><td>No FX Plus reference</td>
+ <td class="fig v-bad">2h 15m</td><td><span class="pill bad">Escalated</span></td><td><a href="B-05.html">Link now</a></td></tr>
+<tr><td class=dim>13:10</td><td class=ref>POS-1047</td><td class=num>USD 3,500</td><td>Source transaction delayed</td>
+ <td class="fig v-bad">1h 37m</td><td><span class="pill bad">Escalated</span></td><td>Report to Treasury</td></tr>
+<tr><td class=dim>14:02</td><td class=ref>POS-1049</td><td class=num>GBP 2,000</td><td>Customer withdrew</td>
+ <td class="fig v-warn">45m</td><td><span class="pill warn">Acknowledged</span></td><td><a href="B-06.html">Request cancellation</a></td></tr>
+<tr><td class=dim>14:47</td><td class=ref>POS-1052</td><td class=num>USD 1,200</td><td>No FX Plus reference</td>
+ <td class=fig>0m</td><td><span class=pill>Open</span></td><td><a href="B-05.html">Link now</a></td></tr>
+</tbody></table></div>
+<div class=bar><button class=btn data-dlg="dlg-ack">Acknowledge selected</button><button class="btn sec" data-dlg="dlg-informtreasury">Inform Treasury</button>
+ <span class=sp></span><span class=why>Escalation thresholds require business confirmation. 2 hours is illustrative.</span></div>
+
+    <div class=related><span>Where to next</span><a href="B-06.html">Cut-off and cancellation queue</a><a href="B-05.html">Transaction knock-off</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-ack"><h2>Acknowledge selected reminders</h2><div class=body><p>Acknowledges the selected reminders. The underlying positions still require action.</p><dl><dt>Selected</dt><dd>4 reminders</dd><dt>Effect</dt><dd>Stops escalation for 2 hours</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="4 reminders acknowledged" data-kind="ok">Acknowledge</button></div></dialog>
+<dialog id="dlg-filters"><h2>Adjust filters</h2><div class=body><p>Narrow the worklist.</p><label for="dlg-filters-f1">Currency</label><select id="dlg-filters-f1"><option>All</option><option>USD</option><option>EUR</option><option>GBP</option></select><div style="height:8px"></div><label for="dlg-filters-f2">Age</label><select id="dlg-filters-f2"><option>Any</option><option>Over 1 day</option><option>Over 3 days</option></select><div style="height:8px"></div><label for="dlg-filters-f3">Owner</label><select id="dlg-filters-f3"><option>Anyone</option><option>Unassigned</option><option>Me</option></select></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Filters applied" data-kind="ok">Apply filters</button></div></dialog>
+<dialog id="dlg-informtreasury"><h2>Inform Treasury</h2><div class=body><p>Tells Treasury this position cannot be completed by the branch.</p><dl><dt>Position</dt><dd>POS-1043</dd></dl><label>Message <span style="color:var(--alert)">*</span><textarea id="dlg-informtreasury-u1" aria-label="Value" data-required placeholder="Recorded on the audit trail and shown to the maker."></textarea></label><p class="err" hidden>A reason is required before this can be submitted.</p></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Treasury informed" data-kind="ok">Send</button></div></dialog>
+<script src="tmp.js?v=2"></script>

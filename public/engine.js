@@ -11,9 +11,9 @@
    command, whatever the interface did or did not show.
    ========================================================================== */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./treasury.js'));
-  else root.Engine = factory(root.Treasury);
-})(typeof self !== 'undefined' ? self : this, function (installTreasury) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./treasury.js'), require('./tmp-engine.js'));
+  else root.Engine = factory(root.Treasury, root.TmpEngine);
+})(typeof self !== 'undefined' ? self : this, function (installTreasury, installTmp) {
   'use strict';
 
   /* ---------- errors ------------------------------------------------------ */
@@ -374,6 +374,9 @@
     (db.testSmes || []).forEach(prof => labCreateSme(db, prof, 'approved', now));
     /* The treasury book behind the seeded payments and disposals. */
     T.seed(db, now);
+    /* The Treasury Management Portal: branches, rate desk, FX Plus bills,
+       liquidity, limits and approvals, around the same book. */
+    X.seed(db, now);
     return db;
   }
   const smePendingWith = st => ({ 'Submitted': 'AD2 Maker', 'Under Review': 'AD2 Maker', 'Pending Approval': 'AD2 Compliance',
@@ -383,9 +386,14 @@
   /*  Commands                                                                */
   /* ======================================================================== */
   const C = {};
-  const T = installTreasury({ C, EngineError, fail, need, forbid, missing, txt, amount, date, oneOf, bool, round2, addHours, clone,
+  /* Treasury: the position book (treasury.js), and the Treasury Management
+     Portal around it (tmp-engine.js). They share these helpers and the
+     hooks the book calls when trade reaches treasury. */
+  const E = { C, EngineError, fail, need, forbid, missing, txt, amount, date, oneOf, bool, round2, addHours, clone,
     find, smeOf, currencyOf, marginFor, customerRate, can, requireCap, isAD2, actorKey, actorLabel, stamp, distinct, audit, notify,
-    seq, fmt, inr, ownSme, requireApproved });
+    seq, fmt, inr, ownSme, requireApproved, hooks: {} };
+  const T = installTreasury(E);
+  const X = installTmp(E, T, E.hooks);
 
   /* ---------- onboarding -------------------------------------------------- */
   function readApplication(db, app) {
@@ -1004,6 +1012,7 @@
         currency: cur, amount: amt, available: amt, status: 'Awaiting Instruction', remittanceType: 'TRADE', purposeCode: '',
         remarks: txt(v.remarks, 'Remarks', { max: 300, required: false }), firc: null, recordedBy: stamp(a, ctx.now, 'recorded') };
       db.inward.unshift(rec);
+      E.onInwardCredit(db, rec, ctx.now);
       audit(db, a, ctx.now, id, `Inward SWIFT credit recorded — ${fmt(amt, cur)} from ${rec.remitter}, ${ref}`);
       notify(db, ctx.now, { toSmeId: s.id, text: `${fmt(amt, cur)} received from ${rec.remitter} — submit a disposal instruction`, link: '#/sme/inward/' + id });
       return { id, message: `Receipt ${ref} recorded for ${s.tradingName}.` };
@@ -1049,6 +1058,7 @@
       const was = i.amount;
       Object.assign(i, { amount: amt, available: amt, reference: ref, valueDate: date(p.valueDate || i.valueDate, 'Value date'),
         status: 'Awaiting Instruction', pendingWith: 'SME', recordedBy: stamp(a, ctx.now, 'confirmed') });
+      E.onInwardCredit(db, i, ctx.now);
       audit(db, a, ctx.now, i.id, `Credit confirmed in the nostro — ${fmt(amt, i.currency)}, ${ref}${amt !== was ? ` (reported ${fmt(was, i.currency)})` : ''}`);
       notify(db, ctx.now, { toSmeId: i.smeId, text: `${fmt(amt, i.currency)} from ${i.remitter} confirmed — submit your disposal instruction`, link: '#/sme/inward/' + i.id });
       return { id: i.id, message: `Credit confirmed. ${fmt(amt, i.currency)} is ready for the SME to dispose.` };
@@ -2063,6 +2073,7 @@
 
   /* ---------- what each user may see -------------------------------------- */
   const publicLogin = db => l => ({ domainId: l.domainId, loginId: l.loginId, role: l.role, smeId: l.smeId, name: l.name,
+    branchScope: l.branchScope || null, agentName: l.agentName || null,
     demo: !!l.demo, active: l.active !== false, test: !!l.test, addedAt: l.addedAt || null,
     tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
@@ -2081,12 +2092,35 @@
     /* Reference rates are AD2's: a customer (or anyone signed out) sees only
        its own ready-made rate, never the rate its margin is added to. */
     const hideRef = () => { out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, marketBase, ...rest } = c; return rest; }); };
-    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); T.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
+    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); T.scope(out, db, null, 'public'); X.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
+    /* Treasury Management Portal users (treasury, branch, agent, bulk,
+       finance) see the book as their role and branch scope allow. */
+    const kind = X.scopeKind(db, a);
+    const role = roleDef(db, a.role) || {};
+    if (role.portal === 'TMP' && !master) {
+      if (kind === 'full') {
+        BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
+        T.scope(out, db, a, 'treasury');
+      } else {
+        BUSINESS_KEYS.forEach(k => { out[k] = []; });
+        T.scope(out, db, a, 'public');
+        /* the trade customers a branch may quote (a quote becomes their FX deal) */
+        out.smes = db.smes.filter(s => s.status === 'Approved').map(s => ({ id: s.id, legalName: s.legalName, tradingName: s.tradingName, gstin: s.gstin,
+          domainId: s.domainId, status: s.status, branchId: s.branchId, config: { currencies: ((s.config || {}).currencies || []).slice() } }));
+      }
+      X.scope(out, db, a, kind);
+      const seen = new Set([...(out.positions || []).map(p => p.id), ...(out.quotes || []).map(q => q.id), ...(out.approvals || []).map(x => x.id)]);
+      if (kind !== 'full') out.audit = clone(db.audit.filter(x => seen.has(x.record)));
+      out.notifications = clone((db.notifications || []).filter(n => n.toRole === a.role));
+      out.scope = 'tmp-' + kind;
+      return out;
+    }
     if (isAD2(a) || master) {
       BUSINESS_KEYS.forEach(k => { out[k] = clone(db[k] || []); });
       out.complianceRules = clone(db.complianceRules || []);
       out.notifications = out.notifications.filter(n => n.toRole === a.role);
       T.scope(out, db, a, master || can(db, a, 'treasury.view') ? 'treasury' : 'ad2');
+      X.scope(out, db, a, master || kind === 'full' ? 'full' : 'trade');
       out.scope = master ? 'master' : 'ad2';
       return out;
     }
@@ -2098,6 +2132,9 @@
     const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return hideMargin(r); };
     hideRef();
     T.scope(out, db, a, 'sme');
+    /* whether a currency can be booked today, never the card rate itself */
+    X.scope(out, db, a, 'trade');
+    out.rateDesk = out.rateDesk.filter(r => ['REM', 'INW'].includes(r.product)).map(r => ({ product: r.product, currency: r.currency, status: r.status }));
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
       delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
       if (s.config) {
@@ -2139,7 +2176,9 @@
     actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C),
     /* read-only treasury views, shared by every screen so they agree */
     treasury: { positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
-      netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate, pnl: T.pnl, exceptions: T.exceptions,
-      pastCutoff: T.pastCutoff, istDate: T.istDate },
+      remaining: T.remaining, isTrade: T.isTrade, netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate,
+      pnl: T.pnl, exceptions: T.exceptions, pastCutoff: T.pastCutoff, istDate: T.istDate },
+    /* read-only Treasury Management Portal views */
+    tmp: { ...X.views, scopeKind: X.scopeKind },
   };
 });

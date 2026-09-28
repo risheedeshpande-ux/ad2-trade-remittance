@@ -1,0 +1,94 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-13 — Forward settlement approval · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html" class=on>Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Checker</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-13</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><a href="T-04.html">Covers</a><span class=sep>/</span><span aria-current=page>Forward settlement approval</span></nav><span class=sp></span><div class=pager><a href="T-12.html" title="Forward covers by value date">&lsaquo; Prev</a><span class=count>4 of 4</span><span class=off>Next &rsaquo;</span></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Covers"><a href="T-04.html">Bank cover deal entry</a><a href="T-05.html">Allocate bank cover</a><a href="T-12.html">Forward covers by value date</a><a href="T-13.html" class=on>Forward settlement approval</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Forward settlement approval</h1>
+    <p class=sub><b>FWD-3101</b> &nbsp;·&nbsp; settlement SET-3101 &nbsp;·&nbsp; Maker A submitted 14:10</p>
+    
+    
+    <div class=note><b>Design note</b>A checker cannot approve their own entry. Approval updates positions once. Rejection requires a reason and returns the draft to the maker.</div>
+    
+<div class="banner"><span>&#8505;</span><div><b>Maker-checker &mdash; BR-08</b>
+You are signed in as Treasury Checker. This entry was made by Maker A at 14:10 IST.</div></div>
+<div class=tbl><table class="dt ba">
+<thead><tr><th style=width:280px>Review field</th><th class=num>Approved before</th><th class=num>Proposed after</th></tr></thead>
+<tbody>
+<tr><td>Settled USD</td><td class="num before">40,000.00</td><td class="num after">60,000.00 <span class=delta>+20,000</span></td></tr>
+<tr><td>Pending USD</td><td class="num before">60,000.00</td><td class="num after">40,000.00 <span class=delta>&minus;20,000</span></td></tr>
+<tr><td>Settlement amount</td><td class="num before dim">&mdash;</td><td class="num after">USD 20,000.00</td></tr>
+<tr><td>INR principal at 84.1000</td><td class="num before dim">&mdash;</td><td class="num after">16,82,000.00</td></tr>
+<tr><td>Evidence / date</td><td class="num before dim">&mdash;</td><td class="num after">Bank confirmation / 11 Sep 2026</td></tr>
+</tbody></table></div>
+<div class=row>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Maker note</h2>
+ <p style="margin:0 0 14px">Partial settlement against bank confirmation HDFC-S0911. Evidence available for review.</p>
+ <div class=f><label for="t-13b-f1">Rejection reason &mdash; required if rejecting</label><input id="t-13b-f1" type=text placeholder="State what the maker must correct"></div>
+ <div class=bar><button class=btn data-dlg="dlg-approve">Approve update</button><button class="btn danger" data-dlg="dlg-reject">Reject with reason</button>
+  <button class="btn sec" data-dlg="dlg-detail">View evidence</button></div>
+</div>
+<div style="width:280px"><div class=form>
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">If you were the maker</h2>
+ <div class=bar style="padding-top:0"><button class=btn disabled>Approve update</button></div>
+ <p class=why>A checker cannot approve their own entry. The control is disabled with the reason stated, never hidden.</p>
+</div></div></div>
+
+    <div class=related><span>Where to next</span><a href="T-21.html">Approvals worklist</a><a href="T-12.html">Forward covers by value date</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-approve" class=wide><h2>Approve update</h2><div class=body>
+<p>Review exactly what changes before authorising. <b data-ctx data-ctx="this item">this item</b></p>
+<div class=impact><b>Segregation of duty</b>You may not approve an entry you created. This item was made by <b>Maker A</b> at 14:10 IST.</div>
+<table class="dt diff"><thead><tr><th>Field</th><th class=num>Approved before</th><th class=num>Proposed after</th></tr></thead>
+<tbody>
+<tr><td>Settled USD</td><td class="num was">40,000.00</td><td class="num now">50,000.00<span class=delta>+10,000</span></td></tr>
+<tr><td>Pending USD</td><td class="num was">60,000.00</td><td class="num now">50,000.00<span class=delta>&minus;10,000</span></td></tr>
+<tr><td>INR principal at 84.1000</td><td class="num was">&mdash;</td><td class="num now">42,05,000.00</td></tr>
+<tr><td>Value date</td><td class="num was">11 Sep 2026</td><td class="num now">11 Sep 2026</td></tr>
+</tbody></table>
+<p class=hint style="margin-top:10px">Approving writes maker, checker, both timestamps and the before/after pair to the audit trail.</p>
+</div><div class=foot><button class="btn sec" data-close>Close</button>
+<button class="btn danger" data-dlg="dlg-reject">Reject&hellip;</button>
+<button class=btn data-confirm="Approved — settlement updated and audit written">Approve</button></div></dialog>
+<dialog id="dlg-detail"><h2>Detail</h2><div class=body><p>Full record for the selected row, with its audit trail reachable from here.</p><dl><dt>Reference</dt><dd>&mdash;</dd><dt>Source</dt><dd>FX Plus API</dd><dt>Last sync</dt><dd>14:32 IST</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Closed" data-kind="ok">Close</button></div></dialog>
+<dialog id="dlg-reject"><h2>Reject with reason</h2><div class=body><p>Returns the item to the maker. The reason is mandatory and is shown to them in their own queue.</p><dl><dt>Item</dt><dd>Forward settlement update</dd><dt>Maker</dt><dd>Maker A · 14:10 IST</dd></dl><label>Rejection reason <span style="color:var(--alert)">*</span><textarea id="dlg-reject-u1" aria-label="Value" data-required placeholder="Recorded on the audit trail and shown to the maker."></textarea></label><p class="err" hidden>A reason is required before this can be submitted.</p></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn danger" data-confirm="Rejected — returned to maker with your reason" data-kind="bad">Reject</button></div></dialog>
+<script src="tmp.js?v=2"></script>

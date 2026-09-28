@@ -1,0 +1,86 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>UX-01 — Workspace map · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html" class=on>Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Design review</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>UX-01</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><span aria-current=page>Design review</span><span class=sep>/</span><span aria-current=page>Workspace map</span></nav><span class=sp></span><div class=pager><span class=off>&lsaquo; Prev</span><span class=count>1 of 6</span><a href="UX-02.html" title="Interaction states">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Design review"><a href="UX-01.html" class=on>Workspace map</a><a href="UX-02.html">Interaction states</a><a href="UX-03.html">Component states</a><a href="UX-04.html">Dialog and confirmation catalogue</a><a href="UX-05.html">Environment, freshness and role states</a><a href="UX-06.html">State coverage matrix</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Workspace map</h1>
+    <p class=sub>Two workspaces, one position lifecycle &nbsp;·&nbsp; role-scoped navigation with a shared position reference</p>
+    
+    
+    <div class=note><b>Design note</b>A branch booking creates a treasury exposure. Transaction matching and bank coverage remain separate status fields throughout the lifecycle.</div>
+    
+<div class=row>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Branch workspace</h2>
+ <table class=dt>
+  <tr><td class=ref>1</td><td>Take and confirm a rate</td><td><a href="B-02.html">B-02</a> <a href="B-03.html">B-03</a></td></tr>
+  <tr><td class=ref>2</td><td>Track the branch position</td><td><a href="B-04.html">B-04</a></td></tr>
+  <tr><td class=ref>3</td><td>Link FX Plus transaction references</td><td><a href="B-05.html">B-05</a></td></tr>
+  <tr><td class=ref>4</td><td>Resolve residuals before cut-off</td><td><a href="B-06.html">B-06</a> <a href="B-09.html">B-09</a></td></tr>
+ </table>
+</div>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Treasury workspace</h2>
+ <table class=dt>
+  <tr><td class=ref>1</td><td>Analyse exposure by currency and product</td><td><a href="T-02.html">T-02</a> <a href="T-03.html">T-03</a></td></tr>
+  <tr><td class=ref>2</td><td>Record bank deals and allocate cover</td><td><a href="T-04.html">T-04</a> <a href="T-05.html">T-05</a></td></tr>
+  <tr><td class=ref>3</td><td>Fund accounts and reconcile settlements</td><td><a href="T-11.html">T-11</a> <a href="T-14.html">T-14</a></td></tr>
+  <tr><td class=ref>4</td><td>Approve updates and review P&amp;L</td><td><a href="T-21.html">T-21</a> <a href="T-16.html">T-16</a></td></tr>
+ </table>
+</div></div>
+<h2 style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px">Position lifecycle &mdash; two independent status tracks</h2>
+<div class=tbl><table class=dt>
+<thead><tr><th>Stage</th><th>Position state</th><th>Txn link track</th><th>Bank cover track</th><th>Screen</th></tr></thead>
+<tbody>
+<tr><td class=ref>Rate taken</td><td><span class=pill>Draft</span></td><td class=dim>&mdash;</td><td class=dim>&mdash;</td><td><a href="B-02.html">B-02</a></td></tr>
+<tr><td class=ref>Confirmed</td><td><span class="pill ok">Booked</span></td><td><span class="pill bad">Awaiting txn</span></td><td><span class=pill>Open</span></td><td><a href="B-03.html">B-03</a></td></tr>
+<tr><td class=ref>Cover allocated</td><td><span class="pill ok">Booked</span></td><td><span class="pill bad">Awaiting txn</span></td><td><span class="pill ok">Covered</span></td><td><a href="T-05.html">T-05</a></td></tr>
+<tr><td class=ref>Partly linked</td><td><span class="pill ok">Booked</span></td><td><span class="pill warn">Partial</span></td><td><span class="pill ok">Covered</span></td><td><a href="B-05.html">B-05</a></td></tr>
+<tr><td class=ref>Concluded</td><td><span class="pill ok">Complete</span></td><td><span class="pill ok">Complete</span></td><td><span class="pill ok">Covered</span></td><td><a href="B-04.html">B-04</a></td></tr>
+<tr><td class=ref>Cut-off reached</td><td><span class="pill off">Cancelled</span></td><td><span class="pill off">Cancelled</span></td><td><span class=pill>Released</span></td><td><a href="B-06.html">B-06</a></td></tr>
+</tbody></table></div>
+<p class=src>The two status tracks move independently. Row 3 is the case that breaks most designs: fully covered by the bank, with no transaction linked at all.</p>
+
+    
+  </div>
+</div>
+</div>
+
+<script src="tmp.js?v=2"></script>

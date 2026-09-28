@@ -14,8 +14,16 @@
                   │                 │
                   └─release/expiry──┴──reject──► Cancelled
                 (expiry applies only to Open: attaching freezes the lock)
+                Held: a booking over the customer's limit, until a treasury
+                checker releases it (→ Open) or declines it (→ Cancelled).
      cover      Uncovered → Partial → Covered   (bank cover or an internal cross)
    Invariant: amount = linkedAmount + remaining + cancelledAmount.
+
+   The same book holds the branch deals of the Treasury Management Portal
+   (tmp-engine.js): those link to FX Plus bills in parts, and whatever is
+   not linked by cut-off is released as a residual. tmp-engine fills
+   E.hooks, which this module calls at the points where trade meets the
+   rest of treasury (rate desk, limits, liquidity, cut-off).
 
    Side is AD2's side of the trade: an outward payment is a SELL of foreign
    currency to the customer (treasury short), a disposal credited in INR is a
@@ -29,6 +37,7 @@
   'use strict';
 
   return function install(E) {
+    const H = E.hooks = E.hooks || {};
     const { C, fail, need, missing, txt, amount, date, oneOf, bool, round2, addHours, find, smeOf, currencyOf, marginFor,
             customerRate, can, requireCap, isAD2, actorKey, actorLabel, distinct, audit, notify, seq, fmt, ownSme,
             requireApproved } = E;
@@ -43,6 +52,8 @@
 
     /* ---------- position arithmetic ------------------------------------------ */
     const live = p => round2(p.amount - (p.cancelledAmount || 0));
+    const remaining = p => round2(Math.max(0, p.amount - (p.cancelledAmount || 0) - (p.linkedAmount || 0)));
+    const isTrade = p => !!p.smeId;
     const uncovered = p => p.status === 'Cancelled' ? 0 : round2(Math.max(0, live(p) - (p.covered || 0)));
     function positionStatus(p, now) {
       if (!p) return '—';
@@ -55,7 +66,7 @@
       return c >= live(p) - 0.005 ? 'Covered' : c > 0 ? 'Partial' : 'Uncovered';
     }
     const linkState = p => p.status === 'Concluded' ? 'Linked' : p.status === 'Attached' ? 'Awaiting settlement'
-      : p.status === 'Cancelled' ? '—' : 'Not submitted';
+      : p.status === 'Cancelled' ? '—' : p.status === 'Held' ? 'Held for approval' : (p.linkedAmount || 0) > 0.005 ? 'Partly linked' : 'Not submitted';
 
     /* ---------- events: what trade told treasury ----------------------------- */
     function emit(db, now, type, p, extra) {
@@ -80,19 +91,41 @@
       }
       const ref = (currencyOf(db, cur) || {}).refRate || 0;
       need(ref > 0, `No rate is published for ${cur}. Treasury publishes it on the rate desk.`);
+      /* Treasury's rate desk gates trade pricing: no card rate published for
+         the product line, no booking. */
+      if (a && H.rateCheck) H.rateCheck(db, dir === 'out' ? 'REM' : 'INW', cur);
       return { refRate: ref, margin: m, customerRate: customerRate(db, cur, dir === 'out' ? m : -m) };
     }
 
     /* ---------- booking -------------------------------------------------------- */
+    /* One position shape for the whole book. A trade position belongs to an
+       SME (smeId) and sits at its home branch; a branch deal has no smeId,
+       carries its product line and cut-off, and links to FX Plus bills. */
     function newPosition(db, a, s, v, now) {
-      const p = { id: 'POS-' + pad(seq(db, 'pos'), 4), smeId: s.id, currency: v.currency, side: v.side, amount: v.amount,
+      const assisted = !!(a && a.actingFor);
+      const p = { id: 'POS-' + pad(seq(db, 'pos'), 4), smeId: s ? s.id : null, currency: v.currency, side: v.side, amount: v.amount,
         customerRate: r4(v.customerRate), refRate: r4(v.refRate), margin: v.margin, source: v.source, dealId: v.dealId || null,
-        bookedAt: now, expiresAt: v.expiresAt, status: 'Open', recordKind: null, recordId: null, attachedAt: null,
-        covered: 0, linkedAmount: 0, cancelledAmount: 0, linkRef: null, linkedAt: null,
-        bookedBy: actorLabel(a) + (a.actingFor ? ' — assisted' : ''), bookedByKey: actorKey(a), assisted: !!a.actingFor };
+        bookedAt: now, expiresAt: v.expiresAt || null, status: 'Open', recordKind: null, recordId: null, attachedAt: null,
+        covered: 0, linkedAmount: 0, cancelledAmount: 0, linkRef: null, linkedAt: null, links: [],
+        product: v.product || (v.side === 'SELL' ? 'REM' : 'INW'),
+        branchId: v.branchId || (s && H.homeBranch ? H.homeBranch(db, s) : null),
+        channel: v.channel || (assisted ? 'Assisted' : v.source === 'Deal' ? 'Treasury deal' : 'Trade portal'),
+        customerName: v.customerName || (s && s.tradingName) || '', customerRef: v.customerRef || null, customerId: v.customerId || null,
+        quoteId: v.quoteId || null, valueDate: v.valueDate || null, ibrAtBooking: v.ibrAtBooking != null ? r4(v.ibrAtBooking) : r4(v.refRate),
+        agentName: v.agentName || null, cutoffAt: v.cutoffAt || null, ...(v.offline ? { offline: v.offline } : {}),
+        bookedBy: a ? actorLabel(a) + (assisted ? ' — assisted' : '') : 'System', bookedByKey: a ? actorKey(a) : '', assisted };
       arr(db, 'positions').unshift(p);
-      emit(db, now, 'position.opened', p, { source: p.source });
+      emit(db, now, 'position.opened', p, { source: p.source, product: p.product, branchId: p.branchId, channel: p.channel });
       return p;
+    }
+    /* A customer limit breach holds the position for a treasury checker. */
+    function holdIfOverLimit(db, a, p, now) {
+      if (!H.limitCheck) return null;
+      const breach = H.limitCheck(db, p.smeId || p.customerId, round2(live(p) * p.customerRate), p.currency, p.side, now);
+      if (!breach) return null;
+      p.status = 'Held'; p.heldReason = breach.reason;
+      if (H.onHeld) H.onHeld(db, a, p, breach, now);
+      return breach;
     }
 
     /* Book the live rate for an amount. The customer's rate is fixed here and
@@ -119,6 +152,12 @@
         expiresAt: addHours(now, LOCK_HOURS) }, now);
       audit(db, a, now, p.id, `Rate booked for ${s.tradingName} — ${fmt(amt, cur)} ${dirWord(p.side)} at ${p.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours`);
       if (pr.margin !== marginFor(db, s, cur)) audit(db, a, now, p.id, `Margin set to ${pr.margin} paise within the branch band`, true);
+      const breach = holdIfOverLimit(db, a, p, now);
+      if (breach) {
+        need(!(opts && opts.inline), `This ${dirWord(p.side)} would take ${s.tradingName} over its treasury limit (${breach.reason}). ` +
+          'Book the rate first — the booking goes to a treasury checker — and submit once it is released.');
+        audit(db, a, now, p.id, `Held for a treasury checker — ${breach.reason}`);
+      }
       return p;
     }
 
@@ -137,6 +176,7 @@
         need(dl.smeId === s.id, `Deal ${dl.id} was issued for another customer.`);
         const p = find(db.positions, dl.positionId);
         const st = positionStatus(p, now);
+        need(!(dl.status === 'Issued' && st === 'Held'), `Deal ${dl.id} is held for a treasury checker (customer limit). Apply it once it is released.`);
         need(dl.status === 'Issued' && st === 'Open', `Deal ${dl.id} is ${dl.status === 'Issued' && st === 'Expired' ? 'past its validity' : dl.status.toLowerCase()} and cannot be applied.`);
         need(dl.currency === cur, `Deal ${dl.id} is in ${dl.currency}, not ${cur}.`);
         need(dl.side === side, `Deal ${dl.id} is for an ${dirWord(dl.side)}, not an ${dirWord(side)}.`);
@@ -151,6 +191,7 @@
           need(p && p.smeId === s.id, 'That rate booking was not found for this customer. Book the rate again.');
           const st = positionStatus(p, now);
           const expired = st === 'Expired' || (st === 'Cancelled' && /expired/i.test(p.cancelReason || ''));
+          need(st !== 'Held', `Rate booking ${p.id} is held for a treasury checker (customer limit). Submit once it is released.`);
           need(st === 'Open', expired ? `The booked rate has expired (${LOCK_HOURS}-hour lock). Book the rate again.`
                                               : `Rate booking ${p.id} is already ${st.toLowerCase()}. Book the rate again.`);
           need(p.source === 'Booked', `${p.id} is a deal position; apply its deal reference instead.`);
@@ -186,9 +227,71 @@
     function link(db, a, rec, ref, now) {
       const p = rec && rec.rate && find(db.positions, rec.rate.positionId);
       if (!p || p.status !== 'Attached') return;
-      p.status = 'Concluded'; p.linkedAmount = live(p); p.linkRef = ref; p.linkedAt = now;
+      addLink(db, a, p, { ref, amount: remaining(p), kind: rec.utr ? 'UTR' : 'FIRC', at: now, by: a ? actorLabel(a) : 'Trade portal', recordId: rec.id }, now, true);
       audit(db, a, now, p.id, `Linked to ${rec.id} — ${ref}; position concluded (${coverState(p).toLowerCase()})`);
-      emit(db, now, 'position.linked', p, { ref });
+      if (H.onLinked) H.onLinked(db, p, rec, ref, now);
+    }
+
+    /* A transaction linked to a position: a UTR or FIRC for a trade position
+       (all of it at once), or an FX Plus bill for a branch deal (in parts).
+       The position concludes when nothing is left to link. */
+    function addLink(db, a, p, l, now, quiet) {
+      const amt = round2(Math.min(Number(l.amount) || 0, remaining(p)));
+      if (amt <= 0) return;
+      (p.links = p.links || []).push({ ref: l.ref, amount: amt, kind: l.kind || 'FX Plus', at: l.at || now, by: l.by || (a ? actorLabel(a) : 'System'),
+        ...(l.rate ? { rate: r4(l.rate) } : {}), ...(l.recordId ? { recordId: l.recordId } : {}) });
+      p.linkedAmount = round2((p.linkedAmount || 0) + amt);
+      p.linkRef = l.ref;
+      if (!quiet && a) audit(db, a, now, p.id, `${l.kind || 'FX Plus'} ${l.ref} linked — ${fmt(amt, p.currency)}; ${fmt(remaining(p), p.currency)} remaining`);
+      if (remaining(p) <= 0.005) conclude(db, p, now, l.ref, quiet === 'seed');
+    }
+    function conclude(db, p, now, ref, seeding) {
+      p.status = 'Concluded'; p.linkedAt = now;
+      emit(db, now, 'position.linked', p, { ref, linked: p.linkedAmount });
+      if (!isTrade(p) && H.onBranchConcluded && !seeding && p.linkedAmount > 0.005) H.onBranchConcluded(db, p, now);
+    }
+    /* Release what is left of a position. Nothing linked: the position is
+       cancelled. Partly linked: it concludes at what was linked, and the
+       residual goes back (with any cover above what remains live). */
+    function cancelResidual(db, a, p, reason, now) {
+      if (!p || !['Open', 'Attached', 'Held'].includes(p.status)) return 0;
+      const res = remaining(p);
+      if ((p.linkedAmount || 0) <= 0.005) { cancel(db, a, p, reason, now); return res; }
+      p.cancelledAmount = round2((p.cancelledAmount || 0) + res);
+      releaseCover(db, p, Math.max(0, (p.covered || 0) - live(p)));
+      p.cancelReason = reason; p.cancelledAt = now;
+      audit(db, a || SYSTEM, now, p.id, `Residual ${fmt(res, p.currency)} released — ${reason}`);
+      emit(db, now, 'position.cancelled', p, { reason, residual: res });
+      conclude(db, p, now, p.linkRef, false);
+      return res;
+    }
+    /* A linked bill reduced or reversed after the fact (an FX Plus
+       amendment): the link shrinks, and the amount is released as a
+       forward-dated adjustment, never by rewriting the original link. */
+    function unwind(db, a, p, ref, amt, reason, now) {
+      amt = round2(Math.min(Number(amt) || 0, p.linkedAmount || 0));
+      if (amt <= 0) return 0;
+      (p.adjustments = p.adjustments || []).push({ ref, amount: -amt, reason, at: now, by: a ? actorLabel(a) : 'System' });
+      p.linkedAmount = round2(p.linkedAmount - amt);
+      if (p.status === 'Open') { audit(db, a || SYSTEM, now, p.id, `${fmt(amt, p.currency)} unlinked from ${ref} — ${reason}`); return 0; }
+      p.cancelledAmount = round2((p.cancelledAmount || 0) + amt);
+      const freed = Math.max(0, (p.covered || 0) - live(p));
+      releaseCover(db, p, freed);
+      audit(db, a || SYSTEM, now, p.id, `${fmt(amt, p.currency)} released from the concluded position — ${reason}${freed > 0.005 ? `; ${fmt(freed, p.currency)} of cover returned to the pool` : ''}`);
+      emit(db, now, 'position.cancelled', p, { reason, residual: amt });
+      return freed;
+    }
+    /* An FX deal reference for a position already on the book: the rate the
+       trade portal applies to the customer's request. */
+    function issueDeal(db, a, s, p, hours, note, now) {
+      const id = `FXD-${now.slice(0, 4)}-${pad(seq(db, 'fxd'), 5)}`;
+      p.source = 'Deal'; p.dealId = id; p.expiresAt = addHours(now, hours);
+      const dl = { id, smeId: s.id, currency: p.currency, side: p.side, amount: p.amount, rate: r4(p.customerRate), refRate: p.refRate, positionId: p.id,
+        validUntil: p.expiresAt, status: 'Issued', issuedAt: now, issuedBy: actorLabel(a), issuedByKey: actorKey(a), note: note || '' };
+      arr(db, 'deals').unshift(dl);
+      audit(db, a, now, p.id, `Deal ${id} issued for ${s.tradingName} — ${fmt(p.amount, p.currency)} ${dirWord(p.side)} at ${r4(p.customerRate).toFixed(4)}, valid ${hours}h`);
+      ['AD2 Maker', 'AD2 Sales', 'AD2 Operations'].forEach(r => notify(db, now, { toRole: r, text: `Deal ${id} issued for ${s.tradingName}: ${fmt(p.amount, p.currency)} at ${r4(p.customerRate).toFixed(4)}`, link: '#/ad2/directory' }));
+      return dl;
     }
 
     /* Undo cover allocations when a position (or part of it) goes away. */
@@ -207,14 +310,15 @@
       });
     }
     function cancel(db, a, p, reason, now) {
-      if (!p || !['Open', 'Attached'].includes(p.status)) return;
+      if (!p || !['Open', 'Attached', 'Held'].includes(p.status)) return;
       releaseCover(db, p);
       p.cancelledAmount = round2(p.amount - (p.linkedAmount || 0));
       p.status = 'Cancelled'; p.cancelReason = reason; p.cancelledAt = now;
       const dl = p.dealId && find(db.deals, p.dealId);
       if (dl && dl.status === 'Issued') dl.status = /expir/i.test(reason) ? 'Expired' : 'Withdrawn';
-      audit(db, a, now, p.id, 'Position cancelled — ' + reason);
+      audit(db, a || SYSTEM, now, p.id, 'Position cancelled — ' + reason);
       emit(db, now, 'position.cancelled', p, { reason });
+      if (H.onCancelled) H.onCancelled(db, a, p, reason, now);
     }
     /* A request that is rejected or discarded releases its rate. */
     function release(db, a, rec, reason, now) {
@@ -244,10 +348,11 @@
           const k = day + ':' + r.currency;
           if (Math.abs(r.net) < 0.005 || flags[k]) return;
           flags[k] = true;
-          notify(db, now, { toRole: 'AD2 Treasury Dealer', text: `Cut-off passed with ${r.currency} ${r.net < 0 ? 'short' : 'long'} ${fmt(Math.abs(r.net), r.currency)} uncovered`, link: '#/ad2/treasury/exceptions' });
+          notify(db, now, { toRole: 'AD2 Treasury Dealer', text: `Cut-off passed with ${r.currency} ${r.net < 0 ? 'short' : 'long'} ${fmt(Math.abs(r.net), r.currency)} uncovered`, link: '#/T-02' });
         });
         Object.keys(flags).forEach(k => { if (k.slice(0, 10) < istDate(addHours(now, -24 * 7))) delete flags[k]; });
       }
+      if (H.sweep) H.sweep(db, now);
     }
 
     /* ---------- the book ------------------------------------------------------ */
@@ -383,9 +488,11 @@
         requireCap(db, a, dir === 'out' ? 'outward.create' : 'inward.dispose');
         const s = ownSme(db, a); requireApproved(s);
         const pos = book(db, a, s, { dir, currency: p.currency, amount: p.amount, margin: p.margin, replaces: p.replaces }, ctx.now);
-        return { positionId: pos.id, customerRate: pos.customerRate, bookedAt: pos.bookedAt, expiresAt: pos.expiresAt,
+        const held = pos.status === 'Held';
+        return { positionId: pos.id, customerRate: pos.customerRate, bookedAt: pos.bookedAt, expiresAt: pos.expiresAt, held,
           ...(isAD2(a) ? { refRate: pos.refRate, margin: pos.margin } : {}),
-          message: `Rate booked: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours (${pos.id}).` };
+          message: held ? `Rate booked (${pos.id}) but held: this takes ${s.tradingName} over its treasury limit, so a treasury checker releases it before it can be submitted.`
+            : `Rate booked: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours (${pos.id}).` };
       },
     };
     C['rate.release'] = {
@@ -393,109 +500,45 @@
         const s = ownSme(db, a);
         const pos = posFor(db, p.positionId);
         need(pos.smeId === s.id, 'That booking belongs to another customer.');
-        need(pos.status === 'Open' && pos.source === 'Booked', 'Only an unused rate booking can be released.');
+        need(['Open', 'Held'].includes(pos.status) && pos.source === 'Booked', 'Only an unused rate booking can be released.');
         cancel(db, a, pos, txt(p.reason, 'Reason', { max: 120, required: false }) || 'Released before use', ctx.now);
         return { message: `Rate booking ${pos.id} released.` };
       },
     };
 
-    /* ---------- rate desk ------------------------------------------------------ */
-    C['rates.propose'] = {
-      cap: 'treasury.deal',
-      run(db, a, p, ctx) {
-        const band = Number(db.settings.rateBand ?? 2);
-        const rates = {}, before = {};
-        Object.entries(p.rates || {}).slice(0, 20).forEach(([code, v]) => {
-          const c = currencyOf(db, code);
-          if (!c || v === '' || v == null) return;
-          const n = Number(v);
-          need(isFinite(n) && n > 0, `${code}: enter a positive rate.`);
-          if (Math.abs(n - c.refRate) < 0.00005) return;
-          need(Math.abs(n - c.refRate) / c.refRate * 100 <= band, `${code} ${n} is more than ${band}% from the published ${c.refRate}. Check the figure.`);
-          rates[code] = r4(n); before[code] = c.refRate;
-        });
-        need(Object.keys(rates).length, 'Change at least one rate.');
-        (db.rateRevisions || []).filter(r => r.status === 'Proposed').forEach(r => { r.status = 'Superseded'; });
-        const id = 'RR-' + pad(seq(db, 'rrv'), 4);
-        arr(db, 'rateRevisions').unshift({ id, rates, before, reason: txt(p.reason, 'Reason', { max: 200, required: false }),
-          status: 'Proposed', proposedAt: ctx.now, proposedBy: actorLabel(a), proposedByKey: actorKey(a) });
-        audit(db, a, ctx.now, id, 'Rate revision proposed: ' + Object.entries(rates).map(([k, v]) => `${k} ${before[k]} → ${v}`).join(', '));
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Checker', text: `Rate revision ${id} waiting for approval`, link: '#/ad2/treasury/rates' });
-        return { id, message: `Revision ${id} sent to the treasury checker.` };
-      },
-    };
-    C['rates.approve'] = {
-      cap: 'treasury.approve',
-      run(db, a, p, ctx) {
-        const r = find(db.rateRevisions, p.id) || missing('Rate revision');
-        need(r.status === 'Proposed', `Revision ${r.id} is ${r.status.toLowerCase()}.`);
-        distinct(a, [{ key: r.proposedByKey, verb: 'proposed' }], 'revision');
-        Object.entries(r.rates).forEach(([code, v]) => { const c = currencyOf(db, code); if (c) { c.refRate = v; c.publishedAt = ctx.now; } });
-        Object.assign(r, { status: 'Applied', approvedAt: ctx.now, approvedBy: actorLabel(a), approvedByKey: actorKey(a) });
-        audit(db, a, ctx.now, r.id, 'Rates published: ' + Object.entries(r.rates).map(([k, v]) => `${k} ${v}`).join(', ') + '. Bookings already made keep their rate.');
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `Rate revision ${r.id} approved and published`, link: '#/ad2/treasury/rates' });
-        return { message: `Rates published. New bookings use them; existing bookings keep their rate.` };
-      },
-    };
-    C['rates.reject'] = {
-      cap: 'treasury.approve',
-      run(db, a, p, ctx) {
-        const r = find(db.rateRevisions, p.id) || missing('Rate revision');
-        need(r.status === 'Proposed', `Revision ${r.id} is ${r.status.toLowerCase()}.`);
-        distinct(a, [{ key: r.proposedByKey, verb: 'proposed' }], 'revision');
-        const why = txt(p.reason, 'Reason for rejection', { max: 300 });
-        Object.assign(r, { status: 'Rejected', rejectReason: why, approvedAt: ctx.now, approvedBy: actorLabel(a) });
-        audit(db, a, ctx.now, r.id, 'Rate revision rejected: ' + why);
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `Rate revision ${r.id} rejected: ${why}`, link: '#/ad2/treasury/rates' });
-        return { message: 'Revision rejected. The dealer sees your reason.' };
-      },
-    };
+    /* The rate desk (base and card rates, maker-checker) is the Treasury
+       Management Portal's: tmp-engine.js. */
 
     /* ---------- bank cover ------------------------------------------------------ */
+    /* A bank cover deal is live when saved (spot or forward): the dealer has
+       already dealt with the bank, and the book must show it at once.
+       Settling a forward is what goes to a checker (tmp-engine). */
     C['cover.create'] = {
       cap: 'treasury.deal',
       run(db, a, p, ctx) {
         const cur = oneOf(p.currency, db.currencies.map(c => c.code), 'Currency');
         const side = oneOf(p.side, ['BUY', 'SELL'], 'Side');
+        const type = oneOf(p.type || 'Spot', ['Spot', 'Forward'], 'Deal type');
         const amt = amount(p.amount, 'Amount');
         const rate = Number(p.rate);
         const ref = currencyOf(db, cur).refRate;
         need(isFinite(rate) && rate > 0, 'Enter the dealt rate.');
         need(Math.abs(rate - ref) / ref <= 0.03, `The dealt rate ${rate} is more than 3% from the reference ${ref}. Check the deal.`);
         const valueDate = date(p.valueDate || ctx.now.slice(0, 10), 'Value date');
-        need(valueDate >= ctx.now.slice(0, 10), 'The value date cannot be in the past.');
+        need(valueDate >= istDate(ctx.now), 'The value date cannot be in the past.');
+        if (type === 'Forward') need(valueDate > istDate(ctx.now), 'A forward cover settles after today — choose a later value date, or book it as spot.');
+        const known = (db.counterparties || []).filter(c => c.status !== 'Inactive');
+        const counterparty = known.length ? oneOf(p.counterparty, known.map(c => c.name), 'Counterparty bank') : txt(p.counterparty, 'Counterparty bank', { max: 80 });
+        const cp = known.find(c => c.name === counterparty);
+        if (cp && cp.dealTypes) need(cp.dealTypes.includes(type), `${counterparty} is not set up for ${type.toLowerCase()} deals (${cp.dealTypes.join(', ')}).`);
         const id = 'COV-' + pad(seq(db, 'cov'), 4);
-        arr(db, 'covers').unshift({ id, currency: cur, side, amount: amt, rate: r4(rate), allocated: 0,
-          counterparty: txt(p.counterparty, 'Counterparty bank', { max: 80 }), dealRef: txt(p.dealRef, 'Bank deal reference', { max: 40, required: false }),
-          valueDate, status: 'Pending Approval', enteredAt: ctx.now, enteredBy: actorLabel(a), enteredByKey: actorKey(a) });
-        audit(db, a, ctx.now, id, `Cover deal entered — ${side} ${fmt(amt, cur)} at ${r4(rate).toFixed(4)} with ${p.counterparty}, value ${valueDate}`);
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Checker', text: `Cover deal ${id} (${side} ${fmt(amt, cur)}) to approve`, link: '#/ad2/treasury/cover' });
-        return { id, message: `Cover deal ${id} sent to the treasury checker.` };
-      },
-    };
-    C['cover.approve'] = {
-      cap: 'treasury.approve',
-      run(db, a, p, ctx) {
-        const c = find(db.covers, p.id) || missing('Cover deal');
-        need(c.status === 'Pending Approval', `${c.id} is ${c.status.toLowerCase()}.`);
-        distinct(a, [{ key: c.enteredByKey, verb: 'entered' }], 'cover deal');
-        Object.assign(c, { status: 'Active', approvedAt: ctx.now, approvedBy: actorLabel(a), approvedByKey: actorKey(a) });
-        audit(db, a, ctx.now, c.id, 'Cover deal approved — available to allocate');
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `${c.id} approved — allocate it to positions`, link: '#/ad2/treasury/allocate?src=' + c.id });
-        return { message: `${c.id} approved. The dealer can allocate it.` };
-      },
-    };
-    C['cover.reject'] = {
-      cap: 'treasury.approve',
-      run(db, a, p, ctx) {
-        const c = find(db.covers, p.id) || missing('Cover deal');
-        need(c.status === 'Pending Approval', `${c.id} is ${c.status.toLowerCase()}.`);
-        distinct(a, [{ key: c.enteredByKey, verb: 'entered' }], 'cover deal');
-        const why = txt(p.reason, 'Reason for rejection', { max: 300 });
-        Object.assign(c, { status: 'Rejected', rejectReason: why, approvedAt: ctx.now, approvedBy: actorLabel(a) });
-        audit(db, a, ctx.now, c.id, 'Cover deal rejected: ' + why);
-        notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `${c.id} rejected: ${why}`, link: '#/ad2/treasury/cover' });
-        return { message: 'Cover deal rejected.' };
+        const c = { id, currency: cur, side, type, amount: amt, rate: r4(rate), allocated: 0, counterparty,
+          dealRef: txt(p.dealRef, 'Bank deal reference', { max: 40, required: false }), valueDate, status: 'Active',
+          settled: 0, settlements: [], enteredAt: ctx.now, enteredBy: actorLabel(a), enteredByKey: actorKey(a) };
+        arr(db, 'covers').unshift(c);
+        audit(db, a, ctx.now, id, `${type} cover deal saved — ${side} ${fmt(amt, cur)} at ${r4(rate).toFixed(4)} with ${counterparty}, value ${valueDate}`);
+        if (H.onCoverSaved) H.onCoverSaved(db, c, ctx.now);
+        return { id, message: `${type} cover ${id} saved — ${fmt(amt, cur)} ready to allocate to positions.` };
       },
     };
 
@@ -514,7 +557,7 @@
           need(cover.status === 'Active', `${cover.id} is ${cover.status.toLowerCase()} — only an approved cover deal can be allocated.`);
           cur = cover.currency; wantSide = cover.side === 'BUY' ? 'SELL' : 'BUY'; avail = round2(cover.amount - cover.allocated);
         } else {
-          need(!['Cancelled'].includes(cross.status) && positionStatus(cross, ctx.now) !== 'Expired', `${cross.id} is no longer live.`);
+          need(!['Cancelled', 'Held'].includes(cross.status) && positionStatus(cross, ctx.now) !== 'Expired', `${cross.id} is ${cross.status === 'Held' ? 'held for approval' : 'no longer live'}.`);
           cur = cross.currency; wantSide = cross.side === 'BUY' ? 'SELL' : 'BUY'; avail = uncovered(cross);
         }
         const rows = [];
@@ -527,7 +570,7 @@
           need(pos.currency === cur, `${pos.id} is in ${pos.currency}, not ${cur}.`);
           need(pos.side === wantSide, `${pos.id} is a ${pos.side === 'SELL' ? 'sale' : 'purchase'}; ${srcId} offsets ${wantSide === 'SELL' ? 'sales' : 'purchases'}.`);
           const st = positionStatus(pos, ctx.now);
-          need(!['Cancelled', 'Expired'].includes(st), `${pos.id} is ${st.toLowerCase()} — refresh and try again.`);
+          need(!['Cancelled', 'Expired', 'Held'].includes(st), `${pos.id} is ${st === 'Held' ? 'held for a treasury checker' : st.toLowerCase()} — refresh and try again.`);
           need(amt <= uncovered(pos) + 0.005, `${pos.id} has only ${fmt(uncovered(pos), cur)} uncovered — refresh and try again.`);
           rows.push({ pos, amt: round2(amt) });
         });
@@ -564,18 +607,17 @@
         const ref = currencyOf(db, cur).refRate;
         need(isFinite(rate) && rate > 0, 'Enter the agreed rate.');
         need(Math.abs(rate - ref) / ref <= 0.03, `The agreed rate ${rate} is more than 3% from the reference ${ref}.`);
+        if (H.rateCheck) H.rateCheck(db, dir === 'out' ? 'REM' : 'INW', cur);
         const hours = Math.round(Number(p.validHours || 24));
         need(hours >= 1 && hours <= 72, 'Validity must be between 1 and 72 hours.');
-        const id = `FXD-${ctx.now.slice(0, 4)}-${pad(seq(db, 'fxd'), 5)}`;
         const margin = Math.round((dir === 'out' ? rate - ref : ref - rate) * 100);
         const pos = newPosition(db, a, s, { currency: cur, side: sideOf(dir), amount: amt, customerRate: rate, refRate: ref, margin,
-          source: 'Deal', dealId: id, expiresAt: addHours(ctx.now, hours) }, ctx.now);
-        arr(db, 'deals').unshift({ id, smeId: s.id, currency: cur, side: pos.side, amount: amt, rate: r4(rate), refRate: ref, positionId: pos.id,
-          validUntil: pos.expiresAt, status: 'Issued', issuedAt: ctx.now, issuedBy: actorLabel(a), issuedByKey: actorKey(a),
-          note: txt(p.note, 'Note', { max: 200, required: false }) });
-        audit(db, a, ctx.now, pos.id, `Deal ${id} issued for ${s.tradingName} — ${fmt(amt, cur)} ${dirWord(pos.side)} at ${r4(rate).toFixed(4)}, valid ${hours}h`);
-        ['AD2 Maker', 'AD2 Sales', 'AD2 Operations'].forEach(r => notify(db, ctx.now, { toRole: r, text: `Deal ${id} issued for ${s.tradingName}: ${fmt(amt, cur)} at ${r4(rate).toFixed(4)}`, link: '#/ad2/directory' }));
-        return { id, positionId: pos.id, message: `Deal ${id} issued and on the book as ${pos.id}.` };
+          source: 'Deal', channel: 'Treasury deal', ibrAtBooking: marketRate(db, cur, ctx.now) }, ctx.now);
+        const dl = issueDeal(db, a, s, pos, hours, txt(p.note, 'Note', { max: 200, required: false }), ctx.now);
+        const breach = holdIfOverLimit(db, a, pos, ctx.now);
+        return { id: dl.id, positionId: pos.id, held: !!breach,
+          message: breach ? `Deal ${dl.id} issued as ${pos.id}, but held — it takes ${s.tradingName} over its limit and goes to a treasury checker.`
+                          : `Deal ${dl.id} issued and on the book as ${pos.id}.` };
       },
     };
     C['deal.withdraw'] = {
@@ -583,7 +625,8 @@
       run(db, a, p, ctx) {
         const dl = find(db.deals, p.id) || missing('Deal');
         need(dl.status === 'Issued', `Deal ${dl.id} is ${dl.status.toLowerCase()}.`);
-        cancel(db, a, find(db.positions, dl.positionId), 'Deal withdrawn: ' + txt(p.reason, 'Reason', { max: 200 }), ctx.now);
+        const why = txt(p.reason, 'Reason', { max: 200 });
+        cancel(db, a, find(db.positions, dl.positionId), 'Deal withdrawn: ' + why, ctx.now);
         dl.status = 'Withdrawn';
         return { message: `Deal ${dl.id} withdrawn.` };
       },
@@ -594,7 +637,7 @@
        see the whole book. The branch sees positions without cover detail,
        and the deals it may apply. A customer sees its own bookings: its rate,
        never the reference or the margin.                                     */
-    const TKEYS = ['positions', 'covers', 'coverAllocations', 'deals', 'rateRevisions', 'tmsEvents'];
+    const TKEYS = ['positions', 'covers', 'coverAllocations', 'deals', 'tmsEvents'];
     function scope(out, db, a, kind) {
       TKEYS.forEach(k => { out[k] = []; });
       if (kind === 'public' || !a) return;
@@ -602,9 +645,10 @@
       if (kind === 'treasury') { TKEYS.forEach(k => { out[k] = E.clone(db[k] || []); }); return; }
       const base = p => ({ id: p.id, smeId: p.smeId, currency: p.currency, side: p.side, amount: p.amount, customerRate: p.customerRate,
         source: p.source, dealId: p.dealId, bookedAt: p.bookedAt, expiresAt: p.expiresAt, status: p.status, recordKind: p.recordKind,
-        recordId: p.recordId, linkRef: p.linkRef, cancelReason: p.cancelReason, cancelledAmount: p.cancelledAmount });
+        recordId: p.recordId, linkRef: p.linkRef, cancelReason: p.cancelReason, cancelledAmount: p.cancelledAmount, heldReason: p.heldReason || null,
+        product: p.product, branchId: p.branchId, channel: p.channel });
       if (kind === 'ad2') {
-        out.positions = pos.map(p => ({ ...base(p), refRate: p.refRate, margin: p.margin, coverState: coverState(p) }));
+        out.positions = pos.filter(isTrade).map(p => ({ ...base(p), refRate: p.refRate, margin: p.margin, coverState: coverState(p) }));
         out.deals = (db.deals || []).filter(d => ['Issued', 'Used'].includes(d.status)).map(d => ({ id: d.id, smeId: d.smeId, currency: d.currency,
           side: d.side, amount: d.amount, rate: d.rate, validUntil: d.validUntil, status: d.status, usedOn: d.usedOn || null, positionId: d.positionId }));
         return;
@@ -704,7 +748,7 @@
         const c = { id: 'COV-' + pad(n, 4), currency: cur, side, amount: amt, rate, allocated: 0, counterparty: bank,
           dealRef: bank.split(' ')[0].toUpperCase().slice(0, 4) + '-FX-' + (40210 + n * 7), valueDate: at.slice(0, 10), status,
           enteredAt: at, enteredBy: 'AD2 Treasury Dealer (Nikhil Bansal)', enteredByKey: 'AD2/DEALER',
-          ...(status === 'Active' ? { approvedAt: ago(hoursAgo - 0.5), approvedBy: 'AD2 Treasury Checker (Leela Varghese)', approvedByKey: 'AD2/TCHECKER' } : {}) };
+          type: 'Spot', settled: 0, settlements: [] };
         db.covers.push(c);
         (allocs || []).forEach(([recId, part]) => {
           const p = byRec[recId]; if (!p) return;
@@ -715,29 +759,20 @@
         });
         return c;
       };
-      cov('USD', 'BUY', 200000, 88.10, 'HDFC Bank', 400, 'Active', [['OR-5101'], ['OR-5108']]);
+      cov('USD', 'BUY', 172300, 88.10, 'HDFC Bank', 400, 'Active', [['OR-5101'], ['OR-5108']]);
       cov('GBP', 'SELL', 184500, 112.46, 'Standard Chartered', 480, 'Active', [['DI-9001']]);
       cov('EUR', 'SELL', 120000, 95.68, 'Axis Bank', 330, 'Active', [['DI-9002']]);
       cov('AED', 'SELL', 180000, 24.12, 'Emirates NBD', 125, 'Active', [['DI-9000']]);
       cov('EUR', 'BUY', 50000, 95.62, 'ICICI Bank', 30, 'Active', [['OR-5103', 50000]]);
-      cov('USD', 'BUY', 50000, 88.36, 'Kotak Mahindra Bank', 1, 'Pending Approval');
+      cov('USD', 'BUY', 10000, 88.36, 'Kotak Mahindra Bank', 1, 'Active');
       db.covers.reverse(); db.coverAllocations.reverse();
-
-      /* the rate desk: yesterday's revision, and one waiting for the checker */
-      db.rateRevisions = [
-        { id: 'RR-' + pad(seq(db, 'rrv'), 4), rates: { USD: 88.42, EUR: 95.87 }, before: { USD: 88.30, EUR: 95.74 }, reason: 'Opening rates',
-          status: 'Applied', proposedAt: ago(21), proposedBy: 'AD2 Treasury Dealer (Nikhil Bansal)', proposedByKey: 'AD2/DEALER',
-          approvedAt: ago(20), approvedBy: 'AD2 Treasury Checker (Leela Varghese)', approvedByKey: 'AD2/TCHECKER' },
-        { id: 'RR-' + pad(seq(db, 'rrv'), 4), rates: { USD: r4(currencyOf(db, 'USD').refRate + 0.09), GBP: r4(currencyOf(db, 'GBP').refRate - 0.14) },
-          before: { USD: currencyOf(db, 'USD').refRate, GBP: currencyOf(db, 'GBP').refRate }, reason: 'Dollar firmer after the RBI reference rate',
-          status: 'Proposed', proposedAt: ago(0.5), proposedBy: 'AD2 Treasury Dealer (Nikhil Bansal)', proposedByKey: 'AD2/DEALER' },
-      ].reverse();
 
       trail.sort((x, y) => String(x.at).localeCompare(String(y.at))).forEach(t => emit(db, t.at, t.type, t.p, t.extra));
       db.positions.sort((x, y) => String(y.bookedAt).localeCompare(String(x.bookedAt)));
     }
 
     return { priceFor, book, resolveRate, attach, link, release, sweep, scope, seed,
+      newPosition, issueDeal, addLink, cancelResidual, unwind, cancel, remaining, isTrade,
       positionStatus, coverState, linkState, uncovered, live, netByCurrency, suggestions, marketRate, pnl, exceptions, istDate, pastCutoff };
   };
 });

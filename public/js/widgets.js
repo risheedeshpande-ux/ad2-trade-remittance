@@ -27,10 +27,19 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
 
   if (draft.rate.mode === 'booked') {
     const amt = draft.rate.bookedAmount || fx;
+    const pos = (DB.positions || []).find(p => p.id === draft.rate.positionId);
+    if (pos && pos.status === 'Held') return `<div class="ratebox locked">
+      <div class="row"><div><div class="k">Rate booked — held by treasury</div>
+        <div class="live">1 ${esc(cur)} = ₹ ${Number(draft.rate.customerRate).toFixed(4)}</div>
+        <div class="tick"><b>${esc(pos.id)}</b> takes ${esc(smeRec ? smeRec.tradingName : 'the customer')} over its treasury limit, so a treasury checker releases it first.
+          Save the draft; submit once it is released${pos.heldReason && seesMargin() ? ` (${esc(pos.heldReason)})` : ''}.</div></div>
+        <div class="spacer"></div>
+        <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Release</button></div>
+      ${lines(draft.rate.customerRate, amt)}</div>`;
     return `<div class="ratebox locked">
       <div class="row"><div><div class="k">Rate booked</div>
         <div class="live">1 ${esc(cur)} = ₹ ${Number(draft.rate.customerRate).toFixed(4)}</div>
-        <div class="tick">Booked ${dmyt(draft.rate.bookedAt)} for ${money(amt, cur)} · <b>${esc(draft.rate.positionId || '')}</b> · locked until ${dmyt(draft.rate.expiresAt)}${typeof hoursLeft === 'function' ? ' (' + esc(hoursLeft(draft.rate.expiresAt)) + ')' : ''}</div>
+        <div class="tick">Booked ${dmyt(draft.rate.bookedAt)} for ${money(amt, cur)} · <b>${esc(draft.rate.positionId || '')}</b> · locked until ${dmyt(draft.rate.expiresAt)} (${esc(hoursLeft(draft.rate.expiresAt))})</div>
         <div class="tick">The rate is held on the treasury book; submitting uses exactly this rate.</div>
         ${ad2Note(draft.rate)}</div>
         <div class="spacer"></div>
@@ -45,6 +54,13 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Clear</button></div>
       ${lines(draft.rate.customerRate, fx)}</div>`;
 
+  /* treasury's rate desk opens booking: no published rate, nothing to book */
+  const desk = (DB.rateDesk || []).find(r => r.product === (dir === 'out' ? 'REM' : 'INW') && r.currency === cur);
+  if (desk && desk.status !== 'Published') return `<div class="ratebox">
+    <div class="row"><div><div class="k">Rate not yet published</div>
+      <div class="live">${esc(cur)} — booking opens shortly</div>
+      <div class="tick">The treasury desk has not published today’s ${esc(cur)} rate for ${dir === 'out' ? 'outward payments' : 'inward conversions'}.
+        ${seesMargin() ? 'Ask treasury to publish it on the rate desk (Treasury Management Portal).' : 'Save the request as a draft and book the rate once it is published.'}</div></div></div></div>`;
   const live = liveRate(smeRec, cur, dir, assisted ? draft.marginOverride : null);
   const marginIn = assisted ? `<div class="f" style="margin-top:12px;max-width:280px"><label for="${prefix}-margin">Margin (paise) — branch pricing</label>
       <input id="${prefix}-margin" type="number" data-act="${prefix}-margin" value="${m}" min="${Math.max(0, approved - band)}" max="${approved + 100}">
@@ -213,3 +229,31 @@ function viewDone(kind, id) {
     </div></div>`);
 }
 const purposeLabelIn = code => { const p = (DB.inwardPurposes || []).find(x => x.code === code); return p ? `${p.code} — ${p.label}` : (code || '—'); };
+
+/* ---------- treasury, as the trade portal sees it ----------------------------
+   The treasury desk works in the Treasury Management Portal (treasury/). Here
+   the customer sees its own bookings, and AD2 the position behind a request. */
+const hoursLeft = iso => { const min = Math.floor((new Date(iso) - new Date()) / 60000); return min <= 0 ? 'expired' : min < 60 ? min + ' min left' : Math.floor(min / 60) + 'h ' + (min % 60) + 'm left'; };
+const posStatus = p => Engine.treasury.positionStatus(p, nowISO());
+function myBookingsCard() {
+  const mine = (DB.positions || []).filter(p => p.smeId === ctxSmeId() && ['Open', 'Held'].includes(posStatus(p)));
+  if (!mine.length) return '';
+  return `<div class="card" style="margin-bottom:20px"><div class="card-head"><h2>Your rate bookings (${mine.length})</h2></div>
+    <div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <thead><tr><th>Booking</th><th>For</th><th class="num">Amount</th><th class="num">Your rate</th><th>Locked until</th><th></th></tr></thead>
+      <tbody>${mine.map(p => `<tr><td class="id">${esc(p.id)}${p.status === 'Held' ? ` ${badge('Held')}` : ''}</td><td>${p.side === 'SELL' ? 'Outward payment' : 'Inward conversion'}</td>
+        <td class="num">${money(p.amount, p.currency)}</td><td class="num">${Number(p.customerRate || 0).toFixed(4)}</td>
+        <td>${p.status === 'Held' ? '<small>Held by treasury — over your limit; usable once released</small>' : `${dmyt(p.expiresAt)}<br><small>${esc(hoursLeft(p.expiresAt))}</small>`}</td>
+        <td><button class="btn btn-link" type="button" data-act="bk-release" data-id="${esc(p.id)}">Release</button></td></tr>`).join('')}</tbody></table></div></div>
+    <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:var(--fs-xs)">A booking holds its rate for 48 hours. Use it on a request, or release it if you no longer need it.</p></div>`;
+}
+/* The treasury position behind a request, on its detail page. AD2 sees it
+   and its two tracks (settlement link, bank cover); the customer its booking. */
+function positionLine(rec) {
+  const id = rec && rec.rate && rec.rate.positionId;
+  if (!id) return '';
+  const p = (DB.positions || []).find(x => x.id === id);
+  if (!p || !isAD2() || acting()) return `<div class="line"><span>Rate booking</span><b>${esc(id)}</b></div>`;
+  const cover = p.coverState || Engine.treasury.coverState(p);
+  return `<div class="line"><span>Treasury position</span><b>${esc(id)} · ${badge(posStatus(p))}${cover && cover !== '—' ? ' ' + badge(cover) : ''}</b></div>`;
+}

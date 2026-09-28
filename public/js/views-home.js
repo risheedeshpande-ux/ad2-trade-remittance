@@ -182,7 +182,6 @@ function viewQueue() {
 
 /* ---------- AD2 dashboard ------------------------------------------------------ */
 function viewAd2Dashboard() {
-  if (isTreasury()) return viewTreasury('desk');
   if (S.role === 'AD2 Sales') return viewSalesDashboard();
   if (S.role === 'AD2 Administrator') return viewAdminDashboard();
   const q = myQueue();

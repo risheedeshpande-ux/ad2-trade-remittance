@@ -48,9 +48,10 @@
 
   <div class="hero">
     <h1>AD2 Trade Remittance</h1>
-    <p>A working demo of the SME trade-remittance portal and the AD2 operations portal behind it. Onboard a partner,
-       then take a payment and an export receipt all the way through maker, checker and operations to a UTR and a FIRC.
-       Customers book the live rate and never see AD2’s margin; every submission ends on a confirmation with its reference.</p>
+    <p>The SME trade-remittance portal, the AD2 operations portal behind it, and the Treasury Management Portal — two front ends on
+       one platform. Onboard a partner, then take a payment and an export receipt all the way through maker, checker and operations to a
+       UTR and a FIRC. Every rate booked in the trade portal is a treasury position the moment it is made; treasury publishes the rates,
+       covers the book, holds bookings over a customer’s limit and sees the payment conclude and move the Nostro.</p>
   </div>
 
   <div class="cards">
@@ -58,6 +59,12 @@
       <span class="ic">▶</span>
       <h2>Live demo</h2>
       <p>Both portals on a shared server. Open the <b>Demo guide</b> in the yellow bar to be walked through the whole journey.</p>
+      <span class="go">Open →</span>
+    </a>
+    <a class="nav-card" href="treasury/index.html">
+      <span class="ic">⇄</span>
+      <h2>Treasury portal</h2>
+      <p>The Treasury Management Portal: rate desk, positions, cover, branch counters, cut-off, liquidity, limits and a maker-checker inbox — live on the same data.</p>
       <span class="go">Open →</span>
     </a>
     <a class="nav-card" href="screens.html">
@@ -82,9 +89,9 @@
 
   <section>
     <h2>Run the demo</h2>
-    <p>Open the demo and click <b>Demo guide</b>. It walks one new business through 17 steps — registration, maker review, Compliance
+    <p>Open the demo and click <b>Demo guide</b>. It walks one new business through 20 steps — registration, maker review, Compliance
        approval, an import bill, a DIR payment verified, authorised and released, then an export receipt disposed and a FIRC issued.
-       Each step signs in as the right person with one click, so you can watch the work move from role to role.</p>
+       Each step signs in as the right person with one click, so you can watch the work move from role to role. The treasury steps open the Treasury Management Portal: the dealer covers the booking and later sees it concluded by the UTR.</p>
     <p>Then open the <b>Test data lab</b> from the sidebar. It creates fresh businesses, bills, receipts and requests parked at each
        stage, and lists ten more journeys to try — partial and advance disposals, EEFC credit, FIRC knock-off, LC settlement, a
        High-risk payment, queries and the assisted journey — so nothing runs out.</p>
@@ -108,7 +115,15 @@
           <tr><td class="acct">AD2</td><td class="acct">CHECKER · CHECKER2</td><td>AD2 Checker</td><td>Trade checker: authorises, accepts bills, confirms knock-offs</td></tr>
           <tr><td class="acct">AD2</td><td class="acct">COMPLIANCE · COMPLIANCE2</td><td>AD2 Compliance</td><td>Onboarding checker: approves, returns or rejects applications</td></tr>
           <tr><td class="acct">AD2</td><td class="acct">OPS · OPS2</td><td>AD2 Operations</td><td>Confirms receipts, authorises, releases payments, issues FIRCs</td></tr>
-          <tr><td class="acct">AD2</td><td class="acct">ADMIN</td><td>AD2 Administrator</td><td>Purpose codes, document policy and settings</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">ADMIN</td><td>AD2 Administrator</td><td>Purpose codes, document policy and settings — and the treasury portal’s users, masters and organisation</td></tr>
+          <tr><td class="acct">TEST</td><td class="acct">MASTER</td><td>Master Tester</td><td>Test console: opens any persona in either portal in one click</td></tr>
+          <tr><td colspan="4" style="background:var(--bg-2, #f4f7f7)"><b>Treasury Management Portal</b> (treasury/) — same passcode, same session</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">DEALER · DEALER2</td><td>AD2 Treasury Dealer</td><td>Rate desk, the book, cover deals and allocation, FX deals for trade customers, liquidity</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">TCHECKER · TCHECKER2</td><td>AD2 Treasury Checker</td><td>Approves card rates, settlements, held deals and control changes — never their own</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">TVIEW</td><td>AD2 Treasury Viewer</td><td>The whole book, read-only</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">BRANCH · BRANCH2 · AIRPORT</td><td>AD2 Branch Inputter</td><td>Mumbai Fort, Delhi Connaught Place, Mumbai airport T2: quote, book, link bills, work the cut-off</td></tr>
+          <tr><td class="acct">SUNDARFX</td><td class="acct">AGENT</td><td>Agent Partner</td><td>Sundar Forex, Pune: quotes for its servicing branch</td></tr>
+          <tr><td class="acct">AD2</td><td class="acct">RBULK · FINANCE</td><td>Regional Bulk · Finance</td><td>Bulk currency requests for the West region · card settlement reconciliation</td></tr>
         </tbody>
       </table>
     </div></div></div>
@@ -128,6 +143,12 @@
           <td>Try to authorise as the maker who verified — the button is not there, and the API refuses it even if called directly.</td></tr>
         <tr><td><b>Release a payment</b></td>
           <td>Operations sees the account balance, releases, and gets a UTR, a SWIFT MT103 and a printable payment advice. The linked bill settles.</td></tr>
+        <tr><td><b>Trade → treasury</b></td>
+          <td>Book a rate as Meridian; open the treasury portal as DEALER — the booking is on the book at Mumbai Fort. Cover it, then release the
+            payment in the trade portal: the position concludes with the UTR and the USD Nostro falls by the payment.</td></tr>
+        <tr><td><b>Treasury → trade</b></td>
+          <td>Quote Meridian at the branch (BRANCH): the rate becomes an FX deal reference AD2 applies to the payment. Or let a card rate go
+            unpublished: the trade portal stops booking that currency until treasury publishes it.</td></tr>
         <tr><td><b>Two browsers</b></td>
           <td>Open the demo in two windows as different roles. Act in one; the other's queue updates within seconds.</td></tr>
         <tr><td><b>Administration</b></td>
@@ -145,7 +166,8 @@
   <section>
     <h2>Scope</h2>
     <p>Enforced for real: authentication, roles, four-eyes, the purpose and document policy, rates, balances, bill reservation and the audit trail.
-       Simulated: the FX feed, SWIFT, PennyDrop, sanctions screening, SFTP, SAP and document AI. Before production: the FX quotation formula from treasury,
+       Simulated: the FX feed (IBR), SWIFT and MT950 statements, FX Plus bills, the bank aggregator and card issuers, PennyDrop, sanctions screening, SFTP, SAP
+       and document AI. Before production: the FX quotation formula from treasury,
        transaction limits from risk, the SFTP/SAP contracts, document storage and retention, and a relational database in place of the demo store.</p>
   </section>
 

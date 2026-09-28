@@ -1,0 +1,73 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-22 — Reports · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html" class=on>Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Management</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-22</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><span aria-current=page>Reports</span><span class=sep>/</span><span aria-current=page>Reports</span></nav><span class=sp></span><div class=pager><span class=off>&lsaquo; Prev</span><span class=count>1 of 2</span><a href="T-23.html" title="Card pending settlement MIS &mdash; report">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Reports"><a href="T-22.html" class=on>Reports</a><a href="T-23.html">Card pending settlement MIS &mdash; report</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Reports</h1>
+    <p class=sub>Report catalogue &nbsp;·&nbsp; date/time, currencywise, issuerwise, branchwise, accountwise, ageing and billwise &nbsp;·&nbsp; export on every report</p>
+    
+    
+    <div class=note><b>Design note</b>New screen &mdash; the Treasury nav carried a Reports item with no screen in v1. BRD &sect;8 lists the required dimensions; export format is to be confirmed in detailed design.</div>
+    
+<div class=filters><span class="chip on">All reports</span><span class=chip>Positions</span><span class=chip>Liquidity</span>
+ <span class=chip>Cards</span><span class=chip>P&amp;L</span><span class=chip>Audit</span><span class=sp></span>
+ <span class=src>BRD &sect;8 &mdash; export required on every report</span></div>
+<div class=tbl><table class=dt>
+<thead><tr><th style=width:300px>Report</th><th>Dimensions</th><th>Requirement</th><th>Last run</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td class=ref>Branch-wise position</td><td class=dim>Branch · total, outstanding, cancelled</td><td class=dim>Diagram</td><td class=dim>11 Sep 09:00</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Product-wise position</td><td class=dim>Remittance · Forex card · Cash &amp; Inward</td><td class=dim>Diagram</td><td class=dim>11 Sep 09:00</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Currency and cash balances</td><td class=dim>Branch · currency · ageing</td><td class=dim>FR-01, FR-02</td><td class=dim>11 Sep 14:32</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Bank balances &mdash; accountwise</td><td class=dim>Bank · account · HO/branch</td><td class=dim>FR-03</td><td class=dim>11 Sep 14:31</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Nostro balances</td><td class=dim>Issuer · currency</td><td class=dim>FR-04</td><td class=dim>11 Sep 13:00</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Card pending settlement MIS</td><td class=dim>Issuer · currency · date/time · billwise</td><td class=dim>FR-08, FR-09</td><td class=dim>11 Sep 14:32</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Open position rates and P&amp;L</td><td class=dim>Currency</td><td class=dim>FR-10</td><td class=dim>11 Sep 14:32</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Treasury assessment P&amp;L</td><td class=dim>Covered lot · sale and cover date</td><td class=dim>FR-11, BR-06</td><td class=dim>11 Sep 14:00</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Treasury and branch profitability</td><td class=dim>Branch · product · currency</td><td class=dim>Diagram</td><td class=dim>10 Sep 18:00</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Customer card balances</td><td class=dim>Network · currency</td><td class=dim>FR-12</td><td class=dim>11 Sep 14:30</td><td><a href="T-23.html">Run</a></td></tr>
+<tr><td class=ref>Audit trail</td><td class=dim>User · action · date range</td><td class=dim>&sect;11</td><td class=dim>11 Sep 14:45</td><td><a href="T-23.html">Run</a></td></tr>
+</tbody></table></div>
+
+    
+  </div>
+</div>
+</div>
+
+<script src="tmp.js?v=2"></script>

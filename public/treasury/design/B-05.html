@@ -1,0 +1,89 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>B-05 — Transaction knock-off · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="B-01.html">Overview</a>
+  <a href="B-02.html">Take FX rate</a>
+  <a href="B-04.html">My positions</a>
+  <a href="B-05.html" class=on>Knock-off</a>
+  <a href="B-06.html">Cut-off queue</a>
+  <a href="B-09.html">Reminders</a>
+  <a href="B-07.html">Balances</a>
+  <a href="B-08.html">Reports</a>
+  <a href="B-10.html">Offline capture</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Branch / <b>Mumbai Fort</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>B-05</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="B-01.html">Branch</a><span class=sep>/</span><a href="B-04.html">Positions</a><span class=sep>/</span><span aria-current=page>Transaction knock-off</span></nav><span class=sp></span><div class=pager><a href="B-04.html" title="My positions">&lsaquo; Prev</a><span class=count>2 of 2</span><span class=off>Next &rsaquo;</span></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Positions"><a href="B-04.html">My positions</a><a href="B-05.html" class=on>Transaction knock-off</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <div class=pagehead><h1>Transaction knock-off</h1><span class=sp></span><div class=pageacts><button class="btn" data-dlg="dlg-knockoff">Confirm knock-off</button><button class="btn sec" data-dlg="dlg-findtxn">Find missing transaction</button></div></div>
+    <p class=sub><b>POS-1042</b> &nbsp;·&nbsp; USD 25,000 booked &nbsp;·&nbsp; USD 20,000 linked &nbsp;·&nbsp; USD 5,000 remaining</p>
+    
+    
+    <div class=note><b>Design note</b>Match on branch, product, currency, direction and available amount. Partial and multiple links retain an allocation ledger. Inward transactions are excluded from knock-off.</div><div class=filters style="margin-bottom:var(--s3)"><span class=sp></span><span class=src>Export: Knock-off queue &mdash; current filters applied</span><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">Excel</button><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">CSV</button><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">PDF</button></div>
+    
+<div class=recon>
+ <div><span>Booked</span><b>USD 25,000.00</b></div>
+ <div><span>Already linked</span><b>USD 20,000.00</b></div>
+ <div class=left><span>Remaining</span><b>USD 5,000.00</b></div>
+ <div class=sp></div>
+ <div class=zero><span>Remaining after link</span><b>USD 0.00</b></div>
+</div>
+<div class=filters><span class="chip on">Eligible only</span><span class=chip><b>Product</b> Remittance</span>
+ <span class=chip><b>Currency</b> USD</span><span class=sp></span>
+ <span class=src>Source: FX Plus SFTP 14:15 IST</span></div>
+<div class=tbl><table class=dt>
+<thead><tr><th style=width:34px></th><th>FX Plus reference</th><th>Product</th><th>Received</th>
+<th class=num>Available USD</th><th class=num>Link USD</th><th>Result</th></tr></thead>
+<tbody>
+<tr class=sel><td><input type=checkbox checked aria-label="Link FXP-88021"></td><td class=ref>FXP-88021</td><td>Remittance</td><td class=dim>13:41</td>
+ <td class=num>3,000.00</td><td class=num>3,000.00</td><td><span class="pill ok">Eligible</span></td></tr>
+<tr class=sel><td><input type=checkbox checked aria-label="Link FXP-88022"></td><td class=ref>FXP-88022</td><td>Remittance</td><td class=dim>13:52</td>
+ <td class=num>2,000.00</td><td class=num>2,000.00</td><td><span class="pill ok">Eligible</span></td></tr>
+<tr><td><input type=checkbox disabled aria-label="FXP-88023 already linked"></td><td class="ref dim">FXP-88023</td><td class=dim>Remittance</td><td class=dim>12:08</td>
+ <td class="num dim">4,000.00</td><td class="num dim">0.00</td><td><span class=pill>Already linked</span></td></tr>
+<tr><td><input type=checkbox disabled aria-label="FXP-88051 currency mismatch"></td><td class="ref dim">FXP-88051</td><td class=dim>Remittance</td><td class=dim>14:02</td>
+ <td class="num dim">2,000.00</td><td class="num dim">0.00</td><td><span class="pill bad">GBP &mdash; currency mismatch</span></td></tr>
+</tbody>
+<tfoot><tr><td></td><td colspan=3>Selected</td><td class=num>5,000.00</td><td class=num>5,000.00</td><td><span class="pill ok">Complete after link</span></td></tr></tfoot>
+</table></div>
+<div class=bar><button class=btn data-dlg="dlg-knockoff">Confirm knock-off</button>
+ <a class="btn sec" href="B-06.html">Find missing transaction</a>
+ <span class=sp></span><span class=why>Confirming writes an allocation ledger entry per linked reference.</span></div>
+
+    <div class=related><span>Where to next</span><a href="B-04.html">My positions</a><a href="B-09.html">Reminders</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-export"><h2>Export</h2><div class=body>
+<p>Exports <b data-ctx data-ctx="the current view">the current view</b> with all active filters applied.</p>
+<label for="dlg-export-f1">Format</label><select id="dlg-export-f1"><option>Excel (.xlsx)</option><option>CSV (.csv)</option><option>PDF (print layout)</option></select>
+<div style="height:10px"></div><label for="dlg-export-f2">Scope</label>
+<select id="dlg-export-f2"><option>Current filtered rows</option><option>All rows, ignoring filters</option><option>Selected rows only</option></select>
+<div style="height:10px"></div><label for="dlg-export-f3">Include</label>
+<select id="dlg-export-f3"><option>Values as displayed</option><option>Values plus source and sync time</option></select>
+<p class=hint style="margin-top:10px">Amounts keep their currency code. Mixed-currency totals are never combined.</p>
+</div><div class=foot><button class="btn sec" data-close>Cancel</button>
+<button class=btn data-confirm="Export queued — download will start shortly">Export</button></div></dialog>
+<dialog id="dlg-findtxn"><h2>Find missing transaction</h2><div class=body><p>Searches FX Plus for a bill matching this position that has not yet reflected back.</p><dl><dt>Searching</dt><dd>USD 25,000 · Mumbai Fort · 11 Sep</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="No unmatched bill found — position remains open" data-kind="warn">Search FX Plus</button></div></dialog>
+<dialog id="dlg-knockoff"><h2>Confirm knock-off</h2><div class=body><p>Links the selected FX Plus transactions to this position.</p><dl><dt>Position</dt><dd>POS-1042</dd><dt>Booked</dt><dd>USD 25,000.00</dd><dt>Linking now</dt><dd>USD 5,000.00</dd><dt>Remaining after</dt><dd>USD 0.00</dd><dt>Resulting status</dt><dd>Complete</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Transactions linked — POS-1042 now complete" data-kind="ok">Confirm knock-off</button></div></dialog>
+<script src="tmp.js?v=2"></script>
