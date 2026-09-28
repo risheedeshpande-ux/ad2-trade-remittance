@@ -43,7 +43,8 @@ const inrL = n => {                                   /* compact, for figures in
 const rate = n => n == null || n === '' || !isFinite(n) ? '—' : Number(n).toFixed(4);
 const signed = (n, f) => (n > 0 ? '+' : n < 0 ? '−' : '') + f(Math.abs(n));
 const istClock = iso => iso ? V.istClock(iso) : '—';
-const ist = iso => iso ? V.istClock(iso) + ' IST' : '—';
+/* a time on its own means today; anything older carries its date */
+const ist = iso => iso ? (V.istDate(iso) === todayIST() ? '' : istDay(iso) + ' ') + V.istClock(iso) + ' IST' : '—';
 const istDay = iso => iso ? new Date(new Date(iso).getTime() + 330 * 60000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }) : '—';
 const istDT = iso => iso ? `${istDay(iso)} ${istClock(iso)}` : '—';
 const dmy = d => d ? new Date(d + (String(d).length === 10 ? 'T00:00:00Z' : '')).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—';
