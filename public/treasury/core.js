@@ -23,7 +23,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const NOW = () => new Date().toISOString();
 const V = Engine.tmp, TR = Engine.treasury;
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
-const plural = (n, w, pl) => `${n} ${n === 1 ? w : (pl || w + 's')}`;
+const plural = (n, w, pl) => `${n} ${n === 1 ? w : (pl || w.replace(/([^aeiou])y$/, '$1ie') + 's')}`;
 const sum = (list, f) => round2(list.reduce((t, x) => t + (typeof f === 'function' ? f(x) : x[f]) , 0));
 
 /* Grouping is a domain rule: INR in lakh and crore (1,00,000), foreign
