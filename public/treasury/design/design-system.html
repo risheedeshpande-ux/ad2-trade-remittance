@@ -1,0 +1,331 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<title>TMP Design System — Remit4Me</title>
+<link rel=stylesheet href="styles.css?v=15">
+<style>
+  .ds{max-width:1180px;margin:0 auto;padding:28px 32px 80px}
+  .ds h2{font-size:15px;margin:44px 0 4px;padding-top:20px;border-top:2px solid var(--rule)}
+  .ds h2:first-of-type{border-top:0;margin-top:16px}
+  .ds .lede{color:var(--muted);font-size:12px;margin:0 0 18px;max-width:760px}
+  .ds h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:22px 0 8px;font-weight:normal}
+  .swatch{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule)}
+  .sw{background:var(--surface);padding:10px 12px}
+  .sw i{display:block;height:34px;border-radius:2px;border:1px solid var(--rule);margin-bottom:7px}
+  .sw code{font:11px ui-monospace,Menlo,monospace;display:block}
+  .sw span{font-size:11px;color:var(--muted);display:block;margin-top:2px}
+  .sw em{font-size:11px;font-style:normal;color:var(--brand)}
+  .sw em.fail{color:var(--alert)}
+  .type td{padding:7px 10px;border-bottom:1px solid var(--rule)}
+  .demo{border:1px solid var(--rule);background:var(--bg);padding:16px;margin-bottom:8px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .shell{border:1px solid var(--rule);overflow:hidden}
+  .shell .app{min-height:0}
+  .shell .nav{padding:12px 0}
+  .usage{font-size:11px;color:var(--muted);margin:6px 0 0}
+  .usage b{color:var(--ink);font-weight:normal}
+</style>
+
+<div class=ds>
+
+<h1 style="font-size:20px;margin-bottom:4px">Treasury Management Portal — Design System</h1>
+<p class=lede>Remit4Me for EBIXCASH World Money Ltd. Palette and typeface extracted from the v1 deck (28 slides), not invented. Every component below is used by at least one of the 53 screens. <b style="color:var(--ink);font-weight:normal">Approve or adjust this before screens are drawn</b> — everything inherits from here.</p>
+
+<!-- ============ COLOUR ============ -->
+<h2>1 · Colour</h2>
+<p class=lede>Teal on near-white with a single warm accent. Frequency = occurrences across the v1 deck. Contrast ratios are measured against <code>--bg #F8FAFA</code>.</p>
+
+<div class=swatch>
+  <div class=sw><i style="background:#173D43"></i><code>--ink #173D43</code><span>Primary text, table values</span><em>11.3:1 AAA</em></div>
+  <div class=sw><i style="background:#063E45"></i><code>--ink-deep #063E45</code><span>Nav, deep headers</span><em>12.6:1 AAA</em></div>
+  <div class=sw><i style="background:#596D71"></i><code>--muted #596D71</code><span>Labels, column headers and small text</span><em>5.2:1 AA</em></div>
+  <div class=sw><i style="background:#007F83"></i><code>--brand #007F83</code><span>Accent, primary action, active nav</span><em>4.6:1 AA</em></div>
+  <div class=sw><i style="background:#FFFFFF"></i><code>--surface #FFFFFF</code><span>Cards, table surface</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#F8FAFA"></i><code>--bg #F8FAFA</code><span>Page background</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#F3F7F7"></i><code>--bg-alt #F3F7F7</code><span>Zebra striping</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#E4F4F1"></i><code>--tint #E4F4F1</code><span>Selected rows, stat fills</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#D5EFEC"></i><code>--tint-deep #D5EFEC</code><span>Hover on a tinted row</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#DCE7E7"></i><code>--rule #DCE7E7</code><span>Borders, dividers</span><span>&nbsp;</span></div>
+  <div class=sw><i style="background:#A43E3E"></i><code>--alert #A43E3E</code><span>Overdue, breach, negative</span><em>6.0:1 AA</em></div>
+  <div class=sw><i style="background:#8A6832;border-style:dashed"></i><code>--attention #8A6832</code><span>Partial / pending — <b>the one addition</b></span><em>4.9:1 AA</em></div>
+</div>
+
+<div class=note><b>Design note</b>The deck uses <code>#A43E3E</code> exactly twice in 28 slides — on B-01's "due before cut-off" count. That restraint is deliberate and is preserved: status is a <b>label</b> first, colour only reinforces it. One colour was added, <code>#8A6832</code>, because six statuses cannot be encoded with one signal colour. It was darkened from the tonal sibling of the red so it clears AA at 4.9:1. <b>--muted</b> was darkened from <code>#657C81</code> to <code>#596D71</code> for the same reason: it is used for 11px column headers, which WCAG counts as small text and holds to 4.5:1.</div>
+
+<!-- ============ TYPE ============ -->
+<h2>2 · Type and numerals</h2>
+<p class=lede>The deck sets <b>Arial</b> throughout, overriding the Office theme default. Stack: <code>Arial, Helvetica, "Helvetica Neue", sans-serif</code>.</p>
+<div class=tbl><table class="dt type">
+<tr><th style=width:180px>Role</th><th style=width:90px>Size</th><th>Specimen</th></tr>
+<tr><td class=dim>Screen title</td><td class=dim>16 bold</td><td style="font-size:16px;font-weight:bold">Allocate bank cover</td></tr>
+<tr><td class=dim>Figure, large</td><td class=dim>26</td><td class=fig style="font-size:26px">USD 100,000.00</td></tr>
+<tr><td class=dim>Figure, stat</td><td class=dim>20</td><td class=fig style="font-size:20px">4,20,00,000</td></tr>
+<tr><td class=dim>Body / table</td><td class=dim>13</td><td>POS-1042 · Mumbai Fort · Outward remittance</td></tr>
+<tr><td class=dim>Secondary</td><td class=dim>12</td><td style="font-size:12px;color:var(--muted)">Last FX Plus sync 14:32 IST</td></tr>
+<tr><td class=dim>Label / header</td><td class=dim>11 caps</td><td style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Booked FCY</td></tr>
+</table></div>
+
+<h3>Tabular numerals are mandatory</h3>
+<div class=two>
+  <div class=tbl><table class=dt>
+    <tr><th>Position</th><th>Rate</th><th class=num>FCY</th><th class=num>INR equivalent</th></tr>
+    <tr><td class=dim>POS-1042</td><td class=fig>84.2500</td><td class=num>25,000.00</td><td class=num>21,06,250.00</td></tr>
+    <tr><td class=dim>POS-1043</td><td class=fig>90.1000</td><td class=num>110,000.00</td><td class=num>99,11,000.00</td></tr>
+    <tr><td class=dim>POS-1044</td><td class=fig>106.4000</td><td class=num>5,000.00</td><td class=num>5,32,000.00</td></tr>
+    <tr><td class=dim>POS-1051</td><td class=fig>84.0000</td><td class=num>7,500.00</td><td class=num>6,30,000.00</td></tr>
+  </table></div>
+  <div style="font-size:12px;color:var(--muted);padding-top:4px">
+    <p style="margin:0 0 10px"><code style="font:11px ui-monospace,Menlo,monospace;color:var(--ink)">font-variant-numeric: tabular-nums</code> is set globally on every figure class.</p>
+    <p style="margin:0 0 10px">Arial ships tabular figures by default, so this looks correct today. It stops being true the moment anyone swaps the typeface — which is likely, since the engineering stack is undecided. The declaration is insurance, not decoration.</p>
+    <p style="margin:0">Scan the INR column: decimal points align, so an order-of-magnitude error is visible as a ragged edge rather than something you have to read for.</p>
+  </div>
+</div>
+<p class=usage>Rates <b>4 decimals</b> (84.2500) · FCY <b>2 decimals</b> · INR in <b>Indian grouping</b> (4,20,00,000) and crore when consolidated · all times <b>IST</b>, zone shown · currency code always adjacent to the amount.</p>
+
+<!-- ============ SHELL ============ -->
+<h2>3 · Application shell</h2>
+<p class=lede>Left nav on <code>--ink-deep</code>, breadcrumb and screen ID in the header — v1's structure, kept so EBIXCASH recognises it.</p>
+<div class=shell><div class=app>
+  <nav class=nav>
+    <div class=brand>Remit4Me<span>Treasury Management</span></div>
+    <a href=# class=on>Overview</a><a href=#>Positions</a><a href=#>Cover deals</a>
+    <a href=#>Allocations</a><a href=#>Liquidity</a><a href=#>Cards &amp; funding</a>
+    <a href=#>Settlements</a><a href=#>Bulk bookings</a><a href=#>Reports</a>
+    <a href=#>Approvals</a><a href=#>Data &amp; audit</a>
+  </nav>
+  <div class=main>
+    <div class=top>
+      <span class=crumb>Treasury / <b>Dealer</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+      <span class=sp></span><span class=illus>Illustrative data</span>
+      <span class=sid>T-01</span><span class=ts>11 Sep 2026, 14:32 IST</span>
+    </div>
+    <div class=page style="padding-bottom:24px">
+      <h1>Treasury overview</h1>
+      <p class=sub>All branches and airports &nbsp;·&nbsp; As of <b>14:32 IST</b> &nbsp;·&nbsp; IBR 14:30</p>
+      <div class=strip>
+        <div class=stat><b class=alert>380,000</b><span>Uncovered USD · company short</span></div>
+        <div class=stat><b>4.20 cr</b><span>Bank INR available · 14:31</span></div>
+        <div class=stat><b>0.70 cr</b><span>ICICI line available · 65% utilised</span></div>
+        <div class=stat><b class=brand>12</b><span>Action queue · 4 due today</span></div>
+      </div>
+      <div class=note><b>Design note</b>Currency rows use FCY. Consolidated balances use INR equivalents with a stated valuation time. Customer wallets remain separate from owned liquidity.</div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ STATS ============ -->
+<h2>4 · Stat strip</h2>
+<p class=lede>v1's signature pattern and the primary summary device: key figures, then the detail table, then the action bar. Never nest cards inside cards.</p>
+<div class=demo>
+  <div class=strip>
+    <div class=stat><b>24</b><span>Booked positions</span></div>
+    <div class=stat><b>6</b><span>Awaiting txn link</span></div>
+    <div class=stat><b>2</b><span>Partially linked</span></div>
+    <div class=stat><b class=alert>3</b><span>Due before 16:00 <span class=illus style="display:inline">illustrative</span></span></div>
+  </div>
+  <h3 style="margin-top:20px">Arithmetic strip — T-03 open position</h3>
+  <div class="calc mb0">
+    <div class=term><b>100,000</b><span>Opening FCY</span></div>
+    <div class=op>+</div>
+    <div class=term><b>250,000</b><span>Sales FCY</span></div>
+    <div class=op>−</div>
+    <div class=term><b>30,000</b><span>Cashout FCY</span></div>
+    <div class=op>−</div>
+    <div class=term><b>100,000</b><span>Covered FCY</span></div>
+    <div class=op>=</div>
+    <div class="term result"><b>220,000</b><span>Current open position USD</span></div>
+  </div>
+</div>
+
+<!-- ============ TABLE ============ -->
+<h2>5 · Data table / blotter</h2>
+<p class=lede>The workhorse. 38px rows, 13px type, zebra striping, right-aligned tabular figures, selectable rows in <code>--tint</code>. Every blotter carries filters and an export.</p>
+<div class=filters>
+  <span class=chip><b>Date</b> Today</span>
+  <span class="chip on">Product: All</span>
+  <span class=chip><b>Currency</b> All</span>
+  <span class=chip><b>Txn link</b> All</span>
+  <span class=sp></span>
+  <span class=src>3 of 24 rows selected</span>
+  <button class="btn sec" style="padding:4px 10px">Export</button>
+</div>
+<div class=tbl><table class=dt>
+<thead><tr>
+  <th style=width:34px></th><th class=sortable>Position</th><th>Product / CCY</th>
+  <th class="num sorted">Booked FCY</th><th class=num>Linked</th><th class=num>Remaining</th>
+  <th>Txn link</th><th>Bank cover</th><th>Cut-off</th>
+</tr></thead>
+<tbody>
+<tr class=sel><td><input type=checkbox checked aria-label="Select POS-1042"></td><td class=ref>POS-1042</td><td>Remittance / USD</td>
+  <td class=num>25,000.00</td><td class=num>20,000.00</td><td class=num>5,000.00</td>
+  <td><span class="pill warn">Partial</span></td><td><span class="pill ok">Covered</span></td>
+  <td><span class="clock soon"><b>01:28</b><span>to 16:00</span></span></td></tr>
+<tr><td><input type=checkbox aria-label="Select POS-1043"></td><td class=ref>POS-1043</td><td>Forex card / EUR</td>
+  <td class=num>10,000.00</td><td class=num>0.00</td><td class=num>10,000.00</td>
+  <td><span class="pill bad">Awaiting txn</span></td><td><span class=pill>Open</span></td>
+  <td><span class="clock now"><b>00:12</b><span>to 16:00</span></span></td></tr>
+<tr><td><input type=checkbox aria-label="Select POS-1044"></td><td class=ref>POS-1044</td><td>Cash / GBP</td>
+  <td class=num>5,000.00</td><td class=num>5,000.00</td><td class=num>0.00</td>
+  <td><span class="pill ok">Complete</span></td><td><span class="pill warn">Partial</span></td>
+  <td class=dim>—</td></tr>
+<tr><td><input type=checkbox aria-label="Select POS-1031" disabled></td><td class="ref dim">POS-1031</td><td class=dim>Remittance / USD</td>
+  <td class="num dim">2,000.00</td><td class="num dim">0.00</td><td class="num dim">0.00</td>
+  <td><span class="pill off">Cancelled</span></td><td><span class=pill>Released</span></td>
+  <td class=dim>—</td></tr>
+</tbody>
+<tfoot><tr><td></td><td colspan=2>Total — USD only</td><td class=num>25,000.00</td><td class=num>20,000.00</td><td class=num>5,000.00</td><td colspan=3></td></tr></tfoot>
+</table></div>
+<p class=usage><b>Never total mixed currencies.</b> The footer totals USD rows only and says so. EUR and GBP are excluded from that subtotal by design.</p>
+
+<!-- ============ STATUS ============ -->
+<h2>6 · Status system</h2>
+<p class=lede>Label first, colour second. A colour-blind user or a greyscale print must read status correctly.</p>
+<div class=demo>
+  <p style="margin:0 0 12px">
+    <span class="pill ok">Covered</span> <span class="pill ok">Complete</span> <span class="pill ok">Healthy</span>
+    &nbsp; <span class="pill warn">Partial</span> <span class="pill warn">Pending funding</span> <span class="pill warn">Needs detail</span>
+    &nbsp; <span class=pill>Open</span> <span class=pill>Requested</span> <span class=pill>Released</span>
+    &nbsp; <span class="pill bad">Awaiting txn</span> <span class="pill bad">Overdue</span> <span class="pill bad">Rejected</span>
+    &nbsp; <span class="pill off">Cancelled</span>
+  </p>
+  <p style="margin:0" class=usage>Inline values: <span class=v-ok>+18,000</span> positive · <span class=v-bad>−12,400</span> negative · <span class=v-warn>84.1800</span> attention · <span class=v-dim>—</span> not applicable. Negatives never rely on the minus sign alone.</p>
+  <h3>Freshness and provenance</h3>
+  <p style="margin:0"><span class=src>Source: FX Plus 14:32 IST</span> &nbsp;&nbsp; <span class=stale>⚠ Stale — 10 Sep, excluded from fresh subtotal</span> &nbsp;&nbsp; <span class=illus>Illustrative data</span> &nbsp;&nbsp; <span class=illus>Rule preview (proposed)</span></p>
+  <h3>Cut-off pressure</h3>
+  <p style="margin:0"><span class=clock><b>03:41</b><span>to cut-off</span></span> &nbsp;&nbsp; <span class="clock soon"><b>01:28</b><span>to cut-off</span></span> &nbsp;&nbsp; <span class="clock now"><b>00:12</b><span>to cut-off</span></span></p>
+  <h3>Utilisation</h3>
+  <div style="max-width:260px"><div class=meter><i style=width:65%></i></div>
+  <p class=usage>ICICI line · 65% utilised · INR 1.30 cr of 2.00 cr</p></div>
+</div>
+
+<!-- ============ FORMS ============ -->
+<h2>7 · Forms</h2>
+<div class=row>
+  <div class="form grow">
+    <div class=fgrid>
+      <div class=f><label for="ds-f1">Product <span class=req>*</span></label><select id="ds-f1"><option>Outward remittance</option><option>Forex card</option><option>Cash</option></select></div>
+      <div class=f><label for="ds-f2">Currency <span class=req>*</span></label><select id="ds-f2"><option>USD</option><option>EUR</option><option>GBP</option></select></div>
+      <div class=f><label for="ds-fcy">FCY amount <span class=req>*</span></label>
+        <div class=amt><span class=ccy>USD</span><input id="ds-fcy" type=text value="25,000.00"></div></div>
+      <div class=f><label for="ds-f3">Value date</label><input id="ds-f3" type=date value=2026-09-11></div>
+      <div class=f><label for="ds-f4">Origin channel</label><select id="ds-f4"><option>Branch</option><option>DIY</option><option>Agent</option><option>Partner</option></select></div>
+      <div class=f><label for="ds-f5">INR principal</label><input id="ds-f5" type=text class=computed value="2,106,250.00" readonly>
+        <p class=hint>Computed at 84.2500 · fees and taxes separate</p></div>
+      <div class=f><label for="ds-f6">Bank deal reference <span class=req>*</span></label><input id="ds-f6" type=text class=invalid value="HDFC-110">
+        <p class=err>Reference must match the bank confirmation format</p></div>
+      <div class=f><label for="ds-f7">Evidence</label><input id="ds-f7" type=text value="Bank confirmation attached" readonly class=computed></div>
+    </div>
+    <div class=bar><button class=btn>Confirm rate</button><button class="btn sec">Back to edit</button>
+      <span class=sp></span><button class="btn danger">Request cancellation</button></div>
+  </div>
+  <div style="width:300px">
+    <div class=form>
+      <h3 style="margin-top:0">Disabled with a reason</h3>
+      <div class=bar style="padding-top:0"><button class=btn disabled>Approve update</button></div>
+      <p class=why>A checker cannot approve their own entry. Maker A submitted this at 14:10.</p>
+      <h3>Quote expired</h3>
+      <div class=bar style="padding-top:0"><button class=btn disabled>Confirm rate</button><button class="btn sec">Get fresh quote</button></div>
+      <p class=why>Quote Q-7812 expired at 14:35:00 IST.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FLOW ============ -->
+<h2>8 · Step flow, tabs, reconciliation</h2>
+<div class=steps>
+  <div class=done><b>✓</b>Deal details</div>
+  <div class=on><b>2</b>Review rate</div>
+  <div><b>3</b>Confirm position</div>
+</div>
+<div class=tabs><a href=# class=on>Current exposure</a><a href=#>Treasury assessment</a><a href=#>Branch margin</a></div>
+<h3>Allocation reconciliation — must resolve to zero</h3>
+<div class=recon>
+  <div><span>Deal amount</span><b>USD 100,000</b></div>
+  <div><span>Selected allocation</span><b>USD 90,000</b></div>
+  <div class=left><span>Deal remainder</span><b>USD 10,000</b></div>
+  <div class=sp></div>
+  <div class=zero><span>Residual after confirm</span><b>USD 0.00</b></div>
+</div>
+<h3>Before / after — every authorised change</h3>
+<div class=tbl><table class="dt ba">
+<tr><th>Review field</th><th class=num>Approved before</th><th class=num>Proposed after</th></tr>
+<tr><td>Settled USD</td><td class="num before">40,000.00</td><td class="num after">60,000.00 <span class=delta>+20,000</span></td></tr>
+<tr><td>Pending USD</td><td class="num before">60,000.00</td><td class="num after">40,000.00 <span class=delta>−20,000</span></td></tr>
+<tr><td>INR principal at 84.1000</td><td class="num before dim">—</td><td class="num after">1,682,000.00</td></tr>
+</table></div>
+
+<!-- ============ STATES ============ -->
+<h2>9 · States</h2>
+<p class=lede>Six states every screen must handle. Described in v1's UX-02 table — drawn here.</p>
+<div class=three>
+  <div class=state><h3>No eligible match</h3><p>No position matches this transaction on currency, product, branch and residual.</p><button class="btn sec">Adjust filters</button></div>
+  <div class="state error"><h3>Source unavailable</h3><p>FX Plus SFTP last succeeded 14:15. Showing last known values.</p><button class="btn sec">Inspect data health</button></div>
+  <div class="state warn"><h3>Position changed</h3><p>POS-1042 was updated since you opened this review.</p><button class="btn sec">Refresh and compare</button></div>
+</div>
+<div class=three style="margin-top:16px">
+  <div class=state><h3>Nothing to action</h3><p>No positions awaiting a transaction link.</p></div>
+  <div class=state><h3 style="color:var(--muted)">Loading</h3>
+    <div class=skel style="margin:6px 0"></div><div class=skel style="width:70%;margin:6px auto"></div><div class=skel style="width:85%;margin:6px auto"></div></div>
+  <div class="state error"><h3>Access restricted</h3><p>This action is limited to Treasury Checker. You are signed in as Treasury Maker.</p><button class="btn sec">Return to worklist</button></div>
+</div>
+<h3>Banners</h3>
+<div class="banner warn"><span>⚠</span><div><b>1 account is stale</b>Other / ••4053 last updated 10 Sep. Excluded from the fresh subtotal.</div></div>
+<div class="banner bad"><span>⚠</span><div><b>3 positions reach cut-off in under 15 minutes</b>Unlinked residual EUR 10,000 · USD 3,500 · GBP 2,000.</div></div>
+
+<!-- ============ CONFIRM ============ -->
+<h2>10 · Confirmation and audit</h2>
+<div class=row>
+  <div class=modal>
+    <h3>Cancel residual on POS-1049?</h3>
+    <div class=body>
+      This releases exposure to Treasury and cannot be undone. Full history is retained.
+      <dl><dt>Residual</dt><dd>GBP 2,000.00</dd>
+      <dt>Bank cover</dt><dd>Unallocated</dd>
+      <dt>Linked transactions</dt><dd>None</dd>
+      <dt>Reason</dt><dd>Customer withdrew</dd></dl>
+    </div>
+    <div class=foot><button class="btn sec">Keep position</button><button class="btn danger">Cancel residual</button></div>
+  </div>
+  <div class=grow>
+    <h3 style="margin-top:0">Audit — reachable from the record, not only the log</h3>
+    <ul class=tl style="padding-left:16px">
+      <li><time>14:34:02 IST</time><p>Branch A booked rate against quote Q-7812</p><p class=chg>Status <s>Draft</s> → <b>Booked</b> · USD 25,000.00 at 84.2500</p></li>
+      <li><time>14:38:41 IST</time><p>Dealer B allocated cover COV-2051</p><p class=chg>Cover <s>Open</s> → <b>Covered</b> · rate 84.0000</p></li>
+      <li><time>14:45:19 IST</time><p>Branch A linked FXP-88021</p><p class=chg>Linked <s>0.00</s> → <b>20,000.00</b> · remaining 5,000.00</p></li>
+    </ul>
+    <p style="margin-top:14px"><span class="toast ok">Position POS-1042 booked. Link the FX Plus transaction by 16:00 IST.</span></p>
+  </div>
+</div>
+
+<h2>11 · Rules this system enforces</h2>
+<div class=tbl><table class=dt>
+<tr><th style=width:230px>Rule</th><th>How the design carries it</th></tr>
+<tr><td>Booked = linked + remaining + cancelled</td><td>Stat strip on B-04 and the blotter footer make the identity visible; the three columns always appear together.</td></tr>
+<tr><td>Txn matching ≠ bank coverage</td><td>Two separate status columns that are never merged. A row can read <span class="pill bad">Awaiting txn</span> and <span class="pill ok">Covered</span> at once.</td></tr>
+<tr><td>Never total mixed currencies</td><td>Footers total one currency and label it. INR equivalents always carry a valuation basis and timestamp.</td></tr>
+<tr><td>Maker-checker is visible</td><td>Before/after column pair, maker name and time, disabled approve with the reason stated.</td></tr>
+<tr><td>Suggestions never auto-commit</td><td>Match reason is shown per row; confirm is always a separate human action.</td></tr>
+<tr><td>Stale data stays visible</td><td>Stale badge, source timestamp, and explicit exclusion from subtotals.</td></tr>
+<tr><td>Status never by colour alone</td><td>Every pill carries a word. Greyscale-safe.</td></tr>
+</table></div>
+
+
+<!-- ============ INTERACTION LAYER ============ -->
+<h2>12 · Interaction layer</h2>
+<p class=lede>Every actionable control in the prototype resolves to a real dialog &mdash; there are no dead buttons. The engine is <code>tmp.js</code>, ~150 lines of vanilla JS over the native <code>&lt;dialog&gt;</code> element, which supplies focus trapping, Esc-to-close and the backdrop without a library.</p>
+<div class=tbl><table class=dt>
+<thead><tr><th style=width:190px>Pattern</th><th>Contract for the dev team</th></tr></thead>
+<tbody>
+<tr><td class=ref>Open a dialog</td><td><code>data-dlg="dlg-id"</code> on any button. The dialog markup ships on the same page.</td></tr>
+<tr><td class=ref>Commit an action</td><td><code>data-confirm="toast text"</code>. Validates, closes, then raises a toast.</td></tr>
+<tr><td class=ref>Mandatory reason</td><td><code>data-required</code> on the textarea. Commit is blocked and an inline error shows until it is filled.</td></tr>
+<tr><td class=ref>Blocked action</td><td>Native <code>disabled</code> <b>plus the reason in view</b>. Never hide why. A checker's own entry is the canonical case.</td></tr>
+<tr><td class=ref>Live recalculation</td><td><code>data-alloc</code> scope with <code>data-amt</code> rows; residual, remainder and over-allocation recompute on every tick.</td></tr>
+<tr><td class=ref>Read-only role</td><td><code>.ro</code> on the app root removes action affordances entirely rather than disabling them.</td></tr>
+</tbody></table></div>
+<p class=usage>Full catalogue of every dialog: <a class=s href="UX-04.html">UX-04</a>. Environment, freshness and role states: <a class=s href="UX-05.html">UX-05</a>.</p>
+<div class=note><b>Rules the dialogs enforce</b>
+No silent destruction &mdash; a destructive dialog names the record count and the exact effect before you commit.
+Reason mandatory on reject, cancel and adjust, and it travels back to the maker.
+Suggestions never auto-commit; confirming is always a human action.</div>
+</div>
+<script src="tmp.js?v=2"></script>

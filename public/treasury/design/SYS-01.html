@@ -1,0 +1,24 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<title>SYS-01 — Sign in · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<style>
+ body{display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--ink-deep)}
+ .card{background:var(--surface);border:1px solid var(--rule);width:380px;padding:32px}
+ .card .brand{font-size:18px;font-weight:bold;color:var(--ink)}
+ .card .brand span{display:block;font-size:11px;font-weight:normal;color:var(--muted);
+   letter-spacing:.6px;text-transform:uppercase;margin-top:3px}
+ .meta{position:fixed;top:16px;right:20px;color:#7FA3A6;font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+</style>
+<div class=meta>SYS-01 &nbsp; 11 Sep 2026, 14:32 IST</div>
+<div class=card>
+  <div class=brand>Remit4Me<span>Treasury Management Portal</span></div>
+  <p class=sub style="margin:16px 0">EBIXCASH World Money Ltd.</p>
+  <div class="fgrid one">
+    <div class=f><label for="sys01-f1">User ID</label><input id="sys01-f1" type=text value="makera" autocomplete=username></div>
+    <div class=f><label for="sys01-f2">Password</label><input id="sys01-f2" type=text value="••••••••••" autocomplete=current-password></div>
+  </div>
+  <div class=bar><a class=btn href="T-01.html" style="flex:1;text-align:center">Sign in</a></div>
+  <p class=hint style="margin-top:12px">Single sign-on and the second factor are not specified in the BRD. Shown as a placeholder pending security design.</p>
+  <div class=note style="margin-bottom:0"><b>Design note</b>New screen &mdash; absent from v1. Authentication method, session timeout and password policy all require confirmation with EBIXCASH IT security.</div>
+</div>
+<script src="tmp.js?v=2"></script>

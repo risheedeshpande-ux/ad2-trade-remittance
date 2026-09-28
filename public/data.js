@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v9';
+const SEED_VERSION = 'ad2-trade-v10';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -353,7 +353,24 @@ const CAPABILITIES = [
 
   { id:'treasury.view',        group:'Treasury',       label:'See the treasury book: positions, cover, deals, P&L and the integration log' },
   { id:'treasury.deal',        group:'Treasury',       label:'Propose rates, enter and allocate bank cover, cross positions and issue FX deal references' },
-  { id:'treasury.approve',     group:'Treasury',       label:'Approve rate revisions and bank cover deals (treasury checker)' },
+  { id:'treasury.approve',     group:'Treasury',       label:'Approve or reject anything a treasury maker submits: card rates, settlements, uploads, limits, held deals, amendments and configuration' },
+  { id:'tmp.rates',            group:'Treasury',       label:'Import base rates and propose card rates on the rate desk' },
+  { id:'tmp.settle',           group:'Treasury',       label:'Enter forward-cover and credit-line settlements (sent to a checker)' },
+  { id:'tmp.liquidity',        group:'Treasury',       label:'Upload Nostro statements and refresh liquidity feeds' },
+  { id:'tmp.limits',           group:'Treasury',       label:'Request changes to customer credit limits' },
+  { id:'tmp.amend',            group:'Treasury',       label:'Unwind positions when a source transaction is amended or reversed' },
+  { id:'tmp.exceptions',       group:'Treasury',       label:'Investigate, assign and resolve treasury exceptions' },
+  { id:'tmp.cancel',           group:'Treasury',       label:'Cancel a position’s residual and release its cover' },
+  { id:'tmp.bulk.book',        group:'Treasury',       label:'Record the booking detail against a regional bulk request' },
+  { id:'tmp.branch',           group:'Branch',         label:'Work a branch in the Treasury Management Portal' },
+  { id:'tmp.quote',            group:'Branch',         label:'Take an FX rate and book a position' },
+  { id:'tmp.link',             group:'Branch',         label:'Knock off FX Plus transactions against a position' },
+  { id:'tmp.cutoff',           group:'Branch',         label:'Keep, requote or escalate a position before cut-off, and acknowledge reminders' },
+  { id:'tmp.offline',          group:'Branch',         label:'Capture a deal taken while the portal was unreachable' },
+  { id:'tmp.agent',            group:'Branch',         label:'Quote and book as an agent or partner, for the servicing branch' },
+  { id:'tmp.bulk.request',     group:'Operations',     label:'Raise a regional bulk currency booking request' },
+  { id:'tmp.finance',          group:'Operations',     label:'Map card settlements and reconcile issuer settlements' },
+  { id:'tmp.admin',            group:'Administration', label:'Administer the Treasury Management Portal: users, masters, org hierarchy, integrations' },
 
   { id:'admin.masters',        group:'Administration', label:'Maintain purpose codes, document policy and compliance rules' },
   { id:'admin.users',          group:'Administration', label:'Manage users and roles' },
@@ -411,22 +428,47 @@ const ROLES = [
     segregated:['onboard.approve','onboard.review','outward.verify','inward.verifyDisposal'],
     note:'Two operations users (Farhan, Neha) let one authorise and the other release the same request.' },
 
-  { id:'AD2 Treasury Dealer', portal:'AD2', order:8,
-    summary:'Runs the treasury book. Publishes rates (with a checker), sees every customer booking as a position the moment it is made, buys cover from banks, allocates it or crosses opposite bookings internally, and issues FX deal references for negotiated rates. Holds no trade authority.',
-    can:['treasury.view','treasury.deal','reports.view'],
+  { id:'AD2 Treasury Dealer', portal:'TMP', workspace:'treasury', order:8,
+    summary:'Treasury maker, in the Treasury Management Portal. Imports base rates and proposes card rates, sees every trade booking and branch quote as a position, buys bank cover, allocates it or crosses opposite positions, enters forward settlements, uploads Nostro statements and unwinds amended bills. Everything that moves money goes to a treasury checker.',
+    can:['treasury.view','treasury.deal','tmp.rates','tmp.settle','tmp.liquidity','tmp.limits','tmp.amend','tmp.exceptions','tmp.cancel',
+         'tmp.bulk.book','reports.view'],
     segregated:['treasury.approve','outward.create','outward.verify','outward.approve','outward.complete','inward.dispose',
                 'inward.approveDisposal','inward.processDisposal','fx.dealRef'],
     note:'The dealer issues a deal reference; the branch applies it to the customer’s request. Neither can do the other’s step.' },
 
-  { id:'AD2 Treasury Checker', portal:'AD2', order:9,
-    summary:'The second pair of eyes in treasury. Approves or rejects rate revisions and bank cover deals — never its own — and oversees the book, exceptions and P&L.',
-    can:['treasury.view','treasury.approve','reports.view'],
-    segregated:['treasury.deal','outward.approve','inward.approveDisposal'] },
+  { id:'AD2 Treasury Checker', portal:'TMP', workspace:'treasury', order:9,
+    summary:'The second pair of eyes in treasury. Works the approvals inbox — card rates, forward settlements, Nostro replacements, bulk bookings, limit changes, held deals, amendments and configuration — never its own entry, and oversees the book, exceptions and P&L.',
+    can:['treasury.view','treasury.approve','tmp.exceptions','tmp.cancel','reports.view'],
+    segregated:['treasury.deal','tmp.rates','tmp.settle','outward.approve','inward.approveDisposal'] },
+
+  { id:'AD2 Treasury Viewer', portal:'TMP', workspace:'treasury', readOnly:true, order:9.2,
+    summary:'Treasury / management user. Reads every treasury screen, report and P&L and exports them; sees no action controls at all.',
+    can:['treasury.view','reports.view'],
+    segregated:['treasury.deal','treasury.approve'] },
+
+  { id:'AD2 Branch Inputter', portal:'TMP', workspace:'branch', order:9.4,
+    summary:'Branch counter in the Treasury Management Portal. Quotes and books FX rates for walk-in, card and corporate customers, knocks off FX Plus bills against its positions, and clears residuals before cut-off — for its own branch only.',
+    can:['tmp.branch','tmp.quote','tmp.link','tmp.cutoff','tmp.cancel','tmp.offline','reports.view'],
+    segregated:['treasury.view','treasury.deal','treasury.approve'] },
+
+  { id:'Agent Partner', portal:'TMP', workspace:'branch', order:9.5,
+    summary:'An agent or partner quoting on the servicing branch’s rate: fixed channel and branch, own deals only, and cancellation routed through the branch.',
+    can:['tmp.agent','tmp.quote'],
+    segregated:['tmp.cancel','tmp.link'] },
+
+  { id:'AD2 Regional Bulk', portal:'TMP', workspace:'ops', order:9.6,
+    summary:'Regional bulk team. Raises currency booking requests for its region and tracks them to completion; never enters treasury.',
+    can:['tmp.bulk.request','reports.view'] },
+
+  { id:'AD2 Finance', portal:'TMP', workspace:'ops', order:9.7,
+    summary:'Finance and accounts. Maps card settlements to invoices, reconciles issuer settlements and uploads Nostro statements; reads liquidity and MIS. Takes no positions and allocates no cover.',
+    can:['tmp.finance','tmp.liquidity','treasury.view','reports.view'],
+    segregated:['treasury.deal','treasury.approve'] },
 
   { id:'AD2 Administrator', portal:'AD2', order:10,
     summary:'Maintains the platform rather than the book: purpose codes, document policy, users, roles and settings. Deliberately holds no transaction authority.',
     can:['admin.masters','admin.users','admin.settings','outward.viewAll','inward.viewAll',
-         'bills.viewAll','reports.view','lab.use','treasury.view'],
+         'bills.viewAll','reports.view','lab.use','treasury.view','tmp.admin'],
     segregated:['onboard.approve','outward.approve','recon.confirm','inward.dispose'],
     note:'Kept out of the transaction path on purpose: whoever configures the controls should not also be able to transact through them.' },
 
@@ -855,8 +897,66 @@ const ACCOUNTS = [
   { domainId:'AD2',         loginId:'DEALER2',  role:'AD2 Treasury Dealer', smeId:null,      name:'Sana Sheikh',        demo:true },
   { domainId:'AD2',         loginId:'TCHECKER', role:'AD2 Treasury Checker', smeId:null,     name:'Leela Varghese',     demo:true },
   { domainId:'AD2',         loginId:'TCHECKER2',role:'AD2 Treasury Checker', smeId:null,     name:'Manoj Pillai',       demo:true },
+  { domainId:'AD2',         loginId:'TVIEW',    role:'AD2 Treasury Viewer', smeId:null,      name:'Kavya Iyer',         demo:true },
+  { domainId:'AD2',         loginId:'BRANCH',   role:'AD2 Branch Inputter', smeId:null,      name:'Anil Kulkarni',      demo:true, branchScope:'BR-MUMFORT' },
+  { domainId:'AD2',         loginId:'BRANCH2',  role:'AD2 Branch Inputter', smeId:null,      name:'Deepa Rao',          demo:true, branchScope:'BR-DELCP' },
+  { domainId:'AD2',         loginId:'AIRPORT',  role:'AD2 Branch Inputter', smeId:null,      name:'Rahul Nair',         demo:true, branchScope:'BR-MUMT2' },
+  { domainId:'AD2',         loginId:'RBULK',    role:'AD2 Regional Bulk',   smeId:null,      name:'Imran Shaikh',       demo:true, branchScope:'WEST' },
+  { domainId:'AD2',         loginId:'FINANCE',  role:'AD2 Finance',         smeId:null,      name:'Pooja Shah',         demo:true },
+  { domainId:'SUNDARFX',    loginId:'AGENT',    role:'Agent Partner',       smeId:null,      name:'Sundar Raman',       demo:true, branchScope:'BR-PUNE', agentName:'Sundar Forex, Pune' },
   { domainId:'AD2',         loginId:'ADMIN',    role:'AD2 Administrator',  smeId:null,       name:'Anita Desai',        demo:true },
 ];
+
+/* --- Treasury Management Portal masters ------------------------------------
+   Product lines carry their own spreads and cut-offs; the organisation tree
+   drives branch scoping and report roll-up; counterparties and correspondent
+   banks are where cover is bought and where foreign currency sits.        */
+const TMP_PRODUCTS = [
+  { code:'REM', name:'Outward remittance', sides:['SELL'], tagging:'Required', cutoff:'16:00', autoCancel:true, quoteMinutes:10,
+    spreadPct:0.85, markupPct:0.30, transferPct:0.10, status:'Active', trade:'Outward payments from the trade portal' },
+  { code:'FXC', name:'Forex card', sides:['SELL'], tagging:'Required', cutoff:'16:00', autoCancel:true, quoteMinutes:10,
+    spreadPct:1.15, markupPct:0.45, transferPct:0.12, status:'Active' },
+  { code:'CSH', name:'Cash', sides:['SELL','BUY'], tagging:'Required', cutoff:'15:30', autoCancel:true, quoteMinutes:10,
+    spreadPct:1.35, markupPct:0.60, transferPct:0.15, status:'Active' },
+  { code:'INW', name:'Inward remittance', sides:['BUY'], tagging:'Excluded', cutoff:null, autoCancel:false, quoteMinutes:10,
+    spreadPct:0.85, markupPct:0.30, transferPct:0.10, status:'Active', trade:'Inward disposals credited in INR' },
+];
+const ORG = [
+  { id:'WEST',  name:'West',  type:'Region', parent:null },
+  { id:'NORTH', name:'North', type:'Region', parent:null },
+  { id:'SOUTH', name:'South', type:'Region', parent:null },
+  { id:'CL-MUM', name:'Mumbai & Pune cluster', type:'Cluster', parent:'WEST' },
+  { id:'CL-GUJ', name:'Gujarat cluster', type:'Cluster', parent:'WEST' },
+  { id:'CL-DEL', name:'Delhi cluster', type:'Cluster', parent:'NORTH' },
+  { id:'CL-BLR', name:'Bengaluru & Hyderabad cluster', type:'Cluster', parent:'SOUTH' },
+  { id:'CL-TNK', name:'Tamil Nadu & Kerala cluster', type:'Cluster', parent:'SOUTH' },
+  { id:'BR-MUMFORT', name:'Mumbai Fort', type:'Branch', parent:'CL-MUM', states:['27'] },
+  { id:'BR-MUMT2', name:'Mumbai Airport T2', type:'Airport', parent:'CL-MUM', cutoff:'21:00' },
+  { id:'BR-PUNE', name:'Pune Camp', type:'Branch', parent:'CL-MUM' },
+  { id:'BR-AHD', name:'Ahmedabad CG Road', type:'Branch', parent:'CL-GUJ', states:['24'] },
+  { id:'BR-DELCP', name:'Delhi CP', type:'Branch', parent:'CL-DEL', states:['07','06','09','03','08'] },
+  { id:'BR-DELT3', name:'Delhi Airport T3', type:'Airport', parent:'CL-DEL', cutoff:'21:00' },
+  { id:'BR-BLRMG', name:'Bengaluru MG Road', type:'Branch', parent:'CL-BLR', states:['29'] },
+  { id:'BR-HYD', name:'Hyderabad Banjara Hills', type:'Branch', parent:'CL-BLR', states:['36','37'] },
+  { id:'BR-CHENNAI', name:'Chennai Anna Salai', type:'Branch', parent:'CL-TNK', states:['33','34'] },
+  { id:'BR-KOCHI', name:'Kochi MG Road', type:'Branch', parent:'CL-TNK', states:['32'] },
+];
+const COUNTERPARTIES = [
+  { name:'HDFC Bank', dealTypes:['Spot','Forward','Swap'], creditLine:'CL-HDFC', settlementAccount:'BK-HDFC-1042', status:'Active' },
+  { name:'ICICI Bank', dealTypes:['Spot','Forward'], creditLine:'CL-ICICI', settlementAccount:'BK-ICICI-2051', status:'Active' },
+  { name:'State Bank of India', dealTypes:['Forward'], creditLine:null, settlementAccount:'BK-SBI-3068', status:'Active' },
+  { name:'Axis Bank', dealTypes:['Spot','Forward'], creditLine:null, settlementAccount:'BK-HDFC-1042', status:'Active' },
+  { name:'Kotak Mahindra Bank', dealTypes:['Spot'], creditLine:null, settlementAccount:'BK-HDFC-1042', status:'Active' },
+  { name:'Standard Chartered', dealTypes:['Spot','Forward','Swap'], creditLine:null, settlementAccount:'BK-ICICI-2051', status:'Active' },
+  { name:'Emirates NBD', dealTypes:['Spot'], creditLine:null, settlementAccount:'BK-ICICI-2051', status:'Active' },
+];
+const CARD_PREFIXES = [
+  { prefix:'4', issuer:'Visa' }, { prefix:'5', issuer:'Mastercard' }, { prefix:'6522', issuer:'ICICI' },
+];
+const CORRESPONDENTS = {
+  USD:'Citibank N.A., New York', EUR:'Deutsche Bank AG, Frankfurt', GBP:'Barclays Bank PLC, London', AED:'Emirates NBD, Dubai',
+  SGD:'DBS Bank, Singapore', JPY:'MUFG Bank, Tokyo', CHF:'UBS AG, Zurich', AUD:'ANZ, Melbourne',
+};
 
 const SEED = {
   version:SEED_VERSION,
@@ -867,7 +967,9 @@ const SEED = {
   smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,
   disposals:DISPOSALS, allocations:ALLOCATIONS, jobs:JOBS, audit:AUDIT, logins:ACCOUNTS,
   notifications:[],
-  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3 },
+  tmpProducts:TMP_PRODUCTS, org:ORG, counterparties:COUNTERPARTIES, cardPrefixes:CARD_PREFIXES, correspondents:CORRESPONDENTS,
+  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
+             steppedThresholdInr:4000000, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
   seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };
 

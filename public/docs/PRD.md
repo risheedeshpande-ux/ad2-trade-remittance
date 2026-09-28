@@ -77,6 +77,12 @@ Two further decisions carry into the build:
 | AD2 (assisted) | SME portal | Any AD2 maker or operations user may act inside an approved SME's portal on its behalf. Covered in §7A. |
 | AD2 Administrator | AD2 | Users (add, deactivate, change role, reset password), purpose codes, document policy, compliance rules, settings, audit log. No transaction authority. |
 | Master Tester | Test | Demo and test use only. Sees the whole platform and opens it as any user; holds no authority of its own. Not assignable. See §14B. |
+| AD2 Treasury Dealer | Treasury (TMP) | Rate desk, the position book, bank cover and allocation, FX deals for trade customers, liquidity, limits, bulk bookings, amendments. No trade authority. See §7B. |
+| AD2 Treasury Checker | Treasury (TMP) | Approves card rates, settlements, held deals and control changes — never its own entry. |
+| AD2 Treasury Viewer | Treasury (TMP) | The whole book, read-only. |
+| AD2 Branch Inputter | Treasury (TMP) — branch | Quotes and books FX at the counter, links FX Plus bills, works cut-off and reminders — for its branch only. |
+| Agent Partner | Treasury (TMP) — agent | Quotes and books for its servicing branch; requests cancellations through it. |
+| AD2 Regional Bulk / AD2 Finance | Treasury (TMP) — operations | Bulk currency requests for a region / card settlement reconciliation. |
 
 An SME user may submit without a second SME approver. SME-side maker-checker is a later addition.
 
@@ -252,6 +258,41 @@ The SME picker lists only approved SMEs whose service permission allows the dire
 **What does not change.** Service permissions, allocation limits, document requirements and the rate gate all still apply. Assisting is not a route past a control.
 
 **Exit.** Leaving returns to the directory. Navigating to any AD2 route drops the acting context automatically, so it cannot be left on by accident.
+
+## 7B. Treasury Management Portal and the trade ⇄ treasury connection
+
+The treasury portal (`/treasury/`) is a second front end on the same platform: one engine, one API, one store and one
+sign-in. It implements the TMP design (Remit4Me TMP: screens B-01…B-10, T-01…T-27, OPS-01…03, ADM-01…05, SYS-01/02,
+design rules, dialogs and workflow) on live data, and adds **T-28 Trade desk** where the trade portal meets the book.
+
+**Where the two portals connect**
+
+| From | To | What happens |
+|---|---|---|
+| Trade: rate booked (§7, §8) | Treasury | A position opens at once in the one book, at the customer's home branch (by GSTIN state), product *Outward remittance* or *Inward remittance*, channel *Trade portal* or *Assisted*. |
+| Trade: request submitted | Treasury | The position is attached; its rate is frozen until settlement. |
+| Trade: UTR / FIRC | Treasury | The position's transaction link completes; the correspondent Nostro and head-office INR move. An inward credit recorded or confirmed moves the Nostro. |
+| Trade: rejected, released, expired | Treasury | The position is cancelled and any cover returns to the pool. |
+| Treasury: rate desk | Trade | The published **base rate** is the trade reference rate. With no published card rate for the product line, the trade portal cannot book that currency (and says so). |
+| Treasury: customer limits | Trade | A booking over the customer's treasury limit is made but **held**; it cannot be submitted until a treasury checker releases it. |
+| Treasury: FX deal | Trade | A dealer issues an FX deal reference — or a branch quotes a trade customer and the quote becomes the deal — which AD2 applies to one request (C24). |
+
+**Positions.** Two tracks, never merged: the *transaction link* (UTR or FIRC for trade; FX Plus bills, possibly in
+parts, for a branch deal) and *cover* (bank cover or an internal cross). Branch deals not concluded by the product's
+cut-off (16:00 IST for remittance and cards, 15:30 for cash, later at airports) are cancelled for the residual, and
+cover above the live amount returns to the pool — unless the branch keeps the deal past cut-off with a reason. Trade
+bookings keep their 48-hour lock instead.
+
+**Maker-checker.** One approvals inbox: card rates, forward and credit-line settlements, held deals, Nostro
+replacements, bulk booking detail, amendments, limit changes, and every admin control change (users, cut-offs, spreads,
+exposure limits, organisation). Before and after for each item; a rejection needs a reason; a checker never approves
+their own entry; a rejected item is amended and resubmitted as a new version.
+
+**Rules carried from the design.** Currencies are never totalled together; INR is grouped in lakh and crore and foreign
+currency internationally; suggestions never execute themselves; stale figures stay visible but leave the fresh
+subtotal; read-only roles see no action controls; every data table exports.
+
+---
 
 ## 8. Inward remittance and disposal
 
@@ -445,11 +486,13 @@ Testing a journey across roles once meant signing in and out at every stage. The
 | Item | Owner | Blocking |
 |---|---|---|
 | ~~Full purpose code to document mapping workbook~~ | Business team | **Resolved** — the Purpose / Doc Policy workbook is loaded (§7, §8) |
-| FX quotation direction, rounding and final pricing formula | Treasury | Live rate display and booked-rate arithmetic |
+| FX quotation direction, rounding and final pricing formula | Treasury | Live rate display and booked-rate arithmetic — the demo prices trade at the published base ± the customer's margin, gated by the card rate |
+| IBR source, FX Plus transport (SFTP or API), legacy currency booking module | Treasury / Technology | Shown as proposed or unresolved on the treasury portal's integrations |
+| Credit-line funding rule (v0.1–v0.3) | Treasury | Previewed on T-11; applied only through a checker |
 | ~~Disposal option list beyond bill knock-off and account credit~~ | Operations | **Resolved** — knock-off or advance, INR or EEFC (§8) |
 | Compliance rule weights, thresholds and the real screening provider | Compliance | Scoring in §7 and §8 |
 | UFI API access for AD2 (EDPMS/IDPMS knock-off) — expected from RBI, not yet confirmed | Regulatory | §10 reporting goes live |
-| Transaction limits per SME and per currency | Risk | Validation on outward and disposal |
+| Transaction limits per SME and per currency | Risk | Validation on outward and disposal — the demo applies each customer's treasury limit (held for a checker when exceeded) |
 | Whether unlinked outward requests are permitted | Operations | §7 allocation rules |
 | SFTP and SAP integration contracts | Technology | §9 channel behaviour |
 | Document retention periods and processing service levels | Compliance | Non-functional |

@@ -16,6 +16,24 @@ function render(opts = {}) {
   if (hash !== lastHash) applyRouteFilter(parts, new URLSearchParams(qs || ''));
 
   if (!S && !['login','register','status'].includes(parts[0])) { location.hash = '#/login'; return; }
+  /* Treasury roles work in the Treasury Management Portal: same platform,
+     same session. Signed in as one here, this page hands over (and keeps the
+     demo guide and user switching available). */
+  if (S && isTreasury() && parts[0] !== 'login') {
+    if (parts[0] === 'ad2' && parts[1] === 'treasury') { location.href = TMP_HOME; return; }
+    root.innerHTML = `<div class="page" style="max-width:720px;margin:60px auto"><div class="card"><div class="denied"><div class="ic">⇄</div>
+      <h3>${esc(S.name || S.loginId)} works in the Treasury Management Portal</h3>
+      <p>${esc(S.role)} is a treasury portal role. Trade bookings, FX deals and settlements from this portal arrive there as positions the moment they happen.</p>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">
+        <a class="btn btn-primary" href="${TMP_HOME}">Open the treasury portal</a>
+        <button class="btn btn-plain" type="button" data-act="switch-open">Switch user</button>
+        <button class="btn btn-plain" type="button" data-act="guide-open">Demo guide</button>
+        <button class="btn btn-plain" type="button" data-act="logout">Sign out</button></div></div></div></div>`;
+    $('#guide-host').innerHTML = guideHTML();
+    document.body.classList.toggle('with-guide', GUIDE_OPEN);
+    lastHash = hash;
+    return;
+  }
   let html;
   try {
     if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
@@ -61,7 +79,7 @@ function render(opts = {}) {
         case 'reports':        html = viewReports(); break;
         case 'admin':          html = viewAdmin(parts[2]); break;
         case 'lab':            html = viewLab(); break;
-        case 'treasury':       html = viewTreasury(parts[2], parts[3]); break;
+        case 'treasury':       location.href = TMP_HOME; return;
         default: location.hash = '#/ad2/dashboard'; return;
       }
     }
@@ -183,6 +201,8 @@ async function rateBook(draft, cur, smeRec, dir, amount) {
     draft.rate = { mode:'booked', positionId:res.positionId, customerRate:res.customerRate, bookedAmount:Number(amount),
       bookedAt:res.bookedAt, expiresAt:res.expiresAt, dealRef:null, ...(res.refRate != null ? { refRate:res.refRate, margin:res.margin } : {}) };
   } });
+  /* over the customer's treasury limit: booked, but held for a treasury checker */
+  if (r && r.held) { toast(r.message); return false; }
   return !!r;
 }
 /* Drop a draft's rate, releasing its booking on the server. */
@@ -304,7 +324,6 @@ document.addEventListener('click', async e => {
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
   if (act === 'logout')    { resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
-  if (act.startsWith('tr-')) { treasuryClick(act, t); return; }
   if (act === 'bk-release') {
     commandModal({ title:'Release rate booking ' + t.dataset.id, okLabel:'Release', okClass:'btn-danger', cmd:'rate.release',
       body:'<p style="font-size:var(--fs-md)">Release this booking? Its rate is no longer held for you, and treasury stops holding the currency for it.</p>',
@@ -1160,7 +1179,6 @@ document.addEventListener('submit', async e => {
 /* ---------- change events ------------------------------------------------------------ */
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.dataset && t.dataset.act && t.dataset.act.startsWith('tr-') && treasuryChange(t)) return;
 
   if (t.id === 'file-pick') {
     const file = t.files && t.files[0];
@@ -1342,7 +1360,6 @@ document.addEventListener('change', e => {
 /* live typing: keep drafts in sync without re-rendering and losing focus */
 document.addEventListener('input', e => {
   const t = e.target;
-  if (t.dataset && t.dataset.act && t.dataset.act.startsWith('tr-') && treasuryInput(t)) return;
   if (t.dataset.act === 'sw-filter') {
     const q = t.value.trim().toLowerCase();
     $$('.swrow').forEach(r => { r.hidden = !!q && !r.dataset.q.includes(q); });

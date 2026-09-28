@@ -1,13 +1,20 @@
 # AD2 Trade Remittance
 
-A working product demo of the AD2 trade-remittance platform: the SME portal, the AD2 operations portal behind it,
-and the treasury desk that manages the currency. Onboard a partner, then take payments and export receipts through
-sales, maker, checker and operations to a UTR and a FIRC — with every rule enforced by a server, not just the screen.
-Customers book the live rate and never see AD2's margin. Every booking is a treasury position the moment it is made:
-treasury covers it from a bank or crosses it against an opposite booking, and the payment or FIRC settles it.
+A working product demo of the AD2 platform: two front ends on one engine, one API and one sign-in.
 
-**Every business and transaction is fictional.** FX rates, SWIFT, PennyDrop, sanctions screening, UFI (EDPMS/IDPMS)
-reporting, SFTP, SAP and document AI are simulated. Uploads record only the file name and size; file contents never
+- **The trade portal** (`/app.html`) — the SME portal and the AD2 operations portal behind it. Onboard a partner, then
+  take payments and export receipts through sales, maker, checker and operations to a UTR and a FIRC.
+- **The Treasury Management Portal** (`/treasury/`) — built from the TMP design (`risheedeshpande-ux/r4m`): the rate
+  desk, one position book, bank cover, branch and agent counters with FX Plus bills and cut-off, liquidity (Nostro,
+  bank, cash, stock, cards), credit lines and customer limits, bulk bookings, settlement reconciliation, and one
+  maker-checker inbox for everything that moves money or changes a control.
+
+Every rule is enforced by a server, not just the screen. Customers book the live rate and never see AD2's margin.
+Every booking is a treasury position the moment it is made; treasury publishes the rates trade prices from, covers the
+book, holds a booking over a customer's limit, and sees the UTR or FIRC conclude the position and move the Nostro.
+
+**Every business and transaction is fictional.** FX rates (the IBR), SWIFT and MT950 statements, FX Plus bills, the bank
+aggregator and card issuers, PennyDrop, sanctions screening, UFI (EDPMS/IDPMS) reporting, SFTP, SAP and document AI are simulated. Uploads record only the file name and size; file contents never
 leave the browser.
 
 ## Run it
@@ -15,13 +22,15 @@ leave the browser.
 ```bash
 npm install
 npm start            # http://localhost:8130 — state in .data/state.json
+                     # trade portal: /app.html · treasury portal: /treasury/index.html
 ```
 
 **To test everything with one sign-in, use the master test user: Domain ID `TEST`, Login ID `MASTER`, passcode `demo`.**
 It opens a test console with:
 - every open item, its next step and who can take it;
 - journeys to start;
-- every customer and AD2 user, each one click away with no password.
+- every customer, AD2 user and treasury persona, each one click away with no password;
+- a **Treasury Management Portal** card: treasury journeys to start and what is waiting in treasury.
 
 While you test, a dark bar at the top follows the item you are on. It shows what happens next and offers
 **Do it as …** for the next person. It never offers someone who has already handled the item, so four-eyes still applies.
@@ -29,13 +38,14 @@ While you test, a dark bar at the top follows the item you are on. It shows what
 The master holds no authority itself. The server hands it the other user's own session, so every step is recorded
 against that user. Each switch is written to the audit log. Switch it off with **Test tools** in Platform settings.
 
-Or click **Demo guide** in the yellow bar. It walks one new business through 21 steps, treasury included, and signs in as the right
-person at each one. To create more test data, open **Test data lab** from the sidebar.
+Or click **Demo guide** in the yellow bar. It walks one new business through 20 steps and signs in as the right person
+at each one; the treasury steps open the treasury portal (cover the booking, allocate it, see it concluded by the UTR)
+and come back. To create more test data, open **Test data lab** from the sidebar.
 
 ```bash
-npm test             # engine and API tests
-npm run test:e2e     # the guided journey in a real browser, on a throwaway server
-npm run test:qa      # 40 journeys across every role and product, treasury included; writes qa-report.md (see tests/qa.js)
+npm test             # engine, treasury, Treasury Management Portal and API tests
+npm run test:e2e     # the guided journey in a real browser across both portals, on a throwaway server
+npm run test:qa      # 45 journeys across every role and product in both portals; writes qa-report.md (see tests/qa.js)
 ```
 
 ## Workspaces
@@ -52,9 +62,20 @@ rail (remembered per browser), and **Switch user** in the top bar moves between 
 | AD2 Checker | Home + queue · Authorise · Records | Trade checker: authorises payments and disposals; accepts bills; confirms knock-offs |
 | AD2 Compliance | Home + queue · Onboarding · Oversight | Onboarding checker: approves, returns or rejects applications — no transaction authority |
 | AD2 Operations | Home + queue · Settle · Authorise · Records | Confirms receipts; authorises; accepts bills; releases payments; credits disposals and issues FIRCs; reverses |
-| AD2 Treasury Dealer | Desk · Dealing · Book · Insight | Rate desk proposals, bank cover deals, allocation and internal crosses, FX deal references, exceptions, P&L — no trade authority |
-| AD2 Treasury Checker | Desk · Approvals · Book · Insight | Approves rate revisions and cover deals, never its own — no dealing or trade authority |
-| AD2 Administrator | Configuration · Access · Oversight · Treasury | Purpose codes, documents, compliance rules, users, settings, audit; treasury read-only — no transaction authority |
+| AD2 Administrator | Configuration · Access · Oversight · Treasury portal | Purpose codes, documents, compliance rules, users, settings, audit; in the treasury portal: its users, masters, organisation and integrations — no transaction authority |
+
+Treasury roles work in the **Treasury Management Portal** (`/treasury/`), on the same session — signing in as one
+anywhere lands there:
+
+| Role | Workspace | Does |
+|---|---|---|
+| AD2 Treasury Dealer | Treasury (T-01…T-28) | Rate desk, the book, bank cover and allocation, internal crosses, FX deals for trade customers, exceptions, liquidity uploads, forward and credit-line settlements, limits, bulk bookings — no trade authority |
+| AD2 Treasury Checker | Treasury | Approves card rates, settlements, held deals, Nostro replacements and control changes — never its own entry |
+| AD2 Treasury Viewer | Treasury (read-only) | The whole book; actions are absent, not disabled |
+| AD2 Branch Inputter | Branch (B-01…B-10) | Quotes and books at the counter, punches and knocks off FX Plus bills, works the cut-off queue and reminders, offline capture — for its branch only |
+| Agent Partner | Agent (B-02a, B-04) | Quotes and books for its servicing branch with its spread; requests cancellations through the branch |
+| AD2 Regional Bulk | Operations (OPS-01) | Requests bulk currency for branches in its region |
+| AD2 Finance | Operations (OPS-02) | Maps issuer settlements to card sales; adjustments go to a checker |
 
 Menu entries name the work (“Verify payments”, “Authorise disposals”, “Receipts to confirm”) and open the list filtered
 to it, with a count. A role cannot open another role's screens by URL, and the API refuses anything outside its
@@ -76,10 +97,12 @@ customers; a Checker or Operations approves money.
 | FIRC pending knock-off | Advance or unapplied part of a FIRC matched to export bills later; Checker confirms; reversible |
 | Compliance | Every outward request and disposal scored on submission; High needs a written reason from maker and checker |
 | Assisted journey | Sales, Maker or Operations raises for an SME; margin adjustable within the configured band; another maker verifies |
-| Rate booking → treasury | SME (or AD2 for it) books the rate → a treasury position opens at once → submitting attaches it (the rate is fixed) → the UTR or FIRC settles it; release, rejection or the 48-hour expiry cancels it |
-| Cover | Dealer enters a bank cover deal → Treasury checker approves → dealer allocates it to positions (or crosses opposite bookings) |
-| Rate desk | Dealer proposes revised reference rates (within the band) → Treasury checker approves → new bookings use them; existing bookings keep theirs |
-| FX deal reference | Dealer issues a deal for a customer (the position opens) → the branch applies it to one request, up to its amount |
+| Rate booking → treasury | SME (or AD2 for it) books the rate → a treasury position opens at once, at the customer's home branch → submitting attaches it (the rate is fixed) → the UTR or FIRC concludes it and moves the Nostro and head-office INR; release, rejection or the 48-hour expiry cancels it |
+| Rate desk | Dealer proposes base and card rates (within the band of the IBR) → Treasury checker publishes them → the base is the trade reference; with no published card rate, neither a branch nor the trade portal can book that currency |
+| Limits | A booking over the customer's treasury limit is made but held → a treasury checker releases or declines it; a held booking cannot be submitted |
+| Cover | Dealer enters a spot or forward cover deal with a bank (live when saved; spot moves cash at once) → allocates it to positions, or crosses opposite bookings; forward settlements go to a checker |
+| FX deal reference | Dealer issues a deal for a trade customer (the position opens) — or the branch quotes the customer and the quote becomes the deal → AD2 applies it to one request in the trade portal, up to its amount |
+| Branch counter | Branch quotes (10-minute validity; stepped review for overrides, large amounts and first quotes) → books → FX Plus bill links back on punch, or by knock-off → concluded; at cut-off the residual is cancelled and its cover returns to the pool, unless kept with a reason |
 | Queries and rejections | Maker or Checker queries; the SME answers with documents — or AD2 records the customer's answer and documents for it; rejections release reservations |
 
 ## Test data lab
@@ -100,28 +123,42 @@ blocks a walkthrough. The Administrator can switch the lab off.
 
 ## Treasury
 
-The treasury module (`public/treasury.js`) is the trade side's treasury management system, built from the TMP design
-(`risheedeshpande-ux/r4m`, `TMP/WORKFLOW.md`). Sign in as **AD2 / DEALER** or **AD2 / TCHECKER**.
+Two modules make up treasury, both loaded by `engine.js`, both enforced on the server:
 
-- **One idea it rests on:** a position has two independent tracks — *settlement* (has the payment or FIRC gone out?)
-  and *cover* (has treasury offset it?). They are separate columns everywhere.
-- **Bookings are positions.** Booking a rate is a server command (`rate.book`) that opens a position holding the rate.
-  A request points at it, so the rate cannot move between booking and submitting, whatever the rate desk publishes.
-  An outward payment is a sale of foreign currency (treasury short); a disposal credited in INR is a purchase (long);
-  a credit to EEFC converts nothing and opens no position.
-- **The lock and the cut-off.** A booking holds its rate for 48 hours (agreed in the 22 Sep review). Submitting freezes
-  it. At the daily cut-off (16:00 IST, set by the Administrator) any currency not flat is flagged — nothing is cancelled.
-- **Cover** is per currency, net: customer sales and purchases in one currency can cross each other internally; the rest
-  is bought or sold from a bank (entered by a dealer, approved by a treasury checker, allocated to positions).
-- **P&L**, in rupees and never mixed: *sales margin* (customer rate vs the reference at booking) and *dealing result*
-  (reference vs the cover rate, or vs the market for what is still open).
-- **Simulated market.** Rates drift gently and repeatably so the desk moves in a demo; switch it off in Platform settings.
-- **Integration contract.** Trade tells treasury four things — `position.opened`, `.attached`, `.linked`, `.cancelled` —
-  written in the same step as the trade action and listed on the Integration log. A separate treasury system would
-  subscribe to exactly these.
-- **Who sees what.** Treasury roles see the whole book; the Administrator and master test user see it read-only; the
-  branch sees positions and whether they are covered (no cover rates or P&L) and the deals it may apply; a customer sees
-  its own bookings without the reference rate; a signed-out visitor sees no rates at all.
+- **`public/treasury.js` — the position book.** A position has two independent tracks: the *transaction link* (UTR or
+  FIRC for a trade booking; FX Plus bills, possibly in parts, for a branch deal) and *cover* (bank cover or an internal
+  cross). They are separate columns everywhere. Invariant: amount = linked + remaining + released.
+  Bookings, deals, cover, allocation, crosses and P&L (sales margin vs dealing result, never mixed) live here.
+- **`public/tmp-engine.js` — the Treasury Management Portal.** Organisation (regions, clusters, branches, airports and
+  who serves which GSTIN state), the rate desk, quotes and branch bookings, FX Plus bills and knock-off, cut-off and
+  reminders, amendments (forward-dated unwinds), liquidity (Nostro, bank, cash, stock, card programmes), credit lines
+  and customer limits, bulk bookings, card settlement reconciliation, integrations and their freshness, admin masters,
+  and the approvals inbox. It fills the hooks the position book calls where trade meets treasury:
+
+| Hook | When | Effect |
+|---|---|---|
+| `rateCheck` | a trade booking or deal is priced | refused unless the product line's card rate is published |
+| `limitCheck` / `onHeld` | a booking or deal is made | over the customer's limit → held, with an approval for a treasury checker |
+| `onLinked` | a UTR or FIRC concludes a trade position | the correspondent Nostro and head-office INR move |
+| `onCoverSaved` | spot cover is saved | the settlement account and Nostro move |
+| `onBranchConcluded` | a branch deal is fully linked | stock, cash or card balances move |
+| `sweep` | before every command | branch residuals cancel at cut-off; reminders raise and escalate; quotes expire |
+| `onCancelled` | a held position is cancelled elsewhere | its approval item is withdrawn |
+
+The portal front end (`public/treasury/`) reuses the TMP design system as designed — its stylesheet, shell,
+breadcrumbs and pager, section and status tabs, page-head actions, native dialogs and toasts — and every screen of the
+design (B-01…B-10, B-02a, T-01…T-27, T-01V, OPS-01…03, ADM-01…05, SYS-01/02) runs on live data, plus **T-28 Trade
+desk**, where trade bookings and FX deals meet the book. The static prototype is kept at `/treasury/design/`.
+
+Its rules, from the design: two status tracks, never merged; currencies never totalled together; INR in lakh and crore,
+foreign currency in international grouping; suggestions never execute themselves; stale figures stay visible but leave
+the fresh subtotal; before/after for every approval, a mandatory rejection reason, and a checker never approves their
+own entry; read-only roles see no action controls; every data table exports.
+
+**Who sees what.** Treasury roles see the whole book; the Administrator and master test user oversee it read-only; a
+branch sees only its branch's positions, bills and stock (no base rates, cover or approvals); an agent sees only its own
+deals; trade staff see trade positions and whether they are covered; a customer sees its own bookings and whether a
+currency can be booked today — never the base or card rate; a signed-out visitor sees no rates at all.
 
 ## Purpose codes and documents
 
@@ -143,7 +180,9 @@ The Administrator can stop a code being offered, add inward purposes, add or rem
 ```
 public/            the app (static): app.html, js/*, styles.css, plus
   engine.js        every business rule — runs on the server; in the browser only for offline previews
-  treasury.js      the treasury module: positions, rate desk, cover, crosses, deals, P&L — loaded by engine.js
+  treasury.js      the position book: bookings, deals, cover, crosses, P&L — loaded by engine.js
+  tmp-engine.js    the Treasury Management Portal engine: rate desk, branches, cut-off, liquidity, limits, approvals
+  treasury/        the Treasury Management Portal front end (its own design system); design/ is the static prototype
   data.js          masters (purpose codes, products, documents, compliance rules, roles, test profiles) and seed data
 api/*.js           Vercel serverless functions → server/app.js
 server/app.js      /api/health, session, state, command, status, reset
@@ -179,8 +218,13 @@ through the portal, or a user added with a password, signs in with its own passw
 | AD2 | CHECKER, CHECKER2 | AD2 Checker |
 | AD2 | COMPLIANCE, COMPLIANCE2 | AD2 Compliance |
 | AD2 | OPS, OPS2 | AD2 Operations |
-| AD2 | DEALER, DEALER2 | AD2 Treasury Dealer |
-| AD2 | TCHECKER, TCHECKER2 | AD2 Treasury Checker |
+| AD2 | DEALER, DEALER2 | AD2 Treasury Dealer (treasury portal) |
+| AD2 | TCHECKER, TCHECKER2 | AD2 Treasury Checker (treasury portal) |
+| AD2 | TVIEW | AD2 Treasury Viewer (treasury portal, read-only) |
+| AD2 | BRANCH, BRANCH2, AIRPORT | AD2 Branch Inputter — Mumbai Fort, Delhi Connaught Place, Mumbai airport T2 |
+| SUNDARFX | AGENT | Agent Partner — Sundar Forex, Pune |
+| AD2 | RBULK | AD2 Regional Bulk — West region |
+| AD2 | FINANCE | AD2 Finance |
 | AD2 | ADMIN | AD2 Administrator |
 
 ## Deploying to Vercel
@@ -206,7 +250,7 @@ to vanish. Use **Supabase** (Postgres):
 
 **Why Supabase.** It is real Postgres, so the single state row can grow into proper tables. Its Storage can later hold
 the uploaded documents, which today record only a file name. The app reaches it over HTTPS with no driver to install.
-Polls ask only for a version stamp and fetch the ~150 KB state only when it changed. A free Supabase project pauses
+Polls ask only for a version stamp and fetch the state (about 230 KB for treasury, 70 KB for a customer) only when it changed. A free Supabase project pauses
 after a week without activity, so Vercel pings `/api/health` daily (`crons` in `vercel.json`) to keep it awake.
 
 **Vercel Blob** also works (`BLOB_READ_WRITE_TOKEN`), but it is no longer recommended. Blob is file storage charged

@@ -44,14 +44,17 @@ test('seed: every seeded conversion has exactly one position, and the book balan
   });
   assert.ok(db.outward.find(o => o.id === 'OR-5105').rate.positionId, 'the saved draft keeps its booking');
   assert.equal(db.deals.filter(d => d.status === 'Issued').length, 1, 'one deal ready for the branch');
-  assert.equal(db.covers.filter(c => c.status === 'Pending Approval').length, 1);
-  assert.equal(db.rateRevisions.filter(r => r.status === 'Proposed').length, 1);
+  assert.ok(db.covers.every(c => c.status === 'Active' && ['Spot', 'Forward'].includes(c.type)), 'cover is live when saved');
+  assert.equal(db.approvals.filter(r => r.type === 'Card rate' && r.status === 'Pending').length, 1, 'one card rate waiting for the checker');
   db.covers.forEach(c => {
     const alloc = db.coverAllocations.filter(x => x.coverId === c.id && x.status === 'Active').reduce((t, x) => t + x.amount, 0);
     assert.ok(Math.abs(alloc - c.allocated) < 0.01, c.id + ' allocated matches its allocations');
   });
   balanced(db);
-  assert.equal(T.netByCurrency(db, NOW).USD.net, -84300, 'USD short 84,300 after unallocated cover');
+  const usd = T.netByCurrency(db, NOW).USD;
+  assert.equal(usd.net, Math.round((usd.buy - usd.sell + usd.coverBuy - usd.coverSell) * 100) / 100, 'net = customer and cover legs');
+  assert.ok(db.positions.every(p => p.product && p.branchId && p.channel), 'every position carries its product, branch and channel');
+  assert.ok(db.positions.filter(p => p.smeId).every(p => ['Trade portal', 'Assisted', 'Treasury deal'].includes(p.channel)));
 });
 
 test('a booked rate is locked: a rate revision after booking does not change it', () => {
@@ -60,9 +63,10 @@ test('a booked rate is locked: a rate revision after booking does not change it'
   assert.equal(b.refRate, undefined, 'the customer is never told the reference rate');
   assert.equal(b.margin, undefined);
   const booked = b.customerRate;
-  run(db, DEALER, 'rates.propose', { rates: { EUR: 96.9 } });
-  run(db, TCHECK, 'rates.approve', { id: db.rateRevisions[0].id });
-  assert.equal(db.currencies.find(c => c.code === 'EUR').refRate, 96.9);
+  const r = run(db, DEALER, 'rates.propose', { rows: [{ product: 'REM', currency: 'EUR', base: 96.4, card: 97.3 }] });
+  assert.equal(db.currencies.find(c => c.code === 'EUR').refRate, 95.87, 'nothing moves until a checker approves');
+  run(db, TCHECK, 'approval.approve', { id: r.id });
+  assert.equal(db.currencies.find(c => c.code === 'EUR').refRate, 96.4);
   const id = run(db, MER, 'outward.submit', { draft: payment({ rate: { mode: 'booked', positionId: b.positionId } }) }).id;
   assert.equal(db.outward.find(o => o.id === id).rate.customerRate, booked, 'charged the booked rate, not the new one');
   assert.equal(pos(db, b.positionId).status, 'Attached');
@@ -110,13 +114,12 @@ test('cancel paths: release, replace, expiry, rejection and discard each cancel 
   assert.equal(pos(db, r2).cancelReason, 'Replaced by a new booking');
   /* expiry: the next command after 48 hours sweeps it */
   assert.equal(T.positionStatus(pos(db, r3), later(49)), 'Expired', 'screens show it expired before any sweep');
-  run(db, DEALER, 'rates.propose', { rates: { USD: 88.5 } }, later(49));
+  run(db, DEALER, 'rates.import', {}, later(49));
   assert.match(pos(db, r3).cancelReason, /Lock expired/);
   /* rejection of an attached, covered position returns the cover to the pool */
   const b = run(db, MER, 'rate.book', { dir: 'out', currency: 'EUR', amount: 45000 }).positionId;
   const id = run(db, MER, 'outward.submit', { draft: payment({ rate: { mode: 'booked', positionId: b } }) }).id;
   const cov = run(db, DEALER, 'cover.create', { currency: 'EUR', side: 'BUY', amount: 45000, rate: 95.8, counterparty: 'HDFC Bank' }).id;
-  run(db, TCHECK, 'cover.approve', { id: cov });
   run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: b, amount: 45000 }] });
   assert.equal(T.coverState(pos(db, b)), 'Covered');
   run(db, MAKER, 'outward.query', { id, question: 'Upload the signed invoice.' });
@@ -145,26 +148,32 @@ test('open-booking limit per customer, and it counts only unused bookings', () =
 
 test('allocation: bank cover and internal cross, with every refusal', () => {
   const db = fresh();
-  const cov = run(db, DEALER, 'cover.create', { currency: 'USD', side: 'BUY', amount: 50000, rate: 88.3, counterparty: 'Axis Bank' }).id;
-  refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: 'POS-0114', amount: 100 }] }), /only an approved cover deal/);
-  refuses(() => run(db, DEALER, 'cover.approve', { id: cov }), /cannot approve|withheld/);
+  refuses(() => run(db, DEALER, 'cover.create', { currency: 'USD', side: 'BUY', amount: 50000, rate: 88.3, counterparty: 'Some Bank' }), /Counterparty/);
+  refuses(() => run(db, DEALER, 'cover.create', { currency: 'USD', side: 'BUY', amount: 50000, rate: 88.3, counterparty: 'Kotak Mahindra Bank', type: 'Forward', valueDate: '2026-10-30' }), /not set up for forward/);
+  refuses(() => run(db, DEALER, 'cover.create', { currency: 'USD', side: 'BUY', amount: 50000, rate: 88.3, counterparty: 'Axis Bank', type: 'Forward' }), /later value date/);
+  refuses(() => run(db, TCHECK, 'cover.create', { currency: 'USD', side: 'BUY', amount: 50000, rate: 88.3, counterparty: 'Axis Bank' }), /cannot|withheld/);
+  const cov = run(db, DEALER, 'cover.create', { currency: 'USD', side: 'BUY', amount: 5000, rate: 88.3, counterparty: 'Axis Bank' }).id;
+  assert.equal(db.covers.find(c => c.id === cov).status, 'Active', 'live when saved');
   refuses(() => run(db, TCHECK, 'cover.allocate', { source: cov, rows: [] }), /cannot|withheld/);
-  run(db, TCHECK, 'cover.approve', { id: cov });
-  const usdSell = db.positions.filter(p => p.currency === 'USD' && p.side === 'SELL' && T.uncovered(p) > 0);
+  const usdSell = db.positions.filter(p => p.currency === 'USD' && p.side === 'SELL' && p.status !== 'Held' && T.uncovered(p) >= 3000)
+    .sort((x, y) => T.uncovered(y) - T.uncovered(x));
   const [a, b] = usdSell;
   refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: a.id, amount: T.uncovered(a) + 1 }] }), /uncovered/);
-  refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: a.id, amount: 30000 }, { positionId: b.id, amount: 30000 }] }), /more than the/);
+  refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: a.id, amount: 3000 }, { positionId: b.id, amount: 3000 }] }), /more than the/);
   const eur = db.positions.find(p => p.currency === 'EUR' && T.uncovered(p) > 0);
   refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: eur.id, amount: 1 }] }), /not USD/);
-  run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: a.id, amount: 30000 }, { positionId: b.id, amount: 20000 }] });
-  assert.equal(db.covers.find(c => c.id === cov).allocated, 50000);
+  const held = db.positions.find(p => p.status === 'Held');
+  refuses(() => run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: held.id, amount: 1 }] }), /held/);
+  run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: a.id, amount: 3000 }, { positionId: b.id, amount: 2000 }] });
+  assert.equal(db.covers.find(c => c.id === cov).allocated, 5000);
   /* GBP: Meridian's advance receipt (a BUY) crosses against its sales */
-  const gbpBuy = db.positions.find(p => p.currency === 'GBP' && p.side === 'BUY' && T.uncovered(p) > 0);
-  const gbpSell = db.positions.filter(p => p.currency === 'GBP' && p.side === 'SELL' && T.uncovered(p) > 0);
-  const before = T.netByCurrency(db, NOW).GBP.net;
+  const gbpBuy = db.positions.find(p => p.smeId && p.currency === 'GBP' && p.side === 'BUY' && T.uncovered(p) > 0);
+  const gbpSell = db.positions.filter(p => p.smeId && p.currency === 'GBP' && p.side === 'SELL' && T.uncovered(p) > 0);
+  const before = T.netByCurrency(db, NOW).GBP;
+  const crossed = gbpSell.reduce((t, p) => t + T.uncovered(p), 0);
   run(db, DEALER, 'cover.allocate', { source: gbpBuy.id, rows: gbpSell.map(p => ({ positionId: p.id, amount: T.uncovered(p) })) });
-  assert.equal(T.netByCurrency(db, NOW).GBP.net, before, 'a cross leaves the net unchanged');
-  assert.equal(T.netByCurrency(db, NOW).GBP.crossable, 0);
+  assert.equal(T.netByCurrency(db, NOW).GBP.net, before.net, 'a cross leaves the net unchanged');
+  assert.equal(T.netByCurrency(db, NOW).GBP.crossable, Math.round((before.crossable - crossed) * 100) / 100, 'both legs shrink by what was crossed');
   gbpSell.forEach(p => assert.equal(T.coverState(p), 'Covered'));
   refuses(() => run(db, DEALER, 'cover.allocate', { source: gbpBuy.id, rows: [{ positionId: db.positions.find(p => p.currency === 'GBP' && p.side === 'BUY' && p !== gbpBuy)?.id || 'POS-9999', amount: 1 }] }), /./);
   balanced(db);
@@ -175,7 +184,6 @@ test('P&L: sales margin and dealing result, signed by side, all in INR', () => {
   const b = run(db, MER, 'rate.book', { dir: 'out', currency: 'EUR', amount: 10000 }).positionId;
   const p = pos(db, b);
   const cov = run(db, DEALER, 'cover.create', { currency: 'EUR', side: 'BUY', amount: 10000, rate: p.refRate - 0.2, counterparty: 'ICICI Bank' }).id;
-  run(db, TCHECK, 'cover.approve', { id: cov });
   run(db, DEALER, 'cover.allocate', { source: cov, rows: [{ positionId: b, amount: 10000 }] });
   const row = T.pnl(db, NOW).rows.find(r => r.positionId === b);
   assert.equal(row.sales, Math.round((p.customerRate - p.refRate) * 10000 * 100) / 100, 'sale: customer rate above the reference');
@@ -210,24 +218,40 @@ test('deals: treasury issues, branch applies, single use, bound to the customer'
   refuses(() => run(db, MAKER, 'outward.submit', { actingFor: 'SME-1002', draft: { ...arcPay, rate: { mode: 'deal', dealRef: d.id } } }), /used/);
   /* an unused deal expires with its position */
   const d2 = run(db, DEALER, 'deal.issue', { smeId: 'SME-1002', dir: 'out', currency: 'USD', amount: 5000, rate: 88.8, validHours: 1 });
-  run(db, DEALER, 'rates.propose', { rates: { USD: 88.5 } }, later(2));
+  run(db, DEALER, 'rates.import', {}, later(2));
   assert.equal(db.deals.find(x => x.id === d2.id).status, 'Expired');
   balanced(db);
 });
 
-test('rate desk: band, four-eyes, supersede and reject with a reason', () => {
+test('rate desk: band, four-eyes, supersede, reject with a reason — and trade pricing follows it', () => {
   const db = fresh();
-  refuses(() => run(db, DEALER, 'rates.propose', { rates: { USD: 95 } }), /more than 2%/);
-  refuses(() => run(db, DEALER, 'rates.propose', { rates: { USD: db.currencies[0].refRate } }), /Change at least one/);
-  const r1 = run(db, DEALER, 'rates.propose', { rates: { USD: 88.6 } }).id;
-  assert.equal(db.rateRevisions.filter(r => r.status === 'Superseded').length, 1, 'the seeded proposal is superseded');
-  refuses(() => run(db, DEALER, 'rates.approve', { id: r1 }), /cannot|withheld/);
-  run(db, DEALER2, 'rates.propose', { rates: { USD: 88.61 } });
-  refuses(() => run(db, TCHECK, 'rates.approve', { id: r1 }), /superseded/);
-  const r3 = db.rateRevisions[0].id;
-  refuses(() => run(db, TCHECK, 'rates.reject', { id: r3 }), /Reason/);
-  run(db, TCHECK, 'rates.reject', { id: r3, reason: 'Wait for the RBI reference rate' });
-  assert.equal(db.currencies[0].refRate, 88.42, 'nothing published');
+  const usd = () => db.currencies.find(c => c.code === 'USD').refRate;
+  const row = (pr, cur) => db.rateDesk.find(r => r.product === pr && r.currency === cur);
+  refuses(() => run(db, DEALER, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 95, card: 95.5 }] }), /more than 2%/);
+  refuses(() => run(db, DEALER, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.4, card: 88.1 }] }), /cannot be below the base/);
+  refuses(() => run(db, DEALER, 'rates.propose', { rows: [] }), /at least one/);
+  refuses(() => run(db, MAKER, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.5, card: 89.2 }] }), /cannot|withheld/);
+  const r1 = run(db, DEALER, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.5, card: 89.2 }] }).id;
+  refuses(() => run(db, DEALER, 'approval.approve', { id: r1 }), /cannot/);
+  const r2 = run(db, DEALER, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.52, card: 89.25 }] }).id;
+  assert.equal(db.approvals.find(x => x.id === r1).status, 'Superseded', 'a maker’s newer proposal supersedes the older one');
+  refuses(() => run(db, TCHECK, 'approval.approve', { id: r1 }), /superseded/);
+  refuses(() => run(db, TCHECK, 'approval.reject', { id: r2 }), /reason/i);
+  run(db, TCHECK, 'approval.reject', { id: r2, reason: 'Wait for the RBI reference rate' });
+  assert.equal(usd(), 88.42, 'nothing published');
+  /* approved: the base is the trade reference, and every card moves with it */
+  const cardBefore = row('FXC', 'USD').card;
+  const r3 = run(db, DEALER2, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.5, card: 89.2 }] }).id;
+  run(db, TCHECK, 'approval.approve', { id: r3 });
+  assert.equal(usd(), 88.5);
+  assert.equal(row('REM', 'USD').card, 89.2);
+  assert.equal(row('FXC', 'USD').card, Math.round((cardBefore + 0.08) * 10000) / 10000, 'the spread is kept, the base moves');
+  const b = run(db, MER, 'rate.book', { dir: 'out', currency: 'USD', amount: 1000 });
+  assert.equal(pos(db, b.positionId).refRate, 88.5, 'trade books on the published base');
+  /* nothing is priced in a currency the desk has not published */
+  row('REM', 'EUR').status = 'Not published';
+  refuses(() => run(db, MER, 'rate.book', { dir: 'out', currency: 'EUR', amount: 1000 }), /No card rate is published for EUR/);
+  refuses(() => run(db, MER, 'outward.submit', { draft: payment({ rate: { mode: 'booked' } }) }), /No card rate is published/);
 });
 
 test('what each role sees: the customer, the branch and treasury', () => {
@@ -236,21 +260,25 @@ test('what each role sees: the customer, the branch and treasury', () => {
   const sme = Engine.scopeState(db, MER);
   assert.ok(sme.positions.length > 0 && sme.positions.every(p => p.smeId === 'SME-1001'));
   assert.ok(sme.positions.every(p => p.refRate === undefined && p.margin === undefined && p.covered === undefined));
-  assert.deepEqual([sme.covers.length, sme.deals.length, sme.tmsEvents.length, sme.rateRevisions.length], [0, 0, 0, 0]);
+  assert.deepEqual([sme.covers.length, sme.deals.length, sme.tmsEvents.length, sme.approvals.length, sme.limits.length], [0, 0, 0, 0, 0]);
+  assert.ok(sme.rateDesk.length && sme.rateDesk.every(r => r.card === undefined && ['REM', 'INW'].includes(r.product)), 'whether it can book, never the card rate');
   const branch = Engine.scopeState(db, MAKER);
-  assert.ok(branch.positions.length > 5 && branch.positions.every(p => p.covered === undefined && p.coverState));
+  assert.ok(branch.positions.length > 5 && branch.positions.every(p => p.covered === undefined && p.coverState && p.smeId));
   assert.equal(branch.covers.length, 0, 'the branch sees no cover rates');
   assert.ok(branch.deals.length > 0, 'the branch sees the deals it may apply');
   const tr = Engine.scopeState(db, DEALER);
-  assert.ok(tr.covers.length && tr.coverAllocations.length && tr.tmsEvents.length && tr.rateRevisions.length);
-  assert.ok(Engine.scopeState(db, ADMIN).covers.length, 'the administrator oversees the book');
+  assert.equal(tr.scope, 'tmp-full');
+  assert.ok(tr.covers.length && tr.coverAllocations.length && tr.tmsEvents.length && tr.approvals.length && tr.rateDesk[0].card > 0);
+  assert.ok(tr.positions.some(p => !p.smeId), 'treasury sees branch deals and trade bookings in one book');
+  const adm = Engine.scopeState(db, ADMIN);
+  assert.ok(adm.covers.length && adm.integrations.length, 'the administrator oversees the book and the portal settings');
   const pub = Engine.scopeState(db, null);
   assert.ok(pub.currencies.every(c => c.refRate === undefined), 'signed out: no reference rates');
   assert.equal(pub.positions.length, 0);
   /* treasury holds no trade authority, and the branch none in treasury */
   refuses(() => run(db, DEALER, 'outward.verify', { id: 'OR-5106', checks: CHECKS }), /cannot/);
   refuses(() => run(db, DEALER, 'rate.book', { dir: 'out', currency: 'USD', amount: 10 }), /cannot/);
-  refuses(() => run(db, OPS, 'cover.create', { currency: 'USD', side: 'BUY', amount: 10, rate: 88, counterparty: 'X' }), /cannot/);
+  refuses(() => run(db, OPS, 'cover.create', { currency: 'USD', side: 'BUY', amount: 10, rate: 88, counterparty: 'HDFC Bank' }), /cannot/);
 });
 
 test('cut-off: uncovered positions are flagged, not cancelled, and the dealer is told once', () => {
@@ -261,9 +289,9 @@ test('cut-off: uncovered positions are flagged, not cancelled, and the dealer is
   const after = T.exceptions(db, evening).filter(e => e.type === 'Uncovered after cut-off');
   assert.ok(after.some(e => e.currency === 'USD'));
   const open = db.positions.filter(p => p.status === 'Attached').length;
-  run(db, DEALER, 'rates.propose', { rates: { USD: 88.5 } }, evening);
-  run(db, DEALER, 'rates.propose', { rates: { USD: 88.51 } }, evening);
-  assert.equal(db.positions.filter(p => p.status === 'Attached').length, open, 'cut-off cancels nothing');
+  run(db, DEALER, 'rates.import', {}, evening);
+  run(db, DEALER, 'rates.import', {}, evening);
+  assert.equal(db.positions.filter(p => p.status === 'Attached').length, open, 'cut-off cancels no trade position');
   assert.equal(db.notifications.filter(n => /Cut-off passed with USD/.test(n.text)).length, 1, 'told once per currency per day');
 });
 

@@ -1,0 +1,86 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-09 — Nostro balances and upload · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html" class=on>Liquidity</a>
+  <a href="T-10.html">Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Maker</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-09</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><a href="T-07.html">Liquidity</a><span class=sep>/</span><span aria-current=page>Nostro balances and upload</span></nav><span class=sp></span><div class=pager><a href="T-08.html" title="Bank account balances">&lsaquo; Prev</a><span class=count>4 of 5</span><a href="T-10.html" title="Customer card and wallet balances">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Liquidity"><a href="T-07.html">Currency inventory</a><a href="T-19.html">Cash balances</a><a href="T-08.html">Bank account balances</a><a href="T-09.html" class=on>Nostro balances and upload</a><a href="T-10.html">Customer card and wallet balances</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Nostro balances and upload</h1>
+    <p class=sub>Issuer statement balances &nbsp;·&nbsp; Mastercard and Visa &nbsp;·&nbsp; manual source</p>
+    
+    
+    <div class=note><b>Design note</b>Upload preview validates currency, duplicates and source date. Manual records retain the uploader, statement date and previous versions per BRD &sect;11.</div>
+    
+<div class=tbl><table class=dt>
+<thead><tr><th>Issuer</th><th>CCY</th><th class=num>Balance FCY</th><th>Statement as of</th><th>Updated by</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td class=ref>Visa</td><td>USD</td><td class=num>200,000.00</td><td class=dim>11 Sep 13:00</td><td class=dim>Maker A</td><td><span class="pill ok">Current</span></td></tr>
+<tr><td class=ref>Mastercard</td><td>USD</td><td class=num>100,000.00</td><td class=dim>11 Sep 13:00</td><td class=dim>Maker A</td><td><span class="pill ok">Current</span></td></tr>
+<tr><td class=ref>Visa</td><td>EUR</td><td class=num>8,888.89</td><td class=dim>11 Sep 13:00</td><td class=dim>Maker A</td><td><span class="pill ok">Current</span></td></tr>
+<tr><td class="ref dim">Visa</td><td class=dim>USD</td><td class="num dim">185,000.00</td><td class=dim>10 Sep 13:00</td><td class=dim>Maker A</td><td><span class=pill>Superseded</span></td></tr>
+</tbody></table></div>
+<div class=row>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Upload preview</h2>
+ <p style="margin:0 0 10px"><b>issuer_balances_1109.xlsx</b> &nbsp;·&nbsp; 3 valid rows &nbsp;·&nbsp; <span class="pill warn">1 duplicate</span></p>
+ <div class="banner warn" style="margin-bottom:12px"><span>&#9888;</span><div><b>Duplicate: Visa / USD / 11 Sep</b>
+ A record already exists for this issuer, currency and statement date. Choose replace with reason, or skip.</div></div>
+ <div class=fgrid>
+  <div class=f><label for="t-09b-f1">Action</label><select id="t-09b-f1"><option>Replace with reason</option><option>Skip duplicate row</option></select></div>
+  <div class=f><label for="t-09b-f2">Reason <span class=req>*</span></label><input id="t-09b-f2" type=text value="Revised statement received 13:00"></div>
+ </div>
+ <div class=bar><button class=btn data-dlg="dlg-reviewupload">Review upload</button><button class="btn sec" data-dlg="dlg-cancel">Cancel</button></div>
+</div>
+<div style="width:280px"><div class=form>
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Provenance</h2>
+ <table class=dt>
+  <tr><td class=dim>Source</td><td>Issuer statement, email</td></tr>
+  <tr><td class=dim>Uploaded by</td><td>Maker A</td></tr>
+  <tr><td class=dim>Uploaded at</td><td>11 Sep 13:04 IST</td></tr>
+  <tr><td class=dim>Prior version</td><td><a href="T-18.html">10 Sep 13:00</a></td></tr>
+ </table>
+ <p class=hint>Previous versions are retained and viewable from the audit trail.</p>
+</div></div></div>
+
+    
+  </div>
+</div>
+</div>
+<dialog id="dlg-cancel"><h2>Cancel position</h2><div class=body><p>Cancels the residual and releases any bank cover back to the unallocated pool. This is recorded against your user.</p><div class=impact><b>No silent destruction</b>1 position, EUR 10,000 residual. The customer-facing deal is not cancelled by this action.</div><dl><dt>Position</dt><dd>POS-1043</dd><dt>Residual</dt><dd>EUR 10,000.00</dd><dt>Cover state</dt><dd>Unallocated — returns to pool</dd></dl><label>Cancellation reason <span style="color:var(--alert)">*</span><textarea id="dlg-cancel-u1" aria-label="Value" data-required placeholder="Recorded on the audit trail and shown to the maker."></textarea></label><p class="err" hidden>A reason is required before this can be submitted.</p></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn danger" data-confirm="POS-1043 cancelled — cover returned to pool" data-kind="bad">Cancel position</button></div></dialog>
+<dialog id="dlg-reviewupload"><h2>Review upload</h2><div class=body><p>Validation result before committing to the ledger.</p><dl><dt>Rows accepted</dt><dd>41</dd><dt>Duplicate rows</dt><dd>1 — 10 Sep already loaded</dd><dt>Rejected</dt><dd>0</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="41 rows committed — 1 duplicate skipped" data-kind="ok">Commit 41 rows</button></div></dialog>
+<script src="tmp.js?v=2"></script>

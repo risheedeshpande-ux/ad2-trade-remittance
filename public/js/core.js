@@ -263,13 +263,20 @@ async function switchTo(domainId, loginId, { dest } = {}) {
   });
 }
 function afterSignIn(dest) {
+  /* a treasury step opens the Treasury Management Portal, on the same session */
+  if (dest && dest.startsWith('treasury/')) { location.href = dest; return; }
+  if (!dest && isTreasury()) { location.href = TMP_HOME; return; }
   location.hash = dest || homeHash();
   render();
 }
 /* Where each user starts: the master test user on its console, AD2 on its
    dashboard, a business on its portal. */
-const isTreasury = () => !!S && /Treasury/.test(S.role);
-const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isTreasury() ? '#/ad2/treasury' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
+/* Treasury, branch, agent, bulk and finance roles work in the Treasury
+   Management Portal (treasury/), which shares this platform and sign-in. */
+const portalOf = role => ((DB && DB.roles || []).find(r => r.id === role) || {}).portal || '';
+const isTreasury = () => !!S && portalOf(S.role) === 'TMP';
+const TMP_HOME = 'treasury/index.html';
+const homeHash = () => !S ? '#/login' : isMaster() ? '#/test' : isAD2() && !acting() ? '#/ad2/dashboard' : '#/sme/dashboard';
 function endMaster() { MASTER = null; sessSet('ad2-master', null); }
 
 /* Poll for changes other users make, so a checker sees the maker's work
@@ -444,6 +451,9 @@ const BADGE = {
   'Awaiting Instruction':'b-amber','Instruction Submitted':'b-blue','Partially Disposed':'b-amber','Intimated':'b-purple','Not Received':'b-red',
   'Unsettled':'b-grey','Partially Settled':'b-amber','Settled':'b-green',
   'Proposed':'b-amber','Confirmed':'b-green','Reversed':'b-grey',
+  /* treasury positions */
+  'Open':'b-blue','Held':'b-amber','Attached':'b-purple','Concluded':'b-green','Cancelled':'b-grey','Expired':'b-grey',
+  'Covered':'b-green','Partial':'b-amber','Uncovered':'b-amber',
 };
 const badge = s => `<span class="badge ${BADGE[s] || 'b-grey'}">${esc(s)}</span>`;
 
@@ -578,17 +588,8 @@ const NI = {
   aUsers:    { href:'#/ad2/admin/users',      label:'Users',              chip:'US', tone:'--chip-pr' },
   aRoles:    { href:'#/ad2/admin/roles',      label:'Roles & permissions', chip:'RL', tone:'--chip-di' },
   aAudit:    { href:'#/ad2/admin/audit',      label:'Audit log',          chip:'AL', tone:'--chip-rc' },
-  /* treasury */
-  trDesk:    { href:'#/ad2/treasury',             label:'Desk',                chip:'TD', tone:'--chip-db' },
-  trRates:   { href:'#/ad2/treasury/rates',       label:'Rate desk',           chip:'RD', tone:'--chip-ir' },
-  trPos:     { href:'#/ad2/treasury/positions',   label:'Positions',           chip:'PS', tone:'--chip-or' },
-  trCover:   { href:'#/ad2/treasury/cover',       label:'Cover deals',         chip:'CV', tone:'--chip-bl' },
-  trAlloc:   { href:'#/ad2/treasury/allocate',    label:'Allocate cover',      chip:'AC', tone:'--chip-rc' },
-  trDeals:   { href:'#/ad2/treasury/deals',       label:'Deal references',     chip:'FX', tone:'--chip-pr' },
-  trExc:     { href:'#/ad2/treasury/exceptions',  label:'Exceptions',          chip:'EX', tone:'--chip-er', n:'trExc' },
-  trApprove: { href:'#/ad2/treasury/approvals',   label:'Approvals',           chip:'AP', tone:'--chip-di', n:'trApprove' },
-  trPnl:     { href:'#/ad2/treasury/pnl',         label:'P&L',                 chip:'PL', tone:'--chip-rp' },
-  trEvents:  { href:'#/ad2/treasury/events',      label:'Integration log',     chip:'IL', tone:'--chip-up' },
+  /* the treasury management portal is its own front end on the same platform */
+  trPortal:  { href:'treasury/index.html',      label:'Treasury portal ↗',  chip:'TM', tone:'--chip-db', ext:true },
 };
 const NAV_BY_ROLE = {
   'SME User':         [['Home', 'smeDash'], ['Transact', 'smeOut', 'smeIn'], ['Bills', 'smeExp', 'smeImp', 'smeKo'],
@@ -605,10 +606,8 @@ const NAV_BY_ROLE = {
                        ['Authorise', 'outAuth', 'inwAuth', 'billsAccept', 'reconConfirm'],
                        ['Records', 'out', 'inw', 'bills', 'recon', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
   'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
-                       ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Treasury', 'trDesk', 'trPos', 'trPnl', 'trEvents'], ['Tools', 'lab']],
-  'AD2 Treasury Dealer':  [['Home', 'trDesk'], ['Dealing', 'trRates', 'trCover', 'trAlloc', 'trDeals'], ['Book', 'trPos', 'trExc'], ['Insight', 'trPnl', 'trEvents']],
-  'AD2 Treasury Checker': [['Home', 'trDesk', 'trApprove'], ['Book', 'trRates', 'trCover', 'trPos', 'trExc', 'trDeals'], ['Insight', 'trPnl', 'trEvents']],
-  'Master Tester':    [['Testing', 'console']],
+                       ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Treasury', 'trPortal'], ['Tools', 'lab']],
+  'Master Tester':    [['Testing', 'console'], ['Treasury', 'trPortal']],
 };
 /* How many items wait behind a filtered menu entry. */
 function navCount(key) {
@@ -627,8 +626,6 @@ function navCount(key) {
     case 'inwProcess':  return DB.disposals.filter(d => d.status === 'Authorised' && free(d)).length;
     case 'billsAccept': return DB.bills.filter(b => ['Submitted','Resubmitted','Under Review'].includes(b.review) && b.lodgedBy?.key !== me).length;
     case 'reconConfirm':return DB.allocations.filter(l => l.status === 'Proposed' && l.proposedBy?.key !== me).length;
-    case 'trApprove':   return typeof trApprovalsCount === 'function' ? trApprovalsCount() : 0;
-    case 'trExc':       return DB.positions ? Engine.treasury.exceptions(DB, nowISO()).length : 0;
     default: return 0;
   }
 }
@@ -667,7 +664,7 @@ function navHTML() {
         ${n ? `<span class="navcount">${n}</span>` : ''}</a>`;
     }).join('');
   }).join('');
-  const title = master ? 'Test console' : ad2Home ? (isTreasury() ? 'AD2 Treasury' : 'AD2 Trade Operations') : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
+  const title = master ? 'Test console' : ad2Home ? 'AD2 Trade Operations' : (acting() ? 'Assisted — SME Portal' : 'SME Trade Portal');
   const sub = master ? 'Master test user' : ad2Home ? S.role.replace('AD2 ', '') + ' workspace' : (me?.tradingName || me?.legalName || 'Trade services');
   return `<nav class="nav" aria-label="Main">
     <div class="brand"><span class="mark">◈</span>

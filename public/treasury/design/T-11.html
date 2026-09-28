@@ -1,0 +1,101 @@
+<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>T-11 — Credit lines and funding · TMP</title>
+<link rel=stylesheet href="styles.css?v=15">
+<div class="app">
+<a class=skip href="#main">Skip to content</a>
+<nav class=nav aria-label="Primary">
+  <div class=brand>Remit4Me<span>Treasury Management</span></div>
+  <a href="T-01.html">Overview</a>
+  <a href="T-24.html">Rate desk</a>
+  <a href="T-02.html">Positions</a>
+  <a href="T-04.html">Cover deals</a>
+  <a href="T-05.html">Allocations</a>
+  <a href="T-26.html">Amendments</a>
+  <a href="T-07.html">Liquidity</a>
+  <a href="T-10.html" class=on>Cards &amp; funding</a>
+  <a href="T-11.html">Credit lines</a>
+  <a href="T-14.html">Settlements</a>
+  <a href="T-17.html">Bulk bookings</a>
+  <a href="T-22.html">Reports</a>
+  <a href="T-21.html">Approvals</a>
+  <a href="T-18.html">Data &amp; audit</a>
+  <div class="grp proto">Review navigation</div>
+  <a class=proto href="B-01.html">Branch workspace</a>
+  <a class=proto href="T-01.html">Treasury workspace</a>
+  <a class=proto href="OPS-01.html">Operations</a>
+  <a class=proto href="ADM-01.html">Administration</a>
+  <a class=proto href="index.html">All screens</a>
+  <div class=why-nav>Prototype only. In the product the workspace switcher is permission-gated and a single-role user sees none of this.</div>
+</nav>
+<div class=main>
+  <div class=top>
+    <span class=crumb>Treasury / <b>Maker</b></span><span class=crumb>/</span><span class=crumb>EBIXCASH</span>
+    <label class=search><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg><input id=globalsearch name=q type=search placeholder="Search reference, position or account" aria-label="Search reference, position or account"></label>
+    <label class=asof><span>As at</span><input type="datetime-local" value="2026-09-11T14:32" aria-label="As-at date and time"></label>
+    <span class="env proto">Illustrative data</span>
+    <span class=user>Demo</span>
+    <span class=sid>T-11</span>
+  </div>
+  <div class=subnav><button class=back data-back type=button>&larr; Back</button><nav class=crumbs aria-label="Breadcrumb"><a href="index.html">All screens</a><span class=sep>/</span><a href="T-01.html">Treasury</a><span class=sep>/</span><span aria-current=page>Credit</span><span class=sep>/</span><span aria-current=page>Credit lines and funding</span></nav><span class=sp></span><div class=pager><span class=off>&lsaquo; Prev</span><span class=count>1 of 2</span><a href="T-25.html" title="Customer credit limits">Next &rsaquo;</a></div></div>
+  <div class=sectiontabs role="tablist" aria-label="Credit"><a href="T-11.html" class=on>Credit lines and funding</a><a href="T-25.html">Customer credit limits</a></div>
+  <div class=page id=main role=main tabindex="-1">
+    <h1>Credit lines and funding</h1>
+    <p class=sub>Card funding &nbsp;·&nbsp; FX Plus loads, reloads and cashouts &nbsp;·&nbsp; manual settlement entry</p>
+    
+    
+    <div class=note><b>Design note</b>Funding logic is unresolved in the BRD (BR-07). The rule is versioned and its utilisation impact is previewed before any update is committed.</div><div class=filters style="margin-bottom:var(--s3)"><span class=sp></span><span class=src>Export: Credit line utilisation &mdash; current filters applied</span><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">Excel</button><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">CSV</button><button class="btn sec" style="padding:4px 10px" data-dlg="dlg-export">PDF</button></div>
+    
+<div class=strip>
+ <div class=stat><b>INR 2.00 cr</b><span>Limit</span></div>
+ <div class=stat><b>INR 1.30 cr</b><span>Utilised</span></div>
+ <div class=stat><b class=brand>INR 0.70 cr</b><span>Available</span></div>
+ <div class="stat plain"><b class=warn>65%</b><span>Utilisation</span>
+  <div class=meter style="margin-top:6px"><i style=width:65%></i></div></div>
+</div>
+<div class=tbl><table class=dt>
+<thead><tr><th>Activity</th><th>Reference</th><th>Source</th><th class=num>INR amount</th><th>Funding state</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td class=ref>Load / reload</td><td>BATCH-0911-A</td><td class=dim>FX Plus API</td><td class=num>10,00,000</td>
+ <td><span class="pill warn">Pending funding</span></td><td><button class="btn sec" style="padding:3px 9px" data-dlg="dlg-detail">Inspect cards</button></td></tr>
+<tr><td class=ref>Cashout</td><td>BATCH-0911-B</td><td class=dim>FX Plus API</td><td class=num>2,00,000</td>
+ <td><span class="pill warn">Awaiting rule application</span></td><td><button class="btn sec" style="padding:3px 9px" data-dlg="dlg-detail">Review</button></td></tr>
+<tr class=sel><td class=ref>Settlement</td><td>SET-3102</td><td class=dim>Manual entry</td><td class=num>5,00,000</td>
+ <td><span class=pill>Draft</span></td><td><button class="btn sec" style="padding:3px 9px" data-dlg="dlg-preview">Preview impact</button></td></tr>
+</tbody></table></div>
+<div class=row>
+<div class="form grow">
+ <h2 style="margin-top:0;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">Rule preview <span class=illus>proposed &mdash; rule v0.3</span></h2>
+ <div class=calc style="margin-bottom:12px">
+  <div class=term><b>1.30</b><span>Current utilised (cr)</span></div><div class=op>+</div>
+  <div class=term><b>0.10</b><span>Load / reload</span></div><div class=op>&minus;</div>
+  <div class=term><b>0.02</b><span>Cashout</span></div><div class=op>&minus;</div>
+  <div class=term><b>0.05</b><span>Settlement</span></div><div class=op>=</div>
+  <div class="term result"><b>1.33</b><span>Utilised after commit (cr)</span></div>
+ </div>
+ <div class=bar><button class=btn data-dlg="dlg-tochecker">Enter settlement</button><button class="btn sec" data-dlg="dlg-ruleversion">Change rule version</button>
+  <span class=sp></span><span class=why>BR-07 funding logic requires business confirmation before build.</span></div>
+</div>
+<div style="width:260px"><div class="banner warn" style="margin:0"><span>&#9888;</span><div>
+ <b>Funding rule is unconfirmed</b>Rule v0.3 is a proposal. Cards are marked funded by this logic, so the figure above is indicative only.</div></div></div>
+</div>
+
+    <div class=related><span>Where to next</span><a href="T-25.html">Customer credit limits</a><a href="T-10.html">Customer card and wallet balances</a></div>
+  </div>
+</div>
+</div>
+<dialog id="dlg-detail"><h2>Detail</h2><div class=body><p>Full record for the selected row, with its audit trail reachable from here.</p><dl><dt>Reference</dt><dd>&mdash;</dd><dt>Source</dt><dd>FX Plus API</dd><dt>Last sync</dt><dd>14:32 IST</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Closed" data-kind="ok">Close</button></div></dialog>
+<dialog id="dlg-export"><h2>Export</h2><div class=body>
+<p>Exports <b data-ctx data-ctx="the current view">the current view</b> with all active filters applied.</p>
+<label for="dlg-export-f1">Format</label><select id="dlg-export-f1"><option>Excel (.xlsx)</option><option>CSV (.csv)</option><option>PDF (print layout)</option></select>
+<div style="height:10px"></div><label for="dlg-export-f2">Scope</label>
+<select id="dlg-export-f2"><option>Current filtered rows</option><option>All rows, ignoring filters</option><option>Selected rows only</option></select>
+<div style="height:10px"></div><label for="dlg-export-f3">Include</label>
+<select id="dlg-export-f3"><option>Values as displayed</option><option>Values plus source and sync time</option></select>
+<p class=hint style="margin-top:10px">Amounts keep their currency code. Mixed-currency totals are never combined.</p>
+</div><div class=foot><button class="btn sec" data-close>Cancel</button>
+<button class=btn data-confirm="Export queued — download will start shortly">Export</button></div></dialog>
+<dialog id="dlg-preview"><h2>Preview impact</h2><div class=body><p>Shows the effect before anything is committed.</p><dl><dt>Utilisation before</dt><dd>65%</dd><dt>Utilisation after</dt><dd>58%</dd><dt>Available line</dt><dd>0.70 cr → 0.88 cr</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Preview only — nothing was committed" data-kind="ok">Close preview</button></div></dialog>
+<dialog id="dlg-ruleversion"><h2>Change funding rule version</h2><div class=body><p>The ICICI funding logic is a proposal, not a confirmed business rule. Changing version re-derives the utilisation figure.</p><dl><dt>Current</dt><dd>Rule v0.3 (proposed)</dd><dt>Available</dt><dd>v0.1, v0.2, v0.3</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Rule v0.2 previewed — not applied" data-kind="warn">Preview new version</button></div></dialog>
+<dialog id="dlg-tochecker"><h2>Send to checker</h2><div class=body><p>Saves your entry and queues it for authorisation. It does not take effect until a checker approves.</p><dl><dt>Goes to</dt><dd>Treasury Checker queue</dd><dt>You are</dt><dd>Maker — you cannot approve this yourself</dd></dl></div><div class=foot><button class="btn sec" data-close>Cancel</button><button class="btn" data-confirm="Sent to checker — awaiting authorisation" data-kind="ok">Send to checker</button></div></dialog>
+<script src="tmp.js?v=2"></script>

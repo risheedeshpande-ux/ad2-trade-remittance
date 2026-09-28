@@ -7,6 +7,10 @@
   "functions": {
     "api/*.js": { "maxDuration": 15 }
   },
+  "redirects": [
+    { "source": "/treasury", "destination": "/treasury/index.html", "permanent": false },
+    { "source": "/tmp", "destination": "/treasury/index.html", "permanent": false }
+  ],
   "crons": [
     { "path": "/api/health", "schedule": "17 3 * * *" }
   ],
