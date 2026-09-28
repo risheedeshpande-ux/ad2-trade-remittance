@@ -12,6 +12,10 @@ const cur$ = code => (DB.currencies || []).find(c => c.code === code) || {};
 const tradePos = () => (DB.positions || []).filter(p => V.tradeChannel(p));
 const sortByBooked = list => list.slice().sort((a, b) => String(b.bookedAt).localeCompare(String(a.bookedAt)));
 const smeName = id => ((DB.smes || []).find(s => s.id === id) || {}).tradingName || id || '—';
+/* an event names the SME for a trade booking, else the branch or agent customer on the position */
+const evCustomer = e => e.smeId ? smeName(e.smeId) : (((DB.positions || []).find(p => p.id === e.positionId) || {}).customerName || '—');
+const eventsNewest = () => [...(DB.tmsEvents || [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
+const evWhen = at => at && V.istDate(at) === todayIST() ? istClock(at) : istDT(at);
 const dir = (net, c) => Math.abs(net) < 0.005 ? '<span class=dim>Flat</span>' : `<span class="${net > 0 ? 'v-bad' : 'v-ok'}">${net > 0 ? 'Short' : 'Long'} ${num(Math.abs(net), c)}</span>`;
 const pendingApprovals = () => (DB.approvals || []).filter(a => a.status === 'Pending');
 
@@ -42,7 +46,7 @@ function overview(viewer) {
   }
   const nostro = (DB.nostro || []).filter(n => n.kind === 'Correspondent' && n.status === 'Current');
   const ho = (DB.bankAccounts || []).filter(b => b.currency === 'INR' && b.owner === 'HO');
-  const ev = (DB.tmsEvents || []).slice(0, 10);
+  const ev = eventsNewest().slice(0, 10);
   const conc = (DB.positions || []).filter(p => p.status === 'Concluded' && p.linkedAt && V.istDate(p.linkedAt) === day).length;
   return `<div class=flow>
       <div class=st><span>Trade portal bookings today</span><b>${trade.length}</b><span>${trade.filter(p => p.status === 'Attached').length} attached to requests</span></div><div class=ar>&rarr;</div>
@@ -68,9 +72,9 @@ function overview(viewer) {
         { h: 'Currency', k: 'currency' }, { h: 'Bank', v: n => esc(n.issuer) }, { h: 'Balance', num: true, v: n => num(n.balance, n.currency) },
         { h: 'Statement', v: n => fresh(freshOf(n.statementAt, 60, 720), n.statementAt), csv: n => n.statementAt }], nostro, { cap: false, name: 'Nostro' })
         + `<div class=pad>${ho.map(b => `<span class=small>${esc(b.bank)} ${esc(b.mask)} available <b>${inr(b.available)}</b> ${fresh(freshOf(b.asOf), b.asOf)}</span>`).join('<br>')}</div>`, golink('Liquidity', 'T-08', null, 'small'))}
-      ${panel('From the trade portal — latest events', table('t01-ev', [
-        { h: 'When', v: e => `<span class=dim>${istClock(e.at)}</span>`, csv: e => e.at }, { h: 'Event', v: e => esc(e.type.replace('position.', '')) },
-        { h: 'Position', v: e => posRef({ id: e.positionId }), csv: e => e.positionId }, { h: 'Customer', v: e => esc(e.smeId ? smeName(e.smeId) : '—') },
+      ${panel('Latest position events — trade portal, branches and agents', table('t01-ev', [
+        { h: 'When', v: e => `<span class=dim>${evWhen(e.at)}</span>`, csv: e => e.at }, { h: 'Event', v: e => esc(e.type.replace('position.', '')) },
+        { h: 'Position', v: e => posRef({ id: e.positionId }), csv: e => e.positionId }, { h: 'Customer', v: e => esc(evCustomer(e)) },
         { h: 'Amount', num: true, v: e => fcy(e.amount, e.currency) }], ev, { cap: false, name: 'Trade events', empty: 'No events yet.' }), golink('Trade desk', 'T-28', null, 'small'))}
     </div>`;
 }
@@ -636,7 +640,7 @@ screen({ id: 'T-22', title: 'Reports',
       approvals: () => table('r-apr', [{ h: 'Item', k: 'id' }, { h: 'Type', k: 'type' }, { h: 'Title', k: 'title' }, { h: 'Maker', k: 'maker' }, { h: 'Checker', v: a => esc(a.checker || '') },
         { h: 'Status', k: 'status' }, { h: 'Reason', v: a => esc(a.reason || '') }, { h: 'Submitted', v: a => istDT(a.submittedAt), csv: a => a.submittedAt }, { h: 'Decided', v: a => a.decidedAt ? istDT(a.decidedAt) : '', csv: a => a.decidedAt || '' }], DB.approvals || [], { name: 'Approvals log', noun: 'item' }),
       events: () => table('r-ev', [{ h: 'Event', k: 'id' }, { h: 'Type', k: 'type' }, { h: 'At', v: e => istDT(e.at), csv: e => e.at }, { h: 'Position', k: 'positionId' }, { h: 'Request', v: e => esc(e.recordId || '') },
-        { h: 'Customer', v: e => esc(e.smeId ? smeName(e.smeId) : '') }, { h: 'Side', k: 'side' }, { h: 'Amount', num: true, v: e => fcy(e.amount, e.currency) }, { h: 'Rate', num: true, v: e => rate(e.rate) }], DB.tmsEvents || [], { name: 'Trade-to-treasury events', noun: 'event' }),
+        { h: 'Customer', v: e => esc(evCustomer(e)) }, { h: 'Side', k: 'side' }, { h: 'Amount', num: true, v: e => fcy(e.amount, e.currency) }, { h: 'Rate', num: true, v: e => rate(e.rate) }], eventsNewest(), { name: 'Trade-to-treasury events', noun: 'event' }),
       pnl: () => table('r-pnl', [{ h: 'Position', k: 'positionId' }, { h: 'CCY', k: 'currency' }, { h: 'Side', k: 'side' }, { h: 'Day', k: 'day' }, { h: 'Amount', num: true, v: r => num(r.amount, r.currency) },
         { h: 'Sales margin', num: true, v: r => inrN(r.sales) }, { h: 'Realised', num: true, v: r => inrN(r.realised) }, { h: 'Unrealised', num: true, v: r => inrN(r.unrealised) }, { h: 'Total', num: true, v: r => inrN(r.total) }], TR.pnl(DB, now).rows, { name: 'P&L by position', noun: 'position' }),
     };
