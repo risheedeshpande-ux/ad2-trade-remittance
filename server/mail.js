@@ -1,19 +1,21 @@
-/* Optional real email for query alerts, through Resend (one API key).
+/* Real email for query alerts, through Brevo's API (free: 300 a day).
    Every query email is in the demo inbox (/inbox.html) either way; with
-   RESEND_API_KEY and DEMO_EMAIL_TO set, it is also delivered. The demo is
-   public, so mail only reaches addresses in EMAIL_ALLOW; anything else goes
-   to DEMO_EMAIL_TO, with the intended recipient named in the message.
-   Without a verified domain Resend delivers only to the account's own
-   address — so DEMO_EMAIL_TO should be that address. */
+   BREVO_API_KEY and EMAIL_FROM (a sender verified in Brevo) it is also
+   delivered. The demo is public, so mail only goes to allowed addresses:
+   EMAIL_ALLOW lists addresses or whole domains ("@mailinator.com" by
+   default — public test inboxes, where the sample customers live). Anything
+   else goes to DEMO_EMAIL_TO if set, naming who it was meant for, or is not
+   sent at all. */
 'use strict';
 
 const env = k => String(process.env[k] || '').trim();
-const enabled = () => !!(env('RESEND_API_KEY') && env('DEMO_EMAIL_TO'));
+const enabled = () => !!(env('BREVO_API_KEY') && env('EMAIL_FROM'));
 const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function recipient(to) {
-  const allow = env('EMAIL_ALLOW').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
-  return (to || []).find(a => allow.includes(String(a).toLowerCase())) || env('DEMO_EMAIL_TO');
+  const allow = (env('EMAIL_ALLOW') || '@mailinator.com').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+  const ok = a => { a = String(a).toLowerCase(); return allow.some(x => x.startsWith('@') ? a.endsWith(x) : a === x); };
+  return (to || []).find(ok) || env('DEMO_EMAIL_TO') || null;
 }
 
 /* The deployment's own address for the link. A Vercel production deploy
@@ -46,14 +48,15 @@ function html(m, url, intended) {
 async function send(emails, headers) {
   if (!enabled() || !emails || !emails.length) return [];
   const base = baseUrl(headers);
-  return Promise.all(emails.map(async m => {
+  return Promise.all(emails.filter(m => recipient(m.to)).map(async m => {
     const to = recipient(m.to), url = base + '/app.html' + m.link;
     const intended = (m.to || []).some(a => String(a).toLowerCase() === to.toLowerCase()) ? '' : (m.to || []).join(', ');
     try {
-      const r = await fetch('https://api.resend.com/emails', { method: 'POST',
-        headers: { authorization: 'Bearer ' + env('RESEND_API_KEY'), 'content-type': 'application/json' },
-        body: JSON.stringify({ from: env('EMAIL_FROM') || 'AD2 Trade Services <onboarding@resend.dev>', to: [to], subject: m.subject,
-          text: `${m.body}\n\n${url}${intended ? `\n\n(Demo: meant for ${intended}, redirected to you.)` : ''}`, html: html(m, url, intended) }) });
+      const r = await fetch('https://api.brevo.com/v3/smtp/email', { method: 'POST',
+        headers: { 'api-key': env('BREVO_API_KEY'), 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ sender: { name: env('EMAIL_FROM_NAME') || 'AD2 Trade Services', email: env('EMAIL_FROM') }, to: [{ email: to }],
+          subject: m.subject, htmlContent: html(m, url, intended),
+          textContent: `${m.body}\n\n${url}${intended ? `\n\n(Demo: meant for ${intended}, redirected to you.)` : ''}` }) });
       if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
       return { id: m.id, to, ok: true };
     } catch (e) {

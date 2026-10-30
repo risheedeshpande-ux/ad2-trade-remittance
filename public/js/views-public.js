@@ -181,7 +181,7 @@ function obContact(d) {
   return `<div class="fields g2 grid">
     ${fld('contactName','Contact name',d.contactName,{required:true})}
     ${fld('designation','Designation',d.designation,{required:true})}
-    ${fld('email','Email',d.email,{required:true,type:'email'})}
+    ${fld('email','Email',d.email,{required:true,type:'email', hint:'Demo: use any name@mailinator.com to receive AD2’s query emails in a public inbox at mailinator.com.'})}
     ${fld('mobile','Mobile number',d.mobile,{required:true,type:'tel'})}
   </div>
   <h3 style="font-size:var(--fs-md);margin:24px 0 10px">Authorised signatories<span class="req">*</span></h3>

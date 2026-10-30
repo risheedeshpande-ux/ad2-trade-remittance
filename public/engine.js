@@ -2018,10 +2018,10 @@
       incorporationDate: '2017-06-15', regNumber: `U${String(10000 + n)}${prof.state}2017PTC${String(100000 + n * 7)}`, country: 'India',
       address: `Plot ${10 + (n % 80)}, Industrial Area, ${prof.city}`, domainId, ad2Name: 'AD2 Trade Services', category: 'SME',
       pan, gstin: prof.state + pan + '1Z' + String(n % 10), iec: pan,
-      contactName: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`,
+      contactName: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@mailinator.com`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`,
       industry: prof.industry, description: `Test business — ${prof.industry}.`, importVolume: prof.permission === 'Export' ? '' : 'USD 1,500,000',
       exportVolume: prof.permission === 'Import' ? '' : 'USD 1,000,000', countries: ['United States', 'Germany'],
-      signatories: [{ name: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`, authority: 'Singly', limit: null }],
+      signatories: [{ name: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@mailinator.com`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`, authority: 'Singly', limit: null }],
       requestedCurrencies: prof.currencies.slice(), service: prof.permission, source: 'Test data lab', createdBy: 'Test data lab',
       status: approved ? 'Approved' : 'Submitted', pendingWith: approved ? '—' : 'AD2 Maker', submittedAt: now, approvedAt: approved ? now : null,
       docs, config: null, test: true, profile: prof.key };
