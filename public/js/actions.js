@@ -409,6 +409,8 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'ob-bank-del') { DRAFT.banks.splice(+t.dataset.i, 1); render(); return; }
+  if (act === 'ob-sig-add') { DRAFT.signatories.push({ name:'', designation:'', email:'', mobile:'', authority:'Singly', limit:'' }); render(); return; }
+  if (act === 'ob-sig-del') { DRAFT.signatories.splice(+t.dataset.i, 1); render(); return; }
   if (act === 'ob-penny') {
     const b = DRAFT.banks[+t.dataset.i];
     t.disabled = true; t.textContent = 'Verifying…';
@@ -953,18 +955,28 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
 
   /* onboarding review */
   if (act === 'rv-charge-add') {
-    modal({ title:'Add charge', okLabel:'Add', body:`
+    const i = t.dataset.i, c = i != null ? REVIEW.charges[+i] : { name:'', basis:'Fixed', value:500, frequency:'Per transaction' };
+    const opt = (list, v) => list.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('');
+    modal({ title: i != null ? 'Edit charge' : 'Add charge', okLabel: i != null ? 'Save' : 'Add', body:`
       <div class="grid g2 fields">
-        <div class="f"><label for="ch-name">Charge</label><select id="ch-name">${DB.chargeCategories.map(c => `<option>${esc(c.name)}</option>`).join('')}</select></div>
-        <div class="f"><label for="ch-basis">Basis</label><select id="ch-basis"><option>Fixed</option><option>Percentage</option></select></div>
-        <div class="f"><label for="ch-val">Value</label><input id="ch-val" type="number" step="0.01" value="500"></div>
+        <div class="f"><label for="ch-name">Charge</label><select id="ch-name">${opt(DB.chargeCategories.map(x => x.name), c.name)}</select></div>
+        <div class="f"><label for="ch-basis">Basis</label><select id="ch-basis">${opt(['Fixed','Percentage'], c.basis)}</select></div>
+        <div class="f"><label for="ch-val">Value</label><input id="ch-val" type="number" step="0.01" value="${esc(c.value)}"></div>
         <div class="f"><label for="ch-cur">Currency</label><select id="ch-cur"><option>INR</option></select></div>
-        <div class="f span2"><label for="ch-freq">Applied</label><select id="ch-freq"><option>Per transaction</option><option>Per document set</option><option>Monthly</option></select></div>
-      </div>`,
+        <div class="f span2"><label for="ch-freq">Applied</label><select id="ch-freq">${opt(['Per transaction','Per document set','Monthly'], c.frequency)}</select></div>
+      </div>
+      <h3 style="font-size:var(--fs-md);margin:18px 0 6px">SWIFT charge by payment currency (INR)</h3>
+      <p class="hint" style="margin:0 0 10px">For a fixed SWIFT charge only. A blank currency uses the value above.</p>
+      <div class="grid g2 fields">${DB.currencies.map(x => `<div class="f"><label for="ch-bc-${x.code}">${x.code} payments</label>
+        <input id="ch-bc-${x.code}" type="number" min="0" step="0.01" value="${esc(c.byCurrency?.[x.code] ?? '')}"></div>`).join('')}</div>`,
       onOk: () => {
         const v = parseFloat(val('#ch-val'));
         if (isNaN(v) || v < 0) { toast('Enter a value, including zero.', 'err'); return; }
-        REVIEW.charges.push({ name:val('#ch-name'), basis:val('#ch-basis'), value:v, currency:val('#ch-cur'), frequency:val('#ch-freq') });
+        const ch = { name:val('#ch-name'), basis:val('#ch-basis'), value:v, currency:val('#ch-cur'), frequency:val('#ch-freq') };
+        const byCurrency = {};
+        DB.currencies.forEach(x => { const b = val('#ch-bc-' + x.code); if (b !== '') byCurrency[x.code] = Number(b); });
+        if (DB.chargeCategories.find(x => x.name === ch.name)?.id === 'swift' && ch.basis === 'Fixed' && Object.keys(byCurrency).length) ch.byCurrency = byCurrency;
+        i != null ? REVIEW.charges.splice(+i, 1, ch) : REVIEW.charges.push(ch);
         closeModal(); render();
       } });
     return;
@@ -1200,6 +1212,7 @@ document.addEventListener('change', e => {
 
 
   /* registration fields */
+  if (obListField(t)) return;
   if (t.dataset.k) {
     const k = t.dataset.k;
     if (k === 'requestedCurrencies') {
@@ -1381,12 +1394,22 @@ document.addEventListener('input', e => {
     return;
   }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
+  if (obListField(t)) return;
   if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; saveObDraft(); return; }
   if (t.dataset.ork && t.tagName !== 'SELECT') { OR_DRAFT[t.dataset.ork] = t.value; return; }
   if (t.dataset.blk) { BILL_DRAFT[t.dataset.blk] = t.value; return; }
   if (t.dataset.dik && t.tagName !== 'SELECT') { DI_DRAFT[t.dataset.dik] = t.value; return; }
   if (t.dataset.act === 'rv-remarks' && REVIEW) { REVIEW.remarks = t.value; return; }
 });
+
+/* registration list fields: signatory rows and the comma-separated countries */
+function obListField(t) {
+  if (t.dataset.sig) DRAFT.signatories[+t.dataset.sig][t.dataset.f] = t.value;
+  else if (t.dataset.k === 'countries') DRAFT.countries = t.value.split(',').map(x => x.trim()).filter(Boolean);
+  else return false;
+  saveObDraft();
+  return true;
+}
 
 let debounceTimer = null;
 function debounceRender() {

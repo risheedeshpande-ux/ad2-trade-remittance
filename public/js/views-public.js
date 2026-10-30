@@ -67,8 +67,8 @@ function newDraft() {
     legalName:'', tradingName:'', constitution:'', incorporationDate:'', regNumber:'',
     country:'India', address:'', domainId:'', ad2Name:'AD2 Trade Services', category:'SME',
     pan:'', gstin:'', iec:'', contactName:'', designation:'', email:'', mobile:'',
-    industry:'', description:'', expectedVolume:'', requestedCurrencies:[], service:'',
-    banks:[], docs:{}, loginId:'ADMIN', password:'', password2:'',
+    industry:'', description:'', importVolume:'', exportVolume:'', countries:[], requestedCurrencies:[], service:'',
+    signatories:[], banks:[], docs:{}, loginId:'ADMIN', password:'', password2:'',
     offline: isAD2(), step:0,
   };
 }
@@ -183,7 +183,18 @@ function obContact(d) {
     ${fld('designation','Designation',d.designation,{required:true})}
     ${fld('email','Email',d.email,{required:true,type:'email'})}
     ${fld('mobile','Mobile number',d.mobile,{required:true,type:'tel'})}
-  </div>`;
+  </div>
+  <h3 style="font-size:var(--fs-md);margin:24px 0 10px">Authorised signatories<span class="req">*</span></h3>
+  <div class="card" style="box-shadow:none"><div class="tablewrap"><table class="dt">
+    <thead><tr><th>Name</th><th>Designation</th><th>Email</th><th>Mobile</th><th>Signs</th><th>Limit (USD)</th><th></th></tr></thead>
+    <tbody>${d.signatories.length ? d.signatories.map((g, i) => `<tr>
+      ${['name','designation','email','mobile'].map(f => `<td><input class="alloc-in" data-sig="${i}" data-f="${f}" value="${esc(g[f] || '')}" aria-label="Signatory ${i + 1} ${f}"></td>`).join('')}
+      <td><select data-sig="${i}" data-f="authority" aria-label="Signatory ${i + 1} signing authority">${['Singly','Jointly'].map(o => `<option ${g.authority === o ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+      <td><input class="alloc-in" type="number" min="0" data-sig="${i}" data-f="limit" value="${esc(g.limit ?? '')}" placeholder="No limit" aria-label="Signatory ${i + 1} limit"></td>
+      <td><button class="btn btn-link" type="button" data-act="ob-sig-del" data-i="${i}">Remove</button></td></tr>`).join('')
+    : `<tr><td colspan="7"><div class="empty"><h3>No signatories added</h3><p>Add at least one person authorised to sign remittance instructions.</p></div></td></tr>`}</tbody>
+  </table></div></div>
+  <button class="btn btn-ghost" style="margin-top:14px" type="button" data-act="ob-sig-add">Add signatory</button>`;
 }
 function obProfile(d) {
   const curs = DB.currencies.map(c => `
@@ -193,7 +204,9 @@ function obProfile(d) {
     <label><input type="radio" name="svc" data-k="service" value="${s}" ${d.service === s ? 'checked' : ''}> ${s}</label>`).join('');
   return `<div class="fields grid g2">
       ${fld('industry','Industry',d.industry,{required:true})}
-      ${fld('expectedVolume','Expected annual volume',d.expectedVolume,{required:true,ph:'e.g. USD 2,000,000'})}
+      ${fld('importVolume','Expected annual import volume',d.importVolume,{ph:'e.g. USD 1,500,000',hint:'Required for Import or Both.'})}
+      ${fld('exportVolume','Expected annual export volume',d.exportVolume,{ph:'e.g. USD 1,000,000',hint:'Required for Export or Both.'})}
+      ${fld('countries','Countries traded with',d.countries.join(', '),{required:true,ph:'e.g. Germany, Japan, United States',hint:'Separate countries with commas.'})}
       <div class="span2">${fld('description','Business description',d.description,{required:true,type:'textarea'})}</div>
     </div>
     <div style="margin-top:20px">
@@ -240,8 +253,12 @@ function obReview(d) {
     <h3 style="font-size:var(--fs-md);margin:22px 0 10px">Identifiers</h3>
     <div class="kv">${row('PAN',d.pan)}${row('GSTIN',d.gstin)}${row('IEC',d.iec)}</div>
     <h3 style="font-size:var(--fs-md);margin:22px 0 10px">Profile</h3>
-    <div class="kv">${row('Industry',d.industry)}${row('Expected volume',d.expectedVolume)}
-      ${row('Requested currencies',d.requestedCurrencies.join(', '))}${row('Requested service',d.service)}</div>
+    <div class="kv">${row('Industry',d.industry)}${row('Requested service',d.service)}
+      ${row('Expected import volume',d.importVolume)}${row('Expected export volume',d.exportVolume)}
+      ${row('Requested currencies',d.requestedCurrencies.join(', '))}${row('Countries traded with',d.countries.join(', '))}</div>
+    <h3 style="font-size:var(--fs-md);margin:22px 0 10px">Authorised signatories</h3>
+    <div class="kv">${d.signatories.length ? d.signatories.map(g =>
+      row(g.name, `${g.designation} · signs ${String(g.authority).toLowerCase()}${g.limit ? ' up to USD ' + money(+g.limit) : ''}`)).join('') : row('Signatories','None added')}</div>
     <h3 style="font-size:var(--fs-md);margin:22px 0 10px">Bank accounts</h3>
     <div class="kv">${d.banks.length ? d.banks.map(b =>
       row(b.bank, `${b.accountNumber} · ${b.currency}${b.verified ? ' · verified' : ' · unverified'}`)).join('') : row('Accounts','None added')}</div>
@@ -268,7 +285,12 @@ function onboardMissing(d) {
   if (!d.gstin) m.push('GSTIN');
   if (!d.iec) m.push('IEC (mandatory)');
   if (!d.contactName || !d.email || !d.mobile || !d.designation) m.push('contact details');
-  if (!d.industry || !d.description || !d.expectedVolume) m.push('business profile');
+  if (!d.industry || !d.description) m.push('business profile');
+  if (d.service !== 'Export' && !d.importVolume) m.push('expected annual import volume');
+  if (d.service !== 'Import' && !d.exportVolume) m.push('expected annual export volume');
+  if (!d.countries.length) m.push('countries traded with');
+  if (!d.signatories.length) m.push('at least one authorised signatory');
+  else if (d.signatories.some(g => !g.name || !g.designation || !g.email || !g.mobile)) m.push('signatory name, designation, email and mobile');
   if (!d.requestedCurrencies.length) m.push('at least one requested currency');
   if (!d.service) m.push('requested service');
   if (!d.banks.length) m.push('at least one bank account');
@@ -289,7 +311,10 @@ function sampleBusiness() {
     pan:`AAECD${1000 + n}K`.slice(0, 10), gstin:`29AAECD${1000 + n}K1Z${n % 10}`, iec:`07170${10000 + n}`.slice(0, 10),
     contactName:'Anand Kulkarni', designation:'Director — Finance', email:`anand@deccan${n}.example`, mobile:'+91 98450 ' + String(10000 + n * 7).slice(0, 5),
     industry:'Machine tools', description:'Imports CNC tooling and inserts from Germany and Japan; exports precision fixtures to the EU and US.',
-    expectedVolume:'USD 2,500,000', requestedCurrencies:['USD','EUR'], service:'Both',
+    importVolume:'USD 1,500,000', exportVolume:'USD 1,000,000', countries:['Germany','Japan','United States'],
+    requestedCurrencies:['USD','EUR'], service:'Both',
+    signatories:[{ name:'Anand Kulkarni', designation:'Director — Finance', email:`anand@deccan${n}.example`, mobile:'+91 98450 ' + String(10000 + n * 7).slice(0, 5), authority:'Singly', limit:'' },
+                 { name:'Priya Rao', designation:'Finance Controller', email:`priya@deccan${n}.example`, mobile:'+91 98860 ' + String(20000 + n).slice(0, 5), authority:'Jointly', limit:'250000' }],
     banks:[{ bank:'HDFC Bank', branch:'Peenya, Bengaluru', accountNumber:`502000${String(40000000 + n * 1111).slice(0, 8)}`, ifsc:'HDFC0000432', currency:'INR', type:'Current', verified:true }],
     docs:{ coi:file('coi'), pan:file('pan'), gst:file('gst'), iec:file('iec'), addr:file('address') },
   };

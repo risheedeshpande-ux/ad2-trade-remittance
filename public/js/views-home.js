@@ -277,6 +277,10 @@ function viewApplications() {
     </table></div></div></div>`);
 }
 
+/* A fixed charge shows its flat value, then any per-currency SWIFT amounts. */
+const chargeVal = c => c.basis === 'Percentage' ? c.value + '%' : money(c.value) + ' ' + esc(c.currency || 'INR')
+  + (c.byCurrency ? `<br><small>${Object.entries(c.byCurrency).map(([k, v]) => `${esc(k)} ${money(v)}`).join(' · ')}</small>` : '');
+
 function viewApplicationReview(id) {
   const s = sme(id);
   if (!s) return shell(crumb('SME Applications','Not found'), empty('Application not found',''));
@@ -347,6 +351,8 @@ function viewApplicationReview(id) {
 
     ${(s.dupFlags || []).length && !['Approved','Rejected'].includes(s.status) ? `<div class="note note-warn" style="margin-bottom:18px"><span>
       <b>Duplicate check:</b> ${s.dupFlags.map(esc).join('; ')}. Confirm this is a genuine new application before pricing it.</span></div>` : ''}
+    ${(s.riskFlags || []).length && !['Approved','Rejected'].includes(s.status) ? `<div class="note note-warn" style="margin-bottom:18px"><span>
+      <b>Country check:</b> ${s.riskFlags.map(esc).join('; ')}. Apply enhanced due diligence before pricing it.</span></div>` : ''}
     ${s.query ? `<div class="note ${s.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px"><span>
       <b>Clarification:</b> ${esc(s.query.question)} <small>· ${esc(s.query.raisedBy)} · ${dmyt(s.query.raisedAt)}</small>
       ${s.query.response ? `<br><b>Applicant:</b> ${esc(s.query.response)} <small>· ${dmyt(s.query.respondedAt)}</small>` : '<br><i>Awaiting the applicant.</i>'}</span></div>` : ''}
@@ -370,11 +376,22 @@ function viewApplicationReview(id) {
           <div><div class="k">Email</div><div class="v">${esc(s.email)}</div></div>
           <div><div class="k">Mobile</div><div class="v">${esc(s.mobile)}</div></div>
           <div><div class="k">Industry</div><div class="v">${esc(s.industry)}</div></div>
-          <div><div class="k">Expected volume</div><div class="v">${esc(s.expectedVolume)}</div></div>
           <div><div class="k">Requested service</div><div class="v">${esc(s.service)}</div></div>
+          ${s.importVolume || s.exportVolume || !s.expectedVolume ? `
+          <div><div class="k">Expected import volume</div><div class="v">${esc(s.importVolume || '—')}</div></div>
+          <div><div class="k">Expected export volume</div><div class="v">${esc(s.exportVolume || '—')}</div></div>`
+          : `<div><div class="k">Expected volume</div><div class="v">${esc(s.expectedVolume)}</div></div>`}
           <div class="span2"><div class="k">Requested currencies</div><div class="v">${s.requestedCurrencies.join(' · ')}</div></div>
+          <div class="span2"><div class="k">Countries traded with</div><div class="v">${esc((s.countries || []).join(' · ') || '—')}</div></div>
           <div class="span2"><div class="k">Description</div><div class="v">${esc(s.description)}</div></div>
         </div></div></div>
+        <div class="card"><div class="card-head"><h2>Authorised signatories</h2></div><div class="card-body tight">
+          ${(s.signatories || []).length ? `<div class="tablewrap"><table class="dt">
+          <thead><tr><th>Name</th><th>Email / mobile</th><th>Signs</th><th class="num">Limit (USD)</th></tr></thead>
+          <tbody>${s.signatories.map(g => `<tr><td><b>${esc(g.name)}</b><br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(g.designation)}</span></td>
+            <td>${esc(g.email)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(g.mobile)}</span></td>
+            <td>${esc(g.authority)}</td><td class="num">${g.limit ? money(g.limit) : 'No limit'}</td></tr>`).join('')}</tbody>
+          </table></div>` : empty('None recorded', 'This application predates signatory capture. Collect the signatory list by clarification if needed.')}</div></div>
         <div class="card"><div class="card-head"><h2>Bank accounts</h2></div><div class="card-body tight"><div class="tablewrap"><table class="dt">
           <thead><tr><th>Bank</th><th>Account</th><th>IFSC</th><th>Type</th><th>PennyDrop</th></tr></thead>
           <tbody>${smeAccounts(s.id).map(a => `<tr><td>${esc(a.bank)}</td><td>${esc(a.accountNumber)}</td><td>${esc(a.ifsc)}</td>
@@ -417,8 +434,9 @@ function viewApplicationReview(id) {
             ${r.charges.length ? `<div class="tablewrap"><table class="dt">
               <thead><tr><th>Charge</th><th>Basis</th><th class="num">Value</th><th>Applied</th><th></th></tr></thead>
               <tbody>${r.charges.map((c, i) => `<tr><td>${esc(c.name)}</td><td>${esc(c.basis)}</td>
-                <td class="num">${c.basis === 'Percentage' ? c.value + '%' : money(c.value) + ' ' + esc(c.currency || 'INR')}</td><td>${esc(c.frequency)}</td>
-                <td>${editable ? `<button class="btn btn-link" type="button" data-act="rv-charge-del" data-i="${i}">Remove</button>` : ''}</td></tr>`).join('')}</tbody>
+                <td class="num">${chargeVal(c)}</td><td>${esc(c.frequency)}</td>
+                <td>${editable ? `<button class="btn btn-link" type="button" data-act="rv-charge-add" data-i="${i}">Edit</button>
+                  <button class="btn btn-link" type="button" data-act="rv-charge-del" data-i="${i}">Remove</button>` : ''}</td></tr>`).join('')}</tbody>
             </table></div>` : empty('No charges', 'Charges are optional. With none, the customer pays only the FX rate. Add one if you charge a fee.')}
           </div></div>
         <div class="card"><div class="card-head"><h2>Decision</h2></div><div class="card-body">
@@ -524,7 +542,7 @@ function viewProfile() {
         ${c.charges.length ? `<div class="tablewrap"><table class="dt">
           <thead><tr><th>Charge</th><th>Basis</th><th class="num">Value</th><th>Applied</th></tr></thead>
           <tbody>${c.charges.map(ch => `<tr><td>${esc(ch.name)}</td><td>${esc(ch.basis)}</td>
-            <td class="num">${ch.basis === 'Percentage' ? ch.value + '%' : money(ch.value) + ' ' + esc(ch.currency)}</td><td>${esc(ch.frequency)}</td></tr>`).join('')}</tbody>
+            <td class="num">${chargeVal(ch)}</td><td>${esc(ch.frequency)}</td></tr>`).join('')}</tbody>
         </table></div>` : '<p style="color:var(--muted);margin:0">No charges — you pay only the FX rate.</p>'}</div></div>` : ''}`);
 }
 

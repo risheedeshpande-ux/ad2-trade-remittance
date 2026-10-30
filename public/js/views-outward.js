@@ -87,7 +87,7 @@ function availableCurrencies(smeRec) {
 function outwardQuote(d, me) {
   const amt = Number(d.amount) || 0;
   const rate = d.rate.mode === 'none' ? liveRate(me, d.currency, 'out', acting() && isAD2() ? d.marginOverride : null) : d.rate.customerRate;
-  const charges = (me?.config?.charges || []).map(c => ({ name:c.name, amount: c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100 }));
+  const charges = me ? Engine.chargesFor(me, amt, rate, d.currency) : [];
   const inrAmt = d.currency ? amt * rate : 0;
   return { amt, rate, charges, inrAmt, debit: inrAmt + charges.reduce((t, c) => t + c.amount, 0) };
 }

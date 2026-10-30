@@ -52,7 +52,8 @@ test('register, approve, sign in with own password; scoping holds', async () => 
     legalName: 'Tapi River Textiles LLP', constitution: 'Partnership', incorporationDate: '2018-01-01', regNumber: 'AAB-1234',
     address: 'Surat', domainId: 'TAPIRIVER', pan: 'AAFFT1234K', gstin: '24AAFFT1234K1Z2', iec: '0518001122',
     contactName: 'Nirav Shah', designation: 'Partner', email: 'n@tapi.example', mobile: '+91 90000 11111', industry: 'Textiles',
-    description: 'Yarn', expectedVolume: 'USD 1m', requestedCurrencies: ['USD'], service: 'Import',
+    description: 'Yarn', importVolume: 'USD 1m', countries: ['China'], requestedCurrencies: ['USD'], service: 'Import',
+    signatories: [{ name: 'Nirav Shah', designation: 'Partner', email: 'n@tapi.example', mobile: '+91 90000 11111', authority: 'Singly' }],
     banks: [{ bank: 'SBI', accountNumber: '12345678901', ifsc: 'SBIN0001234', currency: 'INR', type: 'Current', verified: true }],
     docs: { coi: doc('a'), pan: doc('b'), gst: doc('c'), iec: doc('d'), addr: doc('e') },
   };

@@ -497,7 +497,8 @@ const SMES = [
       margins:{ USD:50, EUR:60, GBP:68 }, marginBasis:'paise',
       charges:[
         { category:'txn',   name:'Transaction handling fee', basis:'Fixed', value:500, currency:'INR', frequency:'Per transaction' },
-        { category:'swift', name:'SWIFT charge',             basis:'Fixed', value:750, currency:'INR', frequency:'Per transaction' },
+        { category:'swift', name:'SWIFT charge',             basis:'Fixed', value:750, currency:'INR', frequency:'Per transaction',
+          byCurrency:{ USD:1500, EUR:1800, GBP:1700 } },
       ],
       effectiveDate:'2026-07-10', remarks:'Standard SME trade pricing. Reviewed at 12 months.'
     }
@@ -569,7 +570,8 @@ const SMES = [
     contactName:'Ishani Bhattacharya', designation:'Proprietor',
     email:'ishani@ishaniconsulting.example', mobile:'+91 90080 34417',
     industry:'Professional services', description:'Engineering design consultancy billing overseas principals.',
-    expectedVolume:'USD 300,000', requestedCurrencies:['USD','EUR'], service:'Export',
+    exportVolume:'USD 300,000', countries:['Germany','United States'], requestedCurrencies:['USD','EUR'], service:'Export',
+    signatories:[{ name:'Ishani Bhattacharya', designation:'Proprietor', email:'ishani@ishaniconsulting.example', mobile:'+91 90080 34417', authority:'Singly', limit:null }],
     source:'Digital', createdBy:'SME Applicant', status:'Pending Approval',
     submittedAt:'2026-09-18T14:25:00', approvedAt:null, config:null,
     /* prepared by the maker and waiting for a checker */
@@ -588,7 +590,10 @@ const SMES = [
     contactName:'Ramesh Chandran', designation:'Head of Treasury',
     email:'ramesh@calderametals.example', mobile:'+91 99133 88204',
     industry:'Metals and alloys', description:'Aluminium billet importer and semi-finished exporter.',
-    expectedVolume:'USD 7,500,000', requestedCurrencies:['USD','EUR','JPY'], service:'Both',
+    importVolume:'USD 5,000,000', exportVolume:'USD 2,500,000', countries:['Australia','Japan','Germany','United Arab Emirates'],
+    requestedCurrencies:['USD','EUR','JPY'], service:'Both',
+    signatories:[{ name:'Ramesh Chandran', designation:'Head of Treasury', email:'ramesh@calderametals.example', mobile:'+91 99133 88204', authority:'Jointly', limit:1000000 },
+                 { name:'Leela Varghese', designation:'Chief Financial Officer', email:'leela@calderametals.example', mobile:'+91 99133 88219', authority:'Singly', limit:null }],
     source:'Offline', createdBy:'AD2 Maker (R. Iyer)', status:'Submitted',
     submittedAt:'2026-09-20T09:15:00', approvedAt:null, config:null
   },

@@ -148,10 +148,11 @@
   const customerRate = (db, code, marginPaise) =>
     +(((currencyOf(db, code) || {}).refRate ?? 0) + (marginPaise || 0) / 100).toFixed(4);
 
-  function chargesFor(s, amt, rate) {
+  /* A fixed charge may carry an INR amount per payment currency (SWIFT); the flat value covers the rest. */
+  function chargesFor(s, amt, rate, cur) {
     return ((s.config && s.config.charges) || []).map(c => ({
       name: c.name,
-      amount: round2(c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100),
+      amount: round2(c.basis === 'Fixed' ? (c.byCurrency && c.byCurrency[cur] != null ? c.byCurrency[cur] : c.value) : amt * rate * c.value / 100),
     }));
   }
 
@@ -421,9 +422,29 @@
       mobile: txt(app.mobile, 'Mobile number', { max: 20, pattern: /^\+?[0-9 \-]{8,20}$/, patternMsg: 'Enter a valid mobile number.' }),
       industry: txt(app.industry, 'Industry', { max: 100 }),
       description: txt(app.description, 'Business description', { max: 1000 }),
-      expectedVolume: txt(app.expectedVolume, 'Expected annual volume', { max: 60 }),
+      importVolume: txt(app.importVolume, 'Expected annual import volume', { max: 60, required: false }),
+      exportVolume: txt(app.exportVolume, 'Expected annual export volume', { max: 60, required: false }),
       service: oneOf(app.service, ['Import', 'Export', 'Both'], 'Requested service'),
     };
+    need(out.service === 'Export' || out.importVolume, 'Expected annual import volume is required.');
+    need(out.service === 'Import' || out.exportVolume, 'Expected annual export volume is required.');
+    out.countries = [...new Set((Array.isArray(app.countries) ? app.countries : []).map(c => txt(c, 'Country traded', { max: 60, required: false })).filter(Boolean))];
+    need(out.countries.length, 'List at least one country you trade with.');
+    need(out.countries.length <= 30, 'List up to 30 countries.');
+    const sigs = Array.isArray(app.signatories) ? app.signatories.slice(0, 10) : [];
+    need(sigs.length, 'Add at least one authorised signatory.');
+    out.signatories = sigs.map((g, i) => {
+      const L = `Signatory ${i + 1}`, lim = g.limit == null || g.limit === '' ? null : Number(g.limit);
+      need(lim == null || (isFinite(lim) && lim > 0 && lim <= 1e12), `${L} limit must be a positive amount.`);
+      return {
+        name: txt(g.name, L + ' name', { max: 100 }),
+        designation: txt(g.designation, L + ' designation', { max: 80 }),
+        email: txt(g.email, L + ' email', { max: 120, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, patternMsg: `Enter a valid email for ${L.toLowerCase()}.` }),
+        mobile: txt(g.mobile, L + ' mobile', { max: 20, pattern: /^\+?[0-9 \-]{8,20}$/, patternMsg: `Enter a valid mobile number for ${L.toLowerCase()}.` }),
+        authority: oneOf(g.authority, ['Singly', 'Jointly'], L + ' signing authority'),
+        limit: lim == null ? null : round2(lim),
+      };
+    });
     const curs = Array.isArray(app.requestedCurrencies) ? app.requestedCurrencies.filter(c => currencyCodes(db).includes(c)) : [];
     need(curs.length, 'Request at least one currency.');
     out.requestedCurrencies = [...new Set(curs)];
@@ -468,10 +489,13 @@
          blocked: a rejected business may apply again. */
       const dupFlags = db.smes.filter(x => x.pan === app.pan || x.gstin === app.gstin)
         .map(x => `${x.pan === app.pan ? 'PAN' : 'GSTIN'} matches ${x.id} — ${x.tradingName || x.legalName} (${x.status})`);
+      /* countries traded go through the same high-risk jurisdiction rule as payments */
+      const riskFlags = riskScore(db, { countries: app.countries }).flags.map(f => f.detail);
       db.smes.push({ ...rest, id, source: offline ? 'Offline' : 'Digital',
         createdBy: offline ? actorLabel(a) : 'SME Applicant', status: 'Submitted', pendingWith: 'AD2 Maker',
-        submittedAt: ctx.now, approvedAt: null, config: null, ...(dupFlags.length ? { dupFlags } : {}) });
+        submittedAt: ctx.now, approvedAt: null, config: null, ...(dupFlags.length ? { dupFlags } : {}), ...(riskFlags.length ? { riskFlags } : {}) });
       if (dupFlags.length) audit(db, null, ctx.now, id, 'Duplicate check — ' + dupFlags.join('; '), true);
+      if (riskFlags.length) audit(db, null, ctx.now, id, 'Country check — ' + riskFlags.join('; '), true);
       banks.forEach((b, i) => db.accounts.push({ id: nextId(db.accounts, 'BA', 3), smeId: id, holder: app.legalName, ...b,
         verifiedOn: b.verified ? ctx.now : null, primary: i === 0, balance: b.currency === 'INR' ? 25000000 : 50000 }));
       db.logins.push({ domainId: app.domainId, loginId, role: 'SME Applicant', smeId: id, name: app.contactName,
@@ -502,7 +526,14 @@
       if (basis === 'Percentage' && v > 5) fail('A percentage charge cannot exceed 5%.');
       const cat = (db.chargeCategories || []).find(x => x.name === ch.name);
       if (!cat) fail('Choose a charge from the charge master.');
-      return { category: cat.id, name: cat.name, basis, value: round2(v),
+      const byCurrency = {};
+      if (cat.id === 'swift' && basis === 'Fixed') Object.keys(ch.byCurrency || {}).forEach(k => {
+        const x = ch.byCurrency[k];
+        if (!currencyCodes(db).includes(k) || x === null || x === '' || x === undefined) return;
+        if (!isFinite(Number(x)) || Number(x) < 0) fail(`SWIFT charge for ${k} must be zero or more.`);
+        byCurrency[k] = round2(Number(x));
+      });
+      return { category: cat.id, name: cat.name, basis, value: round2(v), ...(Object.keys(byCurrency).length ? { byCurrency } : {}),
                currency: oneOf(ch.currency || 'INR', ['INR', ...currencyCodes(db)], 'Charge currency'),
                frequency: oneOf(ch.frequency || 'Per transaction', ['Per transaction', 'Per document set', 'Monthly'], 'Charge frequency') };
     });
@@ -757,7 +788,7 @@
       o.allocatedTotal = total;
     }
     o.inrAmount = inrAmt;
-    o.charges = chargesFor(s, o.amount, o.rate.customerRate);
+    o.charges = chargesFor(s, o.amount, o.rate.customerRate, o.currency);
     o.debitInr = round2(inrAmt + o.charges.reduce((t, c) => t + c.amount, 0));
     o.risk = riskScore(db, {
       usd: usdEq(db, o.amount, o.currency), purpose: o.purposeCode, deal: o.rate.mode === 'deal',
@@ -1898,7 +1929,9 @@
       address: `Plot ${10 + (n % 80)}, Industrial Area, ${prof.city}`, domainId, ad2Name: 'AD2 Trade Services', category: 'SME',
       pan, gstin: prof.state + pan + '1Z' + String(n % 10), iec: pan,
       contactName: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`,
-      industry: prof.industry, description: `Test business — ${prof.industry}.`, expectedVolume: 'USD 2,500,000',
+      industry: prof.industry, description: `Test business — ${prof.industry}.`, importVolume: prof.permission === 'Export' ? '' : 'USD 1,500,000',
+      exportVolume: prof.permission === 'Import' ? '' : 'USD 1,000,000', countries: ['United States', 'Germany'],
+      signatories: [{ name: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`, authority: 'Singly', limit: null }],
       requestedCurrencies: prof.currencies.slice(), service: prof.permission, source: 'Test data lab', createdBy: 'Test data lab',
       status: approved ? 'Approved' : 'Submitted', pendingWith: approved ? '—' : 'AD2 Maker', submittedAt: now, approvedAt: approved ? now : null,
       docs, config: null, test: true, profile: prof.key };
@@ -1906,7 +1939,8 @@
       const margins = {}; prof.currencies.forEach((c, j) => { margins[c] = Math.round(45 * ((currencyOf(db, c) || {}).marginMultiplier ?? 1)) + j; });
       s.config = { permission: prof.permission, currencies: prof.currencies.slice(), margins, marginBasis: 'paise',
         charges: [{ category: 'txn', name: 'Transaction handling fee', basis: 'Fixed', value: 500, currency: 'INR', frequency: 'Per transaction' },
-                  { category: 'swift', name: 'SWIFT charge', basis: 'Fixed', value: 750, currency: 'INR', frequency: 'Per transaction' }],
+                  { category: 'swift', name: 'SWIFT charge', basis: 'Fixed', value: 750, currency: 'INR', frequency: 'Per transaction',
+                    byCurrency: { USD: 1500, EUR: 1800, GBP: 1700 } }],
         effectiveDate: ymd(now), remarks: 'Test data pricing.' };
       s.approvedBy = labStamp(now, 'approved');
     }
@@ -2136,7 +2170,7 @@
     X.scope(out, db, a, 'trade');
     out.rateDesk = out.rateDesk.filter(r => ['REM', 'INW'].includes(r.product)).map(r => ({ product: r.product, currency: r.currency, status: r.status }));
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
-      delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
+      delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags; delete s.riskFlags;
       if (s.config) {
         delete s.config.remarks;
         const live = smeOf(db, s.id);
