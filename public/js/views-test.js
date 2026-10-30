@@ -389,7 +389,8 @@ function viewTestConsole() {
         treasury issues are applied here, and UTRs and FIRCs conclude the positions and move the Nostro.</p><div class="mt-quicks">${quickTmp}</div></div>
       <div class="card-head" style="border-top:1px solid var(--line)"><h2>Waiting in treasury (${tItems.length})</h2></div>${tTable}</div>
     <div class="card" style="margin-bottom:var(--s5)" id="mt-emails"><div class="card-head"><h2>Emails sent (${(DB.emails || []).length})</h2>
-      <div class="acts"><small style="color:var(--muted)">Simulated — sent to the business’s registered address when AD2 raises a query</small></div></div>
+      <div class="acts"><small style="color:var(--muted)">Sent to the business’s registered address when AD2 raises a query</small>
+        <a class="btn btn-plain btn-sm" href="inbox.html" target="_blank" rel="noopener">Open the demo inbox ↗</a></div></div>
       <div class="tablewrap"><table class="dt"><thead><tr><th>Sent</th><th>To</th><th>Email</th><th></th></tr></thead>
       <tbody>${mail || '<tr><td colspan="4">No emails yet. Raise a query on an application, payment, disposal or bill.</td></tr>'}</tbody></table></div></div>
     <div class="card" style="margin-bottom:var(--s5)"><div class="card-head"><h2>Open the platform as</h2></div>

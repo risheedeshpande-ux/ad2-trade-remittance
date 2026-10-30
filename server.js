@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT || 8130);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.md': 'text/markdown; charset=utf-8',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
-const ROUTES = ['health', 'session', 'state', 'command', 'status', 'reset'];
+const ROUTES = ['health', 'session', 'state', 'command', 'status', 'reset', 'inbox'];
 /* Same security headers as the deployment (vercel.json), so CSP problems show up locally. */
 const HEADERS = (JSON.parse(fs.readFileSync(path.join(__dirname, 'vercel.json'), 'utf8')).headers || [])
   .filter(h => h.source === '/(.*)').flatMap(h => h.headers);

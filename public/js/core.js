@@ -480,6 +480,7 @@ function simBanner() {
     <b>Demo</b>
     <span>${esc(mode)}. Fictional businesses; FX, SWIFT, PennyDrop and document AI are simulated.</span>
     <button type="button" data-act="guide-open">Demo guide</button>
+    <a href="inbox.html" target="_blank" rel="noopener" style="margin-left:var(--s3);color:#7a5c00;font-size:var(--fs-xs);font-weight:600">Demo inbox ↗</a>
     <a href="screens.html" style="margin-left:var(--s3);color:#7a5c00;font-size:var(--fs-xs)">All screens</a>
     <button type="button" data-act="reset-demo" style="margin-left:var(--s3)">Reset demo data</button>
   </div>`;
