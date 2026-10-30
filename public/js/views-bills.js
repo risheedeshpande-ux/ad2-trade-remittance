@@ -46,7 +46,7 @@ function viewBills(type) {
           <th class="num" data-sort>Original</th><th class="num" data-sort>Adjusted</th><th class="num" data-sort>Outstanding</th>
           <th data-sort>Due</th><th data-sort>Source</th><th data-sort>Review</th><th data-sort>Settlement</th><th></th></tr></thead>
         <tbody>${list.length ? list.map(b => `
-          <tr><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}${type === 'All' ? `<td>${esc(b.type)}</td>` : ''}
+          <tr id="query-${esc(b.id)}"><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}${type === 'All' ? `<td>${esc(b.type)}</td>` : ''}
             <td>${esc(b.invoiceNumber)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${dmy(b.invoiceDate)}${b.shipmentRef ? ' · ' + esc(b.shipmentRef) : ''}</span></td>
             <td>${esc(b.counterparty)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(b.counterpartyCountry)}</span></td>
             <td>${esc(b.currency)}</td><td class="num">${money(b.amount)}</td>

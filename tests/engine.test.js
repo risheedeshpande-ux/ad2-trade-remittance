@@ -538,3 +538,37 @@ test('master test user: opens anyone, is audited, holds no authority of its own'
   const mer = Engine.scopeState(db, who('MERIDIANTEX', 'SMEUSER'));
   assert.ok(!mer.audit.some(a => /Master/.test(a.actor)));
 });
+
+test('a query reaches the customer: bell and email, deep-linked, seen only by that customer', () => {
+  const db = Engine.freshState(SEED);
+  const q = run(db, MAKER, 'lab.queue', { smeId: 'SME-1001' }).ids;
+  const bill = db.bills.find(b => b.smeId === 'SME-1001' && ['Submitted', 'Resubmitted', 'Under Review'].includes(b.review))
+    || Object.assign(db.bills.find(b => b.smeId === 'SME-1001'), { review: 'Submitted' });
+  const cases = [
+    [MAKER, 'onboarding.clarify', { smeId: 'SME-1005' }, 'SME-1005', 'SME-1005', '#/sme/dashboard?for=SME-1005&focus=SME-1005'],
+    [MAKER, 'outward.query', { id: q[0] }, 'SME-1001', q[0], `#/sme/outward/${q[0]}?for=SME-1001&focus=${q[0]}`],
+    [MAKER, 'disposal.query', { id: q[3] }, 'SME-1001', q[3], `#/sme/disposals/${q[3]}?for=SME-1001&focus=${q[3]}`],
+    [CHECKER, 'bill.query', { id: bill.id }, 'SME-1001', bill.id, `#/sme/bills/${bill.type.toLowerCase()}?s=query&for=SME-1001&focus=${bill.id}`],
+  ];
+  cases.forEach(([w, cmd, p, smeId, rec, link]) => {
+    run(db, w, cmd, { ...p, question: 'Send the signed invoice' });
+    const n = db.notifications[0], m = db.emails[0];
+    assert.deepEqual([n.toSmeId, n.link], [smeId, link], cmd);
+    assert.deepEqual([m.smeId, m.record, m.link, m.to], [smeId, rec, link, [db.smes.find(s => s.id === smeId).email]], cmd);
+    assert.match(m.body, /Send the signed invoice/);
+  });
+  /* each customer sees only its own; the master sees the whole outbox, the public nothing */
+  const MER = who('MERIDIANTEX', 'SMEUSER'), ARC = who('ARCADIACOMP', 'SMEUSER');
+  const app = db.logins.find(l => l.smeId === 'SME-1005');
+  const mine = Engine.scopeState(db, MER);
+  assert.equal(mine.emails.length, 3);
+  assert.ok(mine.emails.every(m => m.smeId === 'SME-1001') && mine.notifications.every(n => n.toSmeId === 'SME-1001'));
+  const other = Engine.scopeState(db, ARC);
+  assert.ok(!other.emails.length && other.notifications.every(n => n.toSmeId === 'SME-1002'));
+  assert.deepEqual(Engine.scopeState(db, who(app.domainId, app.loginId)).emails.map(m => m.record), ['SME-1005']);
+  assert.equal(Engine.scopeState(db, who('TEST', 'MASTER')).emails.length, 4);
+  assert.equal(Engine.scopeState(db, null).emails.length, 0);
+  /* state stored before the outbox existed */
+  delete db.emails;
+  assert.deepEqual(Engine.scopeState(db, MER).emails, []);
+});

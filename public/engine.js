@@ -266,6 +266,19 @@
                                text, link: link || '', at: now });
     if (db.notifications.length > 400) db.notifications.length = 400;
   }
+  /* AD2 queries the customer: the bell, and an email (simulated, kept in
+     db.emails) to the registered address. Both deep-link to where the
+     customer answers; the browser makes the link absolute. */
+  function queryCustomer(db, now, smeId, rec, path, text, question) {
+    const link = `#${path}${path.includes('?') ? '&' : '?'}for=${encodeURIComponent(smeId)}&focus=${encodeURIComponent(rec)}`;
+    notify(db, now, { toSmeId: smeId, text, link });
+    const s = smeOf(db, smeId);
+    if (!s || !s.email) return;
+    db.emails = db.emails || [];
+    db.emails.unshift({ id: 'EM-' + seq(db, 'email'), smeId, record: rec, to: [s.email], subject: text, link, sentAt: now,
+      body: `Dear ${s.contactName || s.legalName},\n\n${text}:\n\n"${question}"\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services` });
+    if (db.emails.length > 400) db.emails.length = 400;
+  }
 
   /* ---------- bill reservation ------------------------------------------- */
   const OPEN = ['Submitted', 'Verified', 'Authorised', 'Clarification Required'];
@@ -588,7 +601,7 @@
       s.status = 'Clarification Required'; s.pendingWith = 'SME';
       s.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null };
       audit(db, a, ctx.now, s.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: s.id, text: `AD2 needs more information on application ${s.id}`, link: '#/sme/dashboard' });
+      queryCustomer(db, ctx.now, s.id, s.id, '/sme/dashboard', `AD2 needs more information on application ${s.id}`, q);
       return { message: 'Clarification sent to the applicant.' };
     },
   };
@@ -931,7 +944,7 @@
       o.status = 'Clarification Required'; o.pendingWith = 'SME';
       if (o.wf) delete o.wf.verified;
       audit(db, a, ctx.now, o.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: o.smeId, text: `AD2 has a query on ${o.id}`, link: '#/sme/outward/' + o.id });
+      queryCustomer(db, ctx.now, o.smeId, o.id, '/sme/outward/' + o.id, `AD2 has a query on ${o.id}`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1272,7 +1285,7 @@
       d.status = 'Clarification Required'; d.pendingWith = 'SME';
       delete d.wf.verified;
       audit(db, a, ctx.now, d.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: d.smeId, text: `AD2 has a query on disposal ${d.id}`, link: '#/sme/disposals/' + d.id });
+      queryCustomer(db, ctx.now, d.smeId, d.id, '/sme/disposals/' + d.id, `AD2 has a query on disposal ${d.id}`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1423,7 +1436,7 @@
       const q = txt(p.question, 'Query', { max: 500 });
       b.review = 'Query Raised'; b.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now };
       audit(db, a, ctx.now, b.id, 'Query raised: ' + q);
-      notify(db, ctx.now, { toSmeId: b.smeId, text: `Query on bill ${b.id}: ${q}`, link: '#/sme/bills/' + b.type.toLowerCase() });
+      queryCustomer(db, ctx.now, b.smeId, b.id, `/sme/bills/${b.type.toLowerCase()}?s=query`, `AD2 has a query on bill ${b.id} (${b.invoiceNumber})`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -2078,7 +2091,7 @@
     tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
     'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings'];
-  const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications'];
+  const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications', 'emails'];
 
   function scopeState(db, who) {
     const out = {};
@@ -2149,7 +2162,7 @@
       }
       return s;
     });
-    ['accounts', 'beneficiaries', 'bills', 'inward', 'allocations', 'jobs'].forEach(k => { out[k] = clone((db[k] || []).filter(mine)); });
+    ['accounts', 'beneficiaries', 'bills', 'inward', 'allocations', 'jobs', 'emails'].forEach(k => { out[k] = clone((db[k] || []).filter(mine)); });
     out.outward = clone(db.outward.filter(mine)).map(strip);
     out.disposals = clone(db.disposals.filter(mine)).map(strip);
     const ids = new Set([sid, ...out.outward.map(x => x.id), ...out.inward.map(x => x.id), ...out.disposals.map(x => x.id),
