@@ -48,23 +48,28 @@ npm run test:e2e     # the guided journey in a real browser across both portals,
 npm run test:qa      # 45 journeys across every role and product in both portals; writes qa-report.md (see tests/qa.js)
 ```
 
-## Query emails (real, through Gmail)
+## Query emails and the demo inbox
 
 When AD2 raises a query (application, payment, disposal or bill) it can ask for documents — ticked from the item's
-checklist or named in free text — and the customer must upload them to answer. Every query rings the bell and queues an
+checklist or named in free text — and the customer must upload them to answer. Every query rings the bell and sends an
 email with a deep link; the link goes through sign-in straight to the answer.
 
-Emails are simulated (see **Emails sent** in the test console) until Gmail is configured:
+**The demo inbox** (`/inbox.html`, or **Demo inbox ↗** in the yellow bar) shows those emails as they arrive, like a
+mail app. To demo the journey: raise a query as AD2, switch to the inbox tab, open the email, click **Sign in and
+respond**, sign in as the customer and upload. It needs no setup and is off when Test tools are switched off.
+
+**Real email is optional**, through [Resend](https://resend.com) (one API key, free tier):
 
 | Variable | What |
 |---|---|
-| `GMAIL_USER` | the Gmail address that sends |
-| `GMAIL_APP_PASSWORD` | a Google [app password](https://myaccount.google.com/apppasswords) for it (needs 2-Step Verification) |
-| `DEMO_EMAIL_TO` | optional — where redirected mail goes; defaults to `GMAIL_USER` |
+| `RESEND_API_KEY` | the Resend API key |
+| `DEMO_EMAIL_TO` | where mail goes — use the address you signed up to Resend with |
 | `EMAIL_ALLOW` | optional — comma-separated addresses that may receive mail directly |
+| `EMAIL_FROM` | optional — sender, once you have verified a domain in Resend (default `onboarding@resend.dev`) |
 
-The demo is public, so mail reaches a customer's own address only if it is in `EMAIL_ALLOW`; everything else is
-redirected to `DEMO_EMAIL_TO` and says who it was meant for. `/api/health` reports `"email": true` once configured.
+The demo is public, so mail reaches a customer's own address only if it is in `EMAIL_ALLOW`; everything else goes to
+`DEMO_EMAIL_TO` and says who it was meant for. Until a domain is verified, Resend only delivers to your own sign-up
+address. `/api/health` reports `"email": true` once configured.
 
 ## Workspaces
 

@@ -13,8 +13,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@vercel/blob": "^2.8.0",
-    "nodemailer": "^6.10.1"
+    "@vercel/blob": "^2.8.0"
   },
   "devDependencies": {
     "playwright": "^1.63.0"

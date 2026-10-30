@@ -7,6 +7,7 @@
      GET  /api/state[?since=rev]       the caller's view of the platform
      POST /api/command                 { cmd, payload } -> run one engine command
      GET  /api/status?app=&domain=     public application tracker
+     GET  /api/inbox                   the demo inbox: recent query emails
      POST /api/reset                   { passcode } -> reseed the demo            */
 'use strict';
 const Engine = require('../public/engine.js');
@@ -153,6 +154,15 @@ async function handle({ method, route, query, headers, body, ip }) {
       return json(200, { token: auth.issueToken(login), user: publicUser(state, login) });
     }
 
+    /* The demo inbox: every query email, for the presenter to open on screen
+       like a mail app. Fictional data only; off when Test tools are off. */
+    if (route === 'inbox' && method === 'GET') {
+      const { state } = await readState();
+      if (state.settings && state.settings.testLab === false) return json(404, { error: 'The demo inbox is switched off in Administration → Settings (Test tools).', code: 'not_found' });
+      const emails = (state.emails || []).slice(0, 50).map(m => ({ id: m.id, to: m.to, subject: m.subject, body: m.body, docs: m.docs || [], link: m.link, sentAt: m.sentAt }));
+      return json(200, { emails, real: Mail.enabled() });
+    }
+
     if (route === 'state' && method === 'GET') {
       const w = who(headers);
       if (!w.ok) return json(401, { error: 'Your session has expired. Sign in again.', code: 'auth' });
@@ -183,10 +193,11 @@ async function handle({ method, route, query, headers, body, ip }) {
       if (!out) return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
       const { next, result } = out;
       const sent = await Mail.send(out.mail, headers);
-      if (sent.length && result && typeof result === 'object') {
+      if (out.mail.length && result && typeof result === 'object') {
         const ok = sent.filter(x => x.ok);
-        result.emailed = sent;
-        result.message = (result.message || '') + (ok.length ? ` Email sent to ${[...new Set(ok.map(x => x.to))].join(', ')}.` : ' The email could not be sent.');
+        if (sent.length) result.emailed = sent;
+        result.message = (result.message || '') + (ok.length ? ` Email sent to ${[...new Set(ok.map(x => x.to))].join(', ')} — also in the demo inbox.`
+          : sent.length ? ' The email could not be sent; it is in the demo inbox.' : ' The email is in the demo inbox.');
       }
       return json(200, { ok: true, result, rev: next.rev, epoch: next.epoch, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
     }

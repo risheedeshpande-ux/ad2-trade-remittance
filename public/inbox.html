@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<title>Demo inbox</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=18">
+<style>
+  body{background:#eef1f4;margin:0}
+  .ib-top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--r4m-secondary-500);color:#fff}
+  .ib-top b{font-size:var(--fs-lg)} .ib-top span{font-size:var(--fs-sm);opacity:.75}
+  .ib-top .ib-live{margin-left:auto;font-size:var(--fs-xs);display:flex;align-items:center;gap:6px}
+  .ib-live i{width:8px;height:8px;border-radius:50%;background:#34d399;display:inline-block}
+  .ib{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 50px)}
+  .ib-list{background:#fff;border-right:1px solid var(--r4m-border);overflow-y:auto}
+  .ib-item{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--r4m-border);background:#fff;padding:12px 16px;cursor:pointer;font:inherit;color:var(--ink)}
+  .ib-item:hover{background:var(--surface-alt)} .ib-item.on{background:var(--r4m-primary-50)}
+  .ib-item .r1{display:flex;justify-content:space-between;gap:8px;font-size:var(--fs-sm);color:var(--muted)}
+  .ib-item .s{font-size:var(--fs-md);margin:3px 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ib-item .p{font-size:var(--fs-sm);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ib-item.unread .s{font-weight:600} .ib-item.unread .r1 b{color:var(--r4m-primary-600)}
+  .ib-item.new{animation:ibnew 2.4s ease-out}
+  @keyframes ibnew{from{background:#fef3c7}to{background:#fff}}
+  .ib-msg{overflow-y:auto;padding:28px}
+  .ib-paper{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);max-width:680px;margin:0 auto;padding:28px 32px}
+  .ib-paper h1{font-size:var(--fs-xl);margin:0 0 14px}
+  .ib-meta{font-size:var(--fs-sm);color:var(--muted);border-bottom:1px solid var(--r4m-border);padding-bottom:14px;margin-bottom:18px;line-height:1.7}
+  .ib-meta b{color:var(--ink)}
+  .ib-body p{margin:0 0 10px;font-size:var(--fs-md);line-height:1.55}
+  .ib-body ul{margin:0 0 14px;padding-left:20px;font-size:var(--fs-md)}
+  .ib-cta{display:inline-block;background:var(--r4m-primary-500);color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;margin:10px 0 8px}
+  .ib-cta:hover{background:var(--r4m-primary-600)}
+  .ib-hint{font-size:var(--fs-xs);color:var(--muted)}
+  .ib-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:var(--fs-md)}
+  @media (max-width:760px){.ib{grid-template-columns:1fr;height:auto}.ib-list{max-height:40vh}.ib-msg{padding:14px}.ib-paper{padding:20px}}
+</style>
+</head>
+<body>
+<div class="ib-top"><b>Demo inbox</b><span>Every email the platform sends when AD2 raises a query</span>
+  <div class="ib-live"><i></i><span id="ib-status">Live</span></div></div>
+<div class="ib">
+  <nav class="ib-list" id="ib-list" aria-label="Emails"><p class="ib-empty">Loading…</p></nav>
+  <main class="ib-msg" id="ib-msg"></main>
+</div>
+<script src="inbox.js?v=18"></script>
+</body>
+</html>
