@@ -1235,7 +1235,7 @@ document.addEventListener('change', e => {
     if (k === 'amount') {
       OR_DRAFT.amountFromBills = false;
       const placed = OR_DRAFT.allocations.reduce((s2, a) => s2 + a.amount, 0);
-      if (Number(t.value) + 0.001 < placed) toast(`The bills you chose add up to ${money(placed, OR_DRAFT.currency)}. Lower a bill amount or remove one.`, 'err');
+      if (placed && Math.abs(Number(t.value) - placed) > 0.001) toast(`The bills you chose add up to ${money(placed, OR_DRAFT.currency)} — the amount must equal them. Change a bill amount, or add or remove a bill.`, 'err');
       rebookIfChanged(OR_DRAFT, t.value);
     }
     if (['currency','amount','debitAccountId','executionDate'].includes(k)) render();
@@ -1244,7 +1244,7 @@ document.addEventListener('change', e => {
   if (t.dataset.act === 'or-billpick' && t.value) {
     const d = OR_DRAFT, b = bill(t.value);
     if (!d.currency) d.currency = b.currency;
-    if (d.currency !== b.currency) { toast(`${b.id} is in ${b.currency}; this payment is in ${d.currency}.`, 'err'); render(); return; }
+    if (d.currency !== b.currency) { toast(`${b.id} is in ${b.currency}; this payment is in ${d.currency}. Settling a bill in another currency is not supported yet — pay it in ${b.currency}.`, 'err'); render(); return; }
     const free = Engine.billAvailable(DB, b, d.id);
     const placed = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
     const room = d.amountFromBills || !(Number(d.amount) > 0) ? free : Number(d.amount) - placed;
@@ -1289,6 +1289,7 @@ document.addEventListener('change', e => {
     return;
   }
   if (t.dataset.act === 'di-dec') { DI_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
+  if (t.dataset.act === 'or-billcur') { OR_DRAFT.billsAllCur = t.checked; render(); return; }
   if (t.dataset.act === 'or-dec') { OR_DRAFT.declarations = OR_DRAFT.declarations || {}; OR_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
   if (t.dataset.act === 'di-margin') { DI_DRAFT.marginOverride = t.value; render(); return; }
   if (t.dataset.act === 'or-margin') { OR_DRAFT.marginOverride = t.value; render(); return; }

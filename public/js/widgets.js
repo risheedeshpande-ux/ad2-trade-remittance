@@ -119,11 +119,12 @@ function heldBy(b, exclude) {
   const ko = DB.allocations.filter(l => l.status === 'Proposed' && l.billId === b.id).map(l => l.id);
   return [...out, ...dis, ...ko];
 }
-function billPickerHTML({ prefix, pool, chosen, currency: cur, party, exclude, cap }) {
+function billPickerHTML({ prefix, pool, chosen, currency: cur, party, exclude, cap, allCur }) {
   const avail = b => Engine.billAvailable(DB, b, exclude);
-  const open = pool.filter(b => !chosen.some(a => a.billId === b.id) && (!cur || b.currency === cur) && avail(b) > 0)
-    .sort((a, b) => (b.counterparty === party) - (a.counterparty === party) || new Date(a.dueDate) - new Date(b.dueDate));
-  const held = pool.filter(b => !chosen.some(a => a.billId === b.id) && (!cur || b.currency === cur) && avail(b) <= 0 && b.outstanding > 0);
+  const inCur = b => !cur || allCur || b.currency === cur;
+  const open = pool.filter(b => !chosen.some(a => a.billId === b.id) && inCur(b) && avail(b) > 0)
+    .sort((a, b) => (b.currency === cur) - (a.currency === cur) || (b.counterparty === party) - (a.counterparty === party) || new Date(a.dueDate) - new Date(b.dueDate));
+  const held = pool.filter(b => !chosen.some(a => a.billId === b.id) && inCur(b) && avail(b) <= 0 && b.outstanding > 0);
   const total = chosen.reduce((t, a) => t + a.amount, 0);
   const rows = chosen.map(a => {
     const b = bill(a.billId); if (!b) return '';
@@ -144,7 +145,7 @@ function billPickerHTML({ prefix, pool, chosen, currency: cur, party, exclude, c
       <tfoot><tr><td colspan="4">Total against bills</td><td class="num">${money(total, cur || '')}</td></tr></tfoot></table></div>` : ''}
     <div class="f" style="max-width:720px"><label for="${prefix}-billpick">${chosen.length ? 'Add another bill' : 'Choose a bill'}</label>
       <select id="${prefix}-billpick" data-act="${prefix}-billpick" ${open.length ? '' : 'disabled'}>
-        <option value="">${open.length ? `Select from ${plural(open.length, 'bill')} with money free${cur ? ' in ' + cur : ''}…` : 'No bill has money free' + (cur ? ' in ' + cur : '')}</option>
+        <option value="">${open.length ? `Select from ${plural(open.length, 'bill')} with money free${cur && !allCur ? ' in ' + cur : ''}…` : 'No bill has money free' + (cur ? ' in ' + cur : '')}</option>
         ${open.map(b => `<option value="${b.id}">${esc(billOptionLabel(b, avail(b)))}</option>`).join('')}</select>
       <div class="hint">${cap != null && cap > 0 ? `Picking a bill fills in what it can take, up to ${money(Math.max(0, cap - total), cur || '')} still to place.` : 'Picking a bill fills in the amount free on it — change it if you are paying part.'}
         ${held.length ? `<br>${plural(held.length, 'bill')} fully held by requests already in progress: ${held.map(b => `${esc(b.id)} (${esc(heldBy(b, exclude).join(', '))})`).join('; ')}.` : ''}</div></div>`;

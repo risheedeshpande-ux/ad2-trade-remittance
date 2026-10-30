@@ -108,8 +108,7 @@ test('end to end: onboard a partner, pay a supplier, dispose export proceeds', (
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, declarations: {}, docs: { ...draft.docs, boe: doc('boe') } } }), /declarations/);
   refuses(() => run(db, SME, 'outward.submit', { draft }), /Bill of Entry/);
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, purposeCode: 'S1006', docs: { ...draft.docs, boe: doc('boe') } } }), /not available under DIR/);
-  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, allocations: [], docs: { ...draft.docs, boe: doc('boe') } } }), /import bill/);
-  /* a booking made three days ago has run past its 48-hour lock */
+  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, allocations: [], docs: { ...draft.docs, boe: doc('boe') } } }), /import bill/);  /* a booking made three days ago has run past its 48-hour lock */
   const stale = run(db, SME, 'rate.book', { dir: 'out', currency: 'EUR', amount: 40000 }, { now: '2026-09-21T09:00:00.000Z' }).positionId;
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, rate: { mode: 'booked', positionId: stale }, docs: { ...draft.docs, boe: doc('boe') } } }), /expired/);
   const orId = run(db, SME, 'outward.submit', { draft: { ...draft, docs: { ...draft.docs, boe: doc('boe') } } }).id;
@@ -537,4 +536,22 @@ test('master test user: opens anyone, is audited, holds no authority of its own'
   /* a business sees no trace of the master in its own view */
   const mer = Engine.scopeState(db, who('MERIDIANTEX', 'SMEUSER'));
   assert.ok(!mer.audit.some(a => /Master/.test(a.actor)));
+});
+
+test('outward: with bills chosen, the amount must equal their total; a bill in another currency is refused', () => {
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const draft = over => ({ beneficiaryId: 'BEN-001', beneficiary: 'Filatura Ponti S.p.A.', beneficiaryCountry: 'Italy',
+    beneficiaryAccount: 'IT60X0542811101000000123456', beneficiaryBank: 'Intesa Sanpaolo', beneficiaryBankCountry: 'Italy', swift: 'BCITITMM',
+    currency: 'EUR', amount: 45000, remittanceType: 'DIR', purposeCode: 'S0102', executionDate: '2026-09-25', debitAccountId: 'BA-001',
+    rate: { mode: 'booked', bookedAt: NOW }, allocations: [{ billId: 'BL-24014', amount: 45000 }],
+    docs: { transport: doc('t'), invoice: doc('i'), boe: doc('b') }, declarations: DEC, ...over });
+  const submit = over => run(Engine.freshState(SEED, NOW), MER, 'outward.submit', { draft: draft(over) });
+  refuses(() => submit({ amount: 50000 }), /must equal their total/);
+  refuses(() => submit({ amount: 40000 }), /exceed/);
+  refuses(() => submit({ currency: 'USD' }), /another currency is not supported/);
+  assert.ok(submit({}).id);
+  /* OTT: bills optional — none is fine, but a part-allocation is not */
+  const ott = { remittanceType: 'OTT', purposeCode: 'S1006', docs: { invoice: doc('i'), form145: doc('f'), form146: doc('g') } };
+  assert.ok(submit({ ...ott, allocations: [] }).id);
+  refuses(() => submit({ ...ott, amount: 50000 }), /must equal their total/);
 });
