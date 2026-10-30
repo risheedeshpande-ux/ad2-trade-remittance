@@ -635,3 +635,37 @@ test('outward: with bills chosen, the amount must equal their total; a bill in a
   assert.ok(submit({ ...ott, allocations: [] }).id);
   refuses(() => submit({ ...ott, amount: 50000 }), /must equal their total/);
 });
+
+test('a query can ask for documents; the answer must carry them, and may add more', () => {
+  const db = Engine.freshState(SEED);
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  /* onboarding: ticked from the onboarding list, plus a named one */
+  run(db, MAKER, 'onboarding.clarify', { smeId: 'SME-1005', question: 'Send these', requestDocs: ['pan', 'nope'], otherDocs: ['Board resolution', ' '] });
+  const s = db.smes.find(x => x.id === 'SME-1005');
+  assert.deepEqual(s.query.docs.map(d => d.id), ['pan', 'other1']);
+  assert.deepEqual(db.emails[0].docs, ['PAN card', 'Board resolution']);
+  assert.match(db.emails[0].body, /Documents requested:\n  - PAN card\n  - Board resolution/);
+  const app = db.logins.find(l => l.smeId === 'SME-1005'), APP = who(app.domainId, app.loginId);
+  refuses(() => run(db, APP, 'onboarding.respond', { response: 'Here', docs: { pan: doc('pan') } }), /Board resolution/);
+  run(db, APP, 'onboarding.respond', { response: 'Here', docs: { pan: doc('pan2'), other1: doc('br'), extra1: doc('x'), junk: doc('j') } });
+  assert.equal(s.docs.pan.filename, 'pan2.pdf');
+  assert.ok(!s.docs.other1 && !s.docs.junk, 'only checklist documents join the record');
+  assert.deepEqual(Object.values(s.query.received).map(f => f.name), ['PAN card', 'Board resolution', 'Additional document']);
+  /* outward: the payment's own checklist */
+  const id = run(db, MAKER, 'lab.queue', { smeId: 'SME-1001' }).ids[0];
+  const o = db.outward.find(x => x.id === id);
+  const first = Engine.checklist(db, o.remittanceType, o.purposeCode, o.inrAmount)[0];
+  run(db, MAKER, 'outward.query', { id, question: 'Corrected invoice', requestDocs: [first.id] });
+  refuses(() => run(db, MER, 'outward.respond', { id, response: 'Done' }), new RegExp(first.name));
+  run(db, MER, 'outward.respond', { id, response: 'Done', docs: { [first.id]: doc('new') } });
+  assert.equal(o.docs[first.id].filename, 'new.pdf');
+  assert.equal(o.status, 'Submitted');
+  /* bills have no checklist: only named documents, answered by the customer */
+  const b = Object.assign(db.bills.find(x => x.smeId === 'SME-1001'), { review: 'Submitted' });
+  run(db, CHECKER, 'bill.query', { id: b.id, question: 'Bill of Entry?', requestDocs: ['pan'], otherDocs: ['Bill of Entry'] });
+  assert.deepEqual(b.query.docs, [{ id: 'other1', name: 'Bill of Entry' }]);
+  refuses(() => run(db, MER, 'bill.respond', { id: b.id, response: 'Attached' }), /Bill of Entry/);
+  run(db, MER, 'bill.respond', { id: b.id, response: 'Attached', docs: { other1: doc('boe') } });
+  assert.equal(b.review, 'Resubmitted');
+  assert.equal(b.query.received.other1.name, 'Bill of Entry');
+});

@@ -97,6 +97,7 @@ function applicantHome(me) {
   const steps = [['Submitted','Application received'],['Review and pricing','AD2 maker reviews and prices'],['Compliance approval','AD2 Compliance approves'],['Live','Trade services open']];
   const at = { 'Submitted':1, 'Under Review':1, 'Clarification Required':1, 'Pending Approval':2, 'Approved':3, 'Rejected':-1 }[me.status] ?? 0;
   const open = me.status === 'Clarification Required' && me.query;
+  if (open && (!RESP || RESP.id !== me.id)) RESP = { id:me.id, text:'', docs:{} };
   const where = { 'Submitted':'An AD2 maker picks it up next, checks your documents and prepares your pricing.',
     'Under Review':'An AD2 maker is reviewing your documents and preparing your pricing.',
     'Clarification Required':'AD2 needs something from you before it can continue — answer below.',
@@ -110,14 +111,9 @@ function applicantHome(me) {
         <div class="wf-dot">${i < at ? '✓' : i + 1}</div><div class="wf-txt"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></div></div>`).join('')}</div>
       ${where ? `<p style="margin:16px 0 0;font-size:var(--fs-md)"><b>Where it is now:</b> ${esc(where)}</p>` : ''}</div></div>
     ${me.status === 'Rejected' ? `<div class="note note-err"><span>This application was not approved. ${esc(me.rejectReason || '')}</span></div>` : ''}
-    ${open ? `<div class="card" id="query-${esc(me.id)}" style="margin-bottom:18px"><div class="card-head"><h2>AD2 needs more information</h2></div><div class="card-body">
-        <div class="note note-warn" style="margin-bottom:14px"><span>${esc(me.query.question)}<br><small>${esc(me.query.raisedBy)} · ${dmyt(me.query.raisedAt)}</small></span></div>
-        <div class="grid g2 fields">
-          <div class="f span2"><label for="ap-resp">Your response<span class="req">*</span></label><textarea id="ap-resp"></textarea></div>
-          ${!me.iec ? `<div class="f"><label for="ap-iec">IEC</label><input id="ap-iec" type="text" placeholder="10 characters"></div>` : ''}
-        </div>
-        <p style="font-size:var(--fs-sm);color:var(--muted);margin:12px 0 0">Sending it returns the application to the AD2 maker, who continues the review.</p>
-        <button class="btn btn-primary" style="margin-top:14px" type="button" data-act="ob-respond">Send response</button></div></div>` : ''}
+    ${open ? `<div class="note note-warn" style="margin-bottom:14px"><span><b>AD2 needs more information:</b> ${esc(me.query.question)}<br><small>${esc(me.query.raisedBy)} · ${dmyt(me.query.raisedAt)}</small></span></div>
+      ${queryResponseCard(false, DB.onboardDocs || [], me.docs, 'ob-respond', me.id, me.query,
+        !me.iec ? `<div class="f" style="margin-top:12px;max-width:260px"><label for="ap-iec">IEC</label><input id="ap-iec" type="text" placeholder="10 characters"></div>` : '')}` : ''}
     ${me.query && me.query.response && !open ? `<div class="note note-info" style="margin-bottom:18px"><span><b>Your last answer:</b> ${esc(me.query.response)} <small>· ${dmyt(me.query.respondedAt)}</small></span></div>` : ''}
     <div class="card"><div class="card-head"><h2>History</h2></div><div class="card-body">${timeline(me.id)}</div></div>`;
 }
@@ -355,7 +351,7 @@ function viewApplicationReview(id) {
       <b>Country check:</b> ${s.riskFlags.map(esc).join('; ')}. Apply enhanced due diligence before pricing it.</span></div>` : ''}
     ${s.query ? `<div class="note ${s.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px"><span>
       <b>Clarification:</b> ${esc(s.query.question)} <small>· ${esc(s.query.raisedBy)} · ${dmyt(s.query.raisedAt)}</small>
-      ${s.query.response ? `<br><b>Applicant:</b> ${esc(s.query.response)} <small>· ${dmyt(s.query.respondedAt)}</small>` : '<br><i>Awaiting the applicant.</i>'}</span></div>` : ''}
+      ${s.query.response ? `<br><b>Applicant:</b> ${esc(s.query.response)} <small>· ${dmyt(s.query.respondedAt)}</small>` : '<br><i>Awaiting the applicant.</i>'}${queryDocsNote(s.query)}</span></div>` : ''}
 
     <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start">
       <div class="grid" style="gap:20px">

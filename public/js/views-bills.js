@@ -35,8 +35,18 @@ function viewBills(type) {
     return out.join(' ');
   };
 
+  /* a bill query is answered inline, with documents — opened by Respond or by the email link */
+  const focusId = new URLSearchParams(location.hash.split('?')[1] || '').get('focus');
+  const qb = DB.bills.find(b => b.review === 'Query Raised' && (RESP?.id === b.id || b.id === focusId) && (!scoped() || b.smeId === ctxSmeId())
+    && (asSme() ? can('bills.lodge') : ad2 && can('txn.resolveQuery')));
+  if (qb && (!RESP || RESP.id !== qb.id)) RESP = { id:qb.id, text:'', docs:{} };
+  const qcard = !qb ? '' : `<div style="padding:16px 16px 0">
+      <div class="note note-warn" style="margin-bottom:14px"><span><b>Query on ${esc(qb.id)} (${esc(qb.invoiceNumber)}):</b> ${esc(qb.query?.question || '')}<br><small>${esc(qb.query?.raisedBy || '')} · ${dmyt(qb.query?.raisedAt)}</small></span></div>
+      ${queryResponseCard(ad2, [], qb.docs, ad2 ? 'bill-resolve-send' : 'bill-send', qb.id, qb.query,
+        `<div class="f" style="margin-top:12px;max-width:320px"><label for="br-ref">${qb.type === 'Export' ? 'Shipping bill' : 'Bill of Entry'} number</label><input id="br-ref" type="text" value="${esc(qb.shipmentRef || '')}"></div>`)}</div>`;
+
   const panes = {
-    register: `<div class="toolbar">
+    register: `${qcard}<div class="toolbar">
         <div class="seg-mini">${['All','To accept','With customer'].map(k => `<button type="button" data-act="bill-review" data-t="${k}" aria-pressed="${billReview === k}">${k} <span>${counts[k]}</span></button>`).join('')}</div>
         <input type="search" placeholder="Search bill, invoice, counterparty or reference" value="${esc(billSearch)}" data-act="bill-search" aria-label="Search bills">
         <div class="spacer"></div>
@@ -46,13 +56,13 @@ function viewBills(type) {
           <th class="num" data-sort>Original</th><th class="num" data-sort>Adjusted</th><th class="num" data-sort>Outstanding</th>
           <th data-sort>Due</th><th data-sort>Source</th><th data-sort>Review</th><th data-sort>Settlement</th><th></th></tr></thead>
         <tbody>${list.length ? list.map(b => `
-          <tr id="query-${esc(b.id)}"><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}${type === 'All' ? `<td>${esc(b.type)}</td>` : ''}
+          <tr id="bill-${esc(b.id)}"><td class="id">${esc(b.id)}</td>${ad2 ? `<td>${esc(sme(b.smeId)?.tradingName || '')}</td>` : ''}${type === 'All' ? `<td>${esc(b.type)}</td>` : ''}
             <td>${esc(b.invoiceNumber)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${dmy(b.invoiceDate)}${b.shipmentRef ? ' · ' + esc(b.shipmentRef) : ''}</span></td>
             <td>${esc(b.counterparty)}<br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(b.counterpartyCountry)}</span></td>
             <td>${esc(b.currency)}</td><td class="num">${money(b.amount)}</td>
             <td class="num">${money(b.adjusted)}</td><td class="num"><b>${money(b.outstanding)}</b></td>
             <td data-v="${esc(b.dueDate)}">${dmy(b.dueDate)}</td><td>${esc(b.source)}</td>
-            <td>${badge(b.review)}${b.query && b.review === 'Query Raised' ? `<br><small style="color:var(--muted)">${esc(b.query.question)}</small>` : ''}</td>
+            <td>${badge(b.review)}${b.query && b.review === 'Query Raised' ? `<br><small style="color:var(--muted)">${esc(b.query.question)}</small>` : ''}${ad2 && b.query && b.review !== 'Query Raised' && b.query.received ? `<br><small style="color:var(--muted)">${plural(Object.keys(b.query.received).length, 'document')} received with the answer</small>` : ''}</td>
             <td>${badge(b.settlement)}${(b.ufi || []).length ? `<br><small style="color:var(--muted)" title="${esc(b.ufi.join(', '))}">${b.type === 'Export' ? 'EDPMS' : 'IDPMS'} · ${plural(b.ufi.length, 'report')}</small>` : ''}</td>
             <td style="white-space:nowrap">${rowActions(b)}</td></tr>`).join('')
           : `<tr><td colspan="14">${empty(billReview === 'To accept' ? 'Nothing to accept' : 'No bills', billReview === 'To accept' ? 'Every lodged bill has been reviewed.' : 'Lodge a bill by form, CSV upload, SFTP or the SAP integration.')}</td></tr>`}</tbody>

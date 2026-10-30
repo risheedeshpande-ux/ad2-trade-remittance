@@ -13,6 +13,7 @@ const Engine = require('../public/engine.js');
 const { SEED } = require('../public/data.js');
 const auth = require('./auth');
 const { makeStore } = require('./store');
+const Mail = require('./mail');
 
 const clone = o => JSON.parse(JSON.stringify(o));
 const MAX_BODY = 400 * 1024;
@@ -53,11 +54,12 @@ async function commit(w, cmd, payload) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const { state, etag } = await readState({ fresh: true });
     const next = clone(state);
+    const known = new Set((state.emails || []).map(m => m.id));
     const result = Engine.execute(next, w, cmd, payload, { now: new Date().toISOString(), hashPassword: auth.hashPassword });
     try {
       const newTag = await getStore().write(next, etag);
       cache = { state: next, etag: newTag, at: Date.now() };
-      return { next, result };
+      return { next, result, mail: (next.emails || []).filter(m => !known.has(m.id)) };
     } catch (e) {
       if (!e.conflict) throw e;
       cache = null;
@@ -108,7 +110,7 @@ async function handle({ method, route, query, headers, body, ip }) {
           events: (st.tmsEvents || []).length, lastEventAt: ((st.tmsEvents || [])[0] || {}).at || null };
       }
       return json(200, { ok: true, mode: 'server', store: s.kind, access: s.access || null, persistent: s.persistent, storeOk, storeError,
-                         passcodeRequired: auth.passcodeRequired(), seedVersion: SEED.version, time: new Date().toISOString(), treasury });
+                         passcodeRequired: auth.passcodeRequired(), seedVersion: SEED.version, email: Mail.enabled(), time: new Date().toISOString(), treasury });
     }
 
     if (route === 'status' && method === 'GET') {
@@ -180,6 +182,12 @@ async function handle({ method, route, query, headers, body, ip }) {
       const out = await commit(w.who, cmd, payload);
       if (!out) return json(409, { error: 'The platform is busy. Try again.', code: 'conflict' });
       const { next, result } = out;
+      const sent = await Mail.send(out.mail, headers);
+      if (sent.length && result && typeof result === 'object') {
+        const ok = sent.filter(x => x.ok);
+        result.emailed = sent;
+        result.message = (result.message || '') + (ok.length ? ` Email sent to ${[...new Set(ok.map(x => x.to))].join(', ')}.` : ' The email could not be sent.');
+      }
       return json(200, { ok: true, result, rev: next.rev, epoch: next.epoch, state: Engine.scopeState(next, w.who), user: publicUser(next, w.who) });
     }
 

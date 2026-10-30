@@ -48,6 +48,24 @@ npm run test:e2e     # the guided journey in a real browser across both portals,
 npm run test:qa      # 45 journeys across every role and product in both portals; writes qa-report.md (see tests/qa.js)
 ```
 
+## Query emails (real, through Gmail)
+
+When AD2 raises a query (application, payment, disposal or bill) it can ask for documents — ticked from the item's
+checklist or named in free text — and the customer must upload them to answer. Every query rings the bell and queues an
+email with a deep link; the link goes through sign-in straight to the answer.
+
+Emails are simulated (see **Emails sent** in the test console) until Gmail is configured:
+
+| Variable | What |
+|---|---|
+| `GMAIL_USER` | the Gmail address that sends |
+| `GMAIL_APP_PASSWORD` | a Google [app password](https://myaccount.google.com/apppasswords) for it (needs 2-Step Verification) |
+| `DEMO_EMAIL_TO` | optional — where redirected mail goes; defaults to `GMAIL_USER` |
+| `EMAIL_ALLOW` | optional — comma-separated addresses that may receive mail directly |
+
+The demo is public, so mail reaches a customer's own address only if it is in `EMAIL_ALLOW`; everything else is
+redirected to `DEMO_EMAIL_TO` and says who it was meant for. `/api/health` reports `"email": true` once configured.
+
 ## Workspaces
 
 Each role signs in to its own workspace: its own sidebar, dashboard and screens. The sidebar collapses to an icon
