@@ -58,10 +58,10 @@ function viewOutwardList() {
 }
 
 /* ---------- new request ----------------------------------------------------
-   Order follows how a payment is actually put together: who is paid, for
-   what (product and purpose), which bills it settles, how much and from
-   which account, then the rate for exactly that amount, documents, and a
-   review before anything is sent.                                          */
+   Order follows how a payment is actually put together: how much and from
+   which account, who is paid, for what (product and purpose), which bills
+   it settles (they must add up to the amount), then the rate for exactly
+   that amount, documents, and a review before anything is sent.           */
 const RATE_NONE = () => ({ mode:'none', refRate:0, margin:0, customerRate:0, bookedAt:null, expiresAt:null, dealRef:null });
 function newOutwardDraft(from) {
   const base = {
@@ -108,17 +108,21 @@ function viewOutwardNew() {
   const q = outwardQuote(d, me);
   const checklist = prod && p ? checklistFor(prod.id, p.code, q.inrAmt) : [];
   const allocated = d.allocations.reduce((s, a) => s + a.amount, 0);
+  const billGap = d.allocations.length && Math.abs(Number(d.amount) - allocated) > 0.001 ? Number(d.amount) - allocated : 0;
   const billPool = DB.bills.filter(b => b.smeId === d.smeId && b.type === 'Import' && b.review === 'Accepted' && b.outstanding > 0);
 
   const billCard = !prod ? '' : prod.bills === 'none'
-    ? `<div class="card"><div class="card-head"><h2>3 · Bills</h2></div><div class="card-body">
+    ? `<div class="card"><div class="card-head"><h2>4 · Bills</h2></div><div class="card-body">
         <div class="note note-info"><span><b>Advance payment — no bill yet.</b> The Bill of Entry is due within 90 days of payment.
         Once the goods arrive, lodge the import bill and knock it off against this payment.</span></div></div></div>`
-    : `<div class="card"><div class="card-head"><h2>3 · Bills this payment settles ${prod.bills === 'required' ? '<span class="req">*</span>' : '<small style="color:var(--muted);font-weight:400">optional</small>'}</h2>
+    : `<div class="card"><div class="card-head"><h2>4 · Bills this payment settles ${prod.bills === 'required' ? '<span class="req">*</span>' : '<small style="color:var(--muted);font-weight:400">optional</small>'}</h2>
         <div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">${d.allocations.length ? `${money(allocated, d.currency)} against ${plural(d.allocations.length, 'bill')}` : 'None chosen yet'}</span></div></div>
         <div class="card-body">
+          ${d.currency ? `<label class="chk" style="margin-bottom:12px"><input type="checkbox" data-act="or-billcur" ${d.billsAllCur ? 'checked' : ''}><span>Show bills in other currencies
+            <small>Bills in ${esc(d.currency)} are listed by default. A bill in another currency is shown for reference — settling it from a ${esc(d.currency)} payment is not supported yet.</small></span></label>` : ''}
           ${billPool.length || d.allocations.length
-            ? billPickerHTML({ prefix:'or', pool: billPool, chosen: d.allocations, currency: d.currency || '', party: d.beneficiary, exclude: d.id })
+            ? billPickerHTML({ prefix:'or', pool: billPool, chosen: d.allocations, currency: d.currency || '', party: d.beneficiary, exclude: d.id,
+                cap: d.amountFromBills ? null : Number(d.amount), allCur: d.billsAllCur })
             : empty('No accepted import bills', 'Lodge the import bill first — AD2 accepts it, then it can be paid here.')}
           ${prod.bills === 'required' ? '' : `<p class="hint" style="margin:10px 0 0;font-size:var(--fs-xs);color:var(--muted)">OTT payments for goods may settle a bill; for services leave this empty.</p>`}
         </div></div>`;
@@ -127,13 +131,40 @@ function viewOutwardNew() {
 
   return shell(crumb('Outward Remittance', d.id ? d.id + ' (draft)' : 'New request'), `
     <div class="page-head"><div><h1>${d.id ? 'Continue draft ' + esc(d.id) : 'New outward request'}</h1>
-      <p>Pick the supplier, the product and purpose, the bills you are paying — then book the rate for that amount.</p></div>
+      <p>Enter the amount, pick the supplier, the product and purpose, the bills you are paying — then book the rate for that amount.</p></div>
       <div class="acts"><button class="btn btn-plain" type="button" data-act="go" data-href="#/sme/outward">Cancel</button></div></div>
 
     <div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start">
       <div class="grid" style="gap:20px">
 
-        <div class="card"><div class="card-head"><h2>1 · Beneficiary</h2>
+        <div class="card"><div class="card-head"><h2>1 · Amount and account</h2></div><div class="card-body">
+          <div class="grid g2 fields">
+            <div class="f" data-fld="currency"><label for="or-currency">Currency<span class="req">*</span></label>
+              <select id="or-currency" data-ork="currency"><option value="">Select…</option>
+                ${curs.map(c => `<option ${d.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+              <div class="hint">${isAD2() ? 'AD2-assisted requests may use any supported currency.' : 'Only currencies enabled on your approval are listed.'}${d.allocations.length ? ' Changing it clears the bills chosen.' : ''}</div>
+              <div class="err">Select a currency.</div></div>
+            <div class="f" data-fld="amount"><label for="or-amount">Amount to remit${d.currency ? ' (' + esc(d.currency) + ')' : ''}<span class="req">*</span></label>
+              <input id="or-amount" data-ork="amount" type="number" step="0.01" min="0" value="${esc(d.amount)}">
+              <div class="hint">${!d.allocations.length ? 'The amount the beneficiary is paid, in the remittance currency.'
+                : billGap ? `Bills account for ${money(allocated, d.currency)} — the amount must equal the bills chosen (${money(Math.abs(billGap), d.currency)} ${billGap > 0 ? 'still to place against a bill' : 'too much on bills'}).`
+                : `Equals the ${plural(d.allocations.length, 'bill')} chosen.`}</div>
+              <div class="err">Enter the amount.</div></div>
+            <div class="f" data-fld="executionDate"><label for="or-executionDate">Requested execution date<span class="req">*</span></label>
+              <input id="or-executionDate" data-ork="executionDate" type="date" value="${esc(d.executionDate)}" min="${todayISO()}">
+              <div class="hint">Today by default. Change it to schedule the payment.</div><div class="err">Choose a date.</div></div>
+            <div class="f" data-fld="debitAccountId"><label for="or-debit">Remitter account (INR)<span class="req">*</span></label>
+              <select id="or-debit" data-ork="debitAccountId"><option value="">Select…</option>
+                ${accounts.map(a => `<option value="${a.id}" ${d.debitAccountId === a.id ? 'selected' : ''} ${a.verified ? '' : 'disabled'}>
+                  ${esc(a.bank)} · ${esc(a.accountNumber)}${a.verified ? ' · balance ' + inr(a.balance) : ' (unverified — verify in Profile)'}</option>`).join('')}</select>
+              <div class="hint">Verified INR accounts from your account master. <button class="btn-link" type="button" data-act="go" data-href="#/sme/profile">Manage accounts</button></div>
+              <div class="err">Select a remitter account.</div></div>
+            <div class="f span2"><label for="or-ref">Your reference</label>
+              <input id="or-ref" data-ork="referenceNumber" type="text" maxlength="40" value="${esc(d.referenceNumber)}" placeholder="Optional — carried through to the SWIFT message and advice">
+            </div>
+          </div></div></div>
+
+        <div class="card"><div class="card-head"><h2>2 · Beneficiary</h2>
           <div class="acts"><button class="btn btn-ghost btn-sm" type="button" data-act="bene-new">Add new beneficiary</button></div></div>
           <div class="card-body">
           <div class="f" data-fld="beneficiary" style="margin-bottom:${d.beneficiary ? 'var(--s4)' : '0'}">
@@ -165,7 +196,7 @@ function viewOutwardNew() {
             </div>` : ''}
         </div></div>
 
-        <div class="card"><div class="card-head"><h2>2 · Product and purpose</h2></div><div class="card-body">
+        <div class="card"><div class="card-head"><h2>3 · Product and purpose</h2></div><div class="card-body">
           <div class="grid g2 fields">
             <div class="f span2" data-fld="remittanceType"><label>Product<span class="req">*</span></label>
               <div class="prodpick">${productsFor('outward').map(x => `
@@ -185,31 +216,6 @@ function viewOutwardNew() {
           </div></div></div>
 
         ${billCard}
-
-        <div class="card"><div class="card-head"><h2>${step(3)} · Amount and account</h2></div><div class="card-body">
-          <div class="grid g2 fields">
-            <div class="f" data-fld="currency"><label for="or-currency">Currency<span class="req">*</span></label>
-              <select id="or-currency" data-ork="currency"><option value="">Select…</option>
-                ${curs.map(c => `<option ${d.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
-              <div class="hint">${isAD2() ? 'AD2-assisted requests may use any supported currency.' : 'Only currencies enabled on your approval are listed.'}${d.allocations.length ? ' Set by the bills you chose.' : ''}</div>
-              <div class="err">Select a currency.</div></div>
-            <div class="f" data-fld="amount"><label for="or-amount">Amount to remit${d.currency ? ' (' + esc(d.currency) + ')' : ''}<span class="req">*</span></label>
-              <input id="or-amount" data-ork="amount" type="number" step="0.01" min="0" value="${esc(d.amount)}">
-              <div class="hint">${d.allocations.length ? `Bills account for ${money(allocated, d.currency)}. ${Number(d.amount) > allocated + 0.001 ? money(Number(d.amount) - allocated, d.currency) + ' is not against a bill.' : ''}` : 'The amount the beneficiary is paid, in the remittance currency.'}</div>
-              <div class="err">Enter the amount.</div></div>
-            <div class="f" data-fld="executionDate"><label for="or-executionDate">Requested execution date<span class="req">*</span></label>
-              <input id="or-executionDate" data-ork="executionDate" type="date" value="${esc(d.executionDate)}" min="${todayISO()}">
-              <div class="hint">Today by default. Change it to schedule the payment.</div><div class="err">Choose a date.</div></div>
-            <div class="f" data-fld="debitAccountId"><label for="or-debit">Remitter account (INR)<span class="req">*</span></label>
-              <select id="or-debit" data-ork="debitAccountId"><option value="">Select…</option>
-                ${accounts.map(a => `<option value="${a.id}" ${d.debitAccountId === a.id ? 'selected' : ''} ${a.verified ? '' : 'disabled'}>
-                  ${esc(a.bank)} · ${esc(a.accountNumber)}${a.verified ? ' · balance ' + inr(a.balance) : ' (unverified — verify in Profile)'}</option>`).join('')}</select>
-              <div class="hint">Verified INR accounts from your account master. <button class="btn-link" type="button" data-act="go" data-href="#/sme/profile">Manage accounts</button></div>
-              <div class="err">Select a remitter account.</div></div>
-            <div class="f span2"><label for="or-ref">Your reference</label>
-              <input id="or-ref" data-ork="referenceNumber" type="text" maxlength="40" value="${esc(d.referenceNumber)}" placeholder="Optional — carried through to the SWIFT message and advice">
-            </div>
-          </div></div></div>
 
         <div class="card"><div class="card-head"><h2>${step(4)} · Book the rate</h2></div><div class="card-body">
           ${!d.currency ? `<div class="note note-info"><span>Choose the currency and amount to see the live rate and what it comes to in INR.</span></div>`
@@ -269,7 +275,7 @@ function outwardMissing(d) {
     const q = outwardQuote(d, sme(d.smeId));
     checklistFor(prod.id, d.purposeCode, q.inrAmt).filter(x => x.required && !d.docs[x.id]).forEach(x => m.push('Document: ' + x.name));
     const allocated = d.allocations.reduce((s, a) => s + a.amount, 0);
-    if (allocated > Number(d.amount) + 0.001) m.push('Bills add up to more than the amount');
+    if (allocated && Math.abs(allocated - Number(d.amount)) > 0.001) m.push('Bills must add up to the amount');
     if (prod.bills === 'required' && !allocated && !DB.settings.allowUnlinked) m.push(`At least one accepted import bill (${prod.id} settles a lodged bill)`);
   }
   return m;

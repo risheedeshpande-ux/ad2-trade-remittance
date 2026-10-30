@@ -319,7 +319,7 @@
       if (!b || b.smeId !== s.id) fail('An allocated bill does not belong to this SME.');
       if (b.type !== type) fail(`Bill ${b.id} is not an ${type.toLowerCase()} bill.`);
       if (b.review !== 'Accepted') fail(`Bill ${b.id} has not been accepted by AD2 yet.`);
-      if (b.currency !== currency) fail(`Bill ${b.id} is in ${b.currency}, not ${currency}.`);
+      if (b.currency !== currency) fail(`Bill ${b.id} is in ${b.currency}, not ${currency}. Settling a bill in another currency is not supported yet.`);
       if (out.some(o => o.billId === b.id)) fail(`Bill ${b.id} is allocated twice.`);
       const avail = billAvailable(db, b, exclude);
       if (amt > avail + 0.001) fail(`Bill ${b.id} has only ${fmt(avail, b.currency)} available to allocate.`);
@@ -800,6 +800,7 @@
     } else {
       const { list: al, total } = allocationsIn(db, s, d.allocations, { type: 'Import', currency: o.currency, cap: o.amount, exclude: excludeId, label: 'Bill allocations' });
       if (prod.bills === 'required' && !db.settings.allowUnlinked) need(al.length, `${prod.id} payments settle a lodged import bill. Allocate at least one accepted import bill.`);
+      if (al.length) need(Math.abs(total - o.amount) < 0.005, `The bills add up to ${fmt(total, o.currency)} but the amount is ${fmt(o.amount, o.currency)}. When bills are chosen, the amount must equal their total.`);
       o.allocations = al;
       o.allocatedTotal = total;
     }
