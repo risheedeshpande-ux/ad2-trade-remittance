@@ -11,6 +11,8 @@ const store = { get: k => { try { return JSON.parse(localStorage.getItem(k)); } 
 let mails = [], sel = null, known = null, real = false, last = null;
 const opened = new Set(store.get('ib-opened') || []);
 
+/* a sample customer's address is a real public inbox at mailinator.com */
+const mailinator = m => { const a = (m.to || []).find(x => /@mailinator\.com$/i.test(x)); return a ? 'https://www.mailinator.com/v4/public/inboxes.jsp?to=' + encodeURIComponent(a.split('@')[0]) : ''; };
 const bodyLines = m => String(m.body || '').split('\n').filter(l => !/^\s*-\s/.test(l) && !/^Documents requested:/.test(l));
 /* the body with the requested documents listed just before the sign-in line */
 function bodyHTML(m) {
@@ -36,7 +38,8 @@ function draw(fresh) {
     <div class="ib-body">
       ${bodyHTML(m)}
       <a class="ib-cta" href="app.html${esc(m.link)}">Sign in and respond</a>
-      <p class="ib-hint">Opens the platform. Sign in as the customer and you land on the answer, ready to upload.${real ? ' A copy was also emailed.' : ''}</p>
+      <p class="ib-hint">Opens the platform. Sign in as the customer and you land on the answer, ready to upload.</p>
+      ${real && mailinator(m) ? `<p class="ib-hint">Also delivered as a real email — <a href="${esc(mailinator(m))}" target="_blank" rel="noopener">open ${esc((m.to || [])[0])} in Mailinator ↗</a></p>` : ''}
     </div></article>`;
   if (m && !opened.has(m.id)) { opened.add(m.id); store.set('ib-opened', [...opened].slice(-200)); }
 }

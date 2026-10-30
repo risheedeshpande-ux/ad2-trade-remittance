@@ -58,18 +58,21 @@ email with a deep link; the link goes through sign-in straight to the answer.
 mail app. To demo the journey: raise a query as AD2, switch to the inbox tab, open the email, click **Sign in and
 respond**, sign in as the customer and upload. It needs no setup and is off when Test tools are switched off.
 
-**Real email is optional**, through [Resend](https://resend.com) (one API key, free tier):
+**Real email is optional**, through [Brevo](https://www.brevo.com) (free: 300 a day). The sample customers' addresses are
+public [Mailinator](https://www.mailinator.com) inboxes (e.g. `kavita.meridiantextiles@mailinator.com`), so a query email
+arrives in a real inbox anyone can open — no account needed. The demo inbox links to it.
 
 | Variable | What |
 |---|---|
-| `RESEND_API_KEY` | the Resend API key |
-| `DEMO_EMAIL_TO` | where mail goes — use the address you signed up to Resend with |
-| `EMAIL_ALLOW` | optional — comma-separated addresses that may receive mail directly |
-| `EMAIL_FROM` | optional — sender, once you have verified a domain in Resend (default `onboarding@resend.dev`) |
+| `BREVO_API_KEY` | a Brevo API key (SMTP & API → API keys) |
+| `EMAIL_FROM` | the sender address you verified in Brevo (Senders) |
+| `EMAIL_FROM_NAME` | optional — default `AD2 Trade Services` |
+| `EMAIL_ALLOW` | optional — addresses or whole domains that may receive mail; default `@mailinator.com` |
+| `DEMO_EMAIL_TO` | optional — where mail for anyone else goes (with who it was meant for); unset = not sent |
 
-The demo is public, so mail reaches a customer's own address only if it is in `EMAIL_ALLOW`; everything else goes to
-`DEMO_EMAIL_TO` and says who it was meant for. Until a domain is verified, Resend only delivers to your own sign-up
-address. `/api/health` reports `"email": true` once configured.
+The demo is public, so it never emails an address that is not allowed. To demo with a new business, register it with any
+`name@mailinator.com` address. Without a domain authenticated in Brevo, Brevo sends from a `brevosend.com` address under
+the same display name. `/api/health` reports `"email": true` once configured.
 
 ## Workspaces
 
