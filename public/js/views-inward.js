@@ -339,8 +339,8 @@ function viewDisposalDetail(id) {
       ${(d.unallocated || 0) > 0 ? `<br><b>${money(d.unallocated, d.currency)} pending knock-off</b> against export bills.` : ''}</span></div>` : ''}
     ${d.query ? `<div class="note ${d.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px">
       <span><b>Query from AD2:</b> ${esc(d.query.question)}<br><small>${esc(d.query.raisedBy)} · ${dmyt(d.query.raisedAt)}</small>
-      ${d.query.response ? `<br><b>Response:</b> ${esc(d.query.response)}${d.query.respondedBy ? ` <small>· recorded by ${esc(d.query.respondedBy)}</small>` : ''}` : ''}</span></div>` : ''}
-    ${respond ? queryResponseCard(ad2, list, d.docs, ad2 ? 'di-resolve' : 'di-respond', d.id) : ''}
+      ${d.query.response ? `<br><b>Response:</b> ${esc(d.query.response)}${d.query.respondedBy ? ` <small>· recorded by ${esc(d.query.respondedBy)}</small>` : ''}` : ''}${queryDocsNote(d.query)}</span></div>` : ''}
+    ${respond ? queryResponseCard(ad2, list, d.docs, ad2 ? 'di-resolve' : 'di-respond', d.id, d.query) : ''}
     ${d.status === 'Rejected' ? `<div class="note note-err" style="margin-bottom:18px"><span><b>Rejected:</b> ${esc(d.rejectReason || '')} The amount is available on the receipt again.</span></div>` : ''}
 
     <div class="grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start">

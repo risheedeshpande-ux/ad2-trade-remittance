@@ -273,14 +273,37 @@
   /* AD2 queries the customer: the bell, and an email (simulated, kept in
      db.emails) to the registered address. Both deep-link to where the
      customer answers; the browser makes the link absolute. */
-  function queryCustomer(db, now, smeId, rec, path, text, question) {
+  /* Documents AD2 asks for with a query: ticked from the item's own
+     checklist, or named in free text. */
+  function docsAsked(p, list) {
+    const picked = (Array.isArray(p.requestDocs) ? p.requestDocs : []).slice(0, 20)
+      .map(id => list.find(d => d.id === id)).filter(Boolean).map(d => ({ id: d.id, name: d.name }));
+    const named = (Array.isArray(p.otherDocs) ? p.otherDocs : []).map(n => String(n || '').trim().slice(0, 80)).filter(Boolean)
+      .slice(0, 5).map((name, i) => ({ id: 'other' + (i + 1), name }));
+    return [...picked, ...named];
+  }
+  /* What comes back with an answer: everything AD2 asked for must be there,
+     and the customer may add up to three documents of their own. */
+  function answerDocs(rec, p, list) {
+    const asked = (rec.query && rec.query.docs) || [];
+    const got = docsIn(p.docs, [...list.map(d => d.id), ...asked.map(d => d.id), 'extra1', 'extra2', 'extra3']);
+    const miss = asked.filter(d => !got[d.id]).map(d => d.name);
+    need(!miss.length, 'Upload the documents AD2 asked for: ' + miss.join(', ') + '.', miss);
+    Object.keys(got).filter(id => list.some(d => d.id === id)).forEach(id => { (rec.docs = rec.docs || {})[id] = got[id]; });
+    rec.query.received = Object.fromEntries(Object.entries(got).map(([id, f]) =>
+      [id, { ...f, name: ([...asked, ...list].find(d => d.id === id) || { name: 'Additional document' }).name }]));
+    return got;
+  }
+
+  function queryCustomer(db, now, smeId, rec, path, text, question, asked) {
     const link = `#${path}${path.includes('?') ? '&' : '?'}for=${encodeURIComponent(smeId)}&focus=${encodeURIComponent(rec)}`;
     notify(db, now, { toSmeId: smeId, text, link });
     const s = smeOf(db, smeId);
     if (!s || !s.email) return;
     db.emails = db.emails || [];
     db.emails.unshift({ id: 'EM-' + seq(db, 'email'), smeId, record: rec, to: [s.email], subject: text, link, sentAt: now,
-      body: `Dear ${s.contactName || s.legalName},\n\n${text}:\n\n"${question}"\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services` });
+      docs: (asked || []).map(d => d.name),
+      body: `Dear ${s.contactName || s.legalName},\n\n${text}:\n\n"${question}"\n\n${asked && asked.length ? 'Documents requested:\n' + asked.map(d => '  - ' + d.name).join('\n') + '\n\n' : ''}Sign in with the link below to answer and upload any documents.\n\nAD2 Trade Services` });
     if (db.emails.length > 400) db.emails.length = 400;
   }
 
@@ -633,9 +656,10 @@
       need(['Submitted', 'Under Review', 'Pending Approval'].includes(s.status), 'This application is not open for queries.');
       const q = txt(p.question, 'Clarification', { max: 500 });
       s.status = 'Clarification Required'; s.pendingWith = 'SME';
-      s.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null };
-      audit(db, a, ctx.now, s.id, 'Clarification requested: ' + q);
-      queryCustomer(db, ctx.now, s.id, s.id, '/sme/dashboard', `AD2 needs more information on application ${s.id}`, q);
+      const asked = docsAsked(p, db.onboardDocs || []);
+      s.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null, docs: asked };
+      audit(db, a, ctx.now, s.id, 'Clarification requested: ' + q + (asked.length ? ' — documents: ' + asked.map(d => d.name).join(', ') : ''));
+      queryCustomer(db, ctx.now, s.id, s.id, '/sme/dashboard', `AD2 needs more information on application ${s.id}`, q, asked);
       return { message: 'Clarification sent to the applicant.' };
     },
   };
@@ -647,8 +671,8 @@
       need(s.status === 'Clarification Required', 'There is no open query on this application.');
       const r = txt(p.response, 'Response', { max: 1000 });
       if (p.iec) s.iec = txt(String(p.iec).toUpperCase(), 'IEC', { max: 10, pattern: /^[A-Z0-9]{10}$/, patternMsg: 'IEC must be 10 letters or digits.' });
-      Object.assign(s.docs = s.docs || {}, docsIn(p.docs, (db.onboardDocs || []).map(d => d.id)));
       s.query = { ...(s.query || {}), response: r, respondedAt: ctx.now };
+      answerDocs(s, p, db.onboardDocs || []);
       s.status = 'Submitted'; s.pendingWith = 'AD2 Maker';
       audit(db, a, ctx.now, s.id, 'Applicant responded to clarification' + (p.iec ? ' and supplied IEC' : ''));
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Applicant responded on ${s.id}`, link: '#/ad2/applications/' + s.id });
@@ -975,11 +999,12 @@
       const o = outwardFor(db, p.id);
       need(['Submitted', 'Verified'].includes(o.status), 'A query can be raised only before authorisation.');
       const q = txt(p.question, 'Query', { max: 500 });
-      o.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null, stage: o.status };
+      const asked = docsAsked(p, checklist(db, o.remittanceType, o.purposeCode, o.inrAmount || 0));
+      o.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null, stage: o.status, docs: asked };
       o.status = 'Clarification Required'; o.pendingWith = 'SME';
       if (o.wf) delete o.wf.verified;
       audit(db, a, ctx.now, o.id, 'Clarification requested: ' + q);
-      queryCustomer(db, ctx.now, o.smeId, o.id, '/sme/outward/' + o.id, `AD2 has a query on ${o.id}`, q);
+      queryCustomer(db, ctx.now, o.smeId, o.id, '/sme/outward/' + o.id, `AD2 has a query on ${o.id}`, q, o.query.docs);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -993,7 +1018,7 @@
       need(o.status === 'Clarification Required', 'There is no open query on this request.');
       const r = txt(p.response, 'Response', { max: 1000 });
       const list = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount || o.amount * (o.rate.customerRate || 0));
-      Object.assign(o.docs = o.docs || {}, docsIn(p.docs, list.map(x => x.id)));
+      answerDocs(o, p, list);
       o.query.response = r; o.query.respondedAt = ctx.now;
       o.status = 'Submitted'; o.pendingWith = 'AD2 Maker';
       audit(db, a, ctx.now, o.id, 'SME responded to the query — back with the maker' + (p.docs && Object.keys(p.docs).length ? ' (documents updated)' : ''));
@@ -1013,8 +1038,7 @@
       need(o.status === 'Clarification Required', 'There is no open query on this request.');
       const r = txt(p.response, 'The customer’s answer', { max: 1000 });
       const list = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount || o.amount * (o.rate.customerRate || 0));
-      const added = docsIn(p.docs, list.map(x => x.id));
-      Object.assign(o.docs = o.docs || {}, added);
+      const added = answerDocs(o, p, list);
       o.query = { ...(o.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
       o.status = 'Submitted'; o.pendingWith = 'AD2 Maker';
       const n = Object.keys(added).length;
@@ -1363,11 +1387,12 @@
       const d = disposalFor(db, p.id);
       need(['Submitted', 'Verified'].includes(d.status), 'A query can be raised only before authorisation.');
       const q = txt(p.question, 'Query', { max: 500 });
-      d.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null };
+      d.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null,
+        docs: docsAsked(p, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option })) };
       d.status = 'Clarification Required'; d.pendingWith = 'SME';
       delete d.wf.verified;
       audit(db, a, ctx.now, d.id, 'Clarification requested: ' + q);
-      queryCustomer(db, ctx.now, d.smeId, d.id, '/sme/disposals/' + d.id, `AD2 has a query on disposal ${d.id}`, q);
+      queryCustomer(db, ctx.now, d.smeId, d.id, '/sme/disposals/' + d.id, `AD2 has a query on disposal ${d.id}`, q, d.query.docs);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1379,7 +1404,7 @@
       need(d.smeId === s.id, 'This instruction belongs to another SME.');
       need(d.status === 'Clarification Required', 'There is no open query on this instruction.');
       d.query.response = txt(p.response, 'Response', { max: 1000 }); d.query.respondedAt = ctx.now;
-      Object.assign(d.docs = d.docs || {}, docsIn(p.docs, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }).map(x => x.id)));
+      answerDocs(d, p, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }));
       d.status = 'Submitted'; d.pendingWith = 'AD2 Maker';
       audit(db, a, ctx.now, d.id, 'SME responded to the query — back with the maker');
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `SME responded on disposal ${d.id}`, link: '#/ad2/disposals/' + d.id });
@@ -1392,8 +1417,7 @@
       const d = disposalFor(db, p.id);
       need(d.status === 'Clarification Required', 'There is no open query on this instruction.');
       const r = txt(p.response, 'The customer’s answer', { max: 1000 });
-      const added = docsIn(p.docs, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }).map(x => x.id));
-      Object.assign(d.docs = d.docs || {}, added);
+      const added = answerDocs(d, p, checklist(db, 'TRADE', d.purposeCode, 0, { option: d.option }));
       d.query = { ...(d.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
       d.status = 'Submitted'; d.pendingWith = 'AD2 Maker';
       const n = Object.keys(added).length;
@@ -1516,9 +1540,9 @@
       const b = billFor(db, p.id);
       need(['Submitted', 'Resubmitted', 'Under Review'].includes(b.review), 'This bill is not awaiting review.');
       const q = txt(p.question, 'Query', { max: 500 });
-      b.review = 'Query Raised'; b.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now };
+      b.review = 'Query Raised'; b.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, docs: docsAsked(p, []) };
       audit(db, a, ctx.now, b.id, 'Query raised: ' + q);
-      queryCustomer(db, ctx.now, b.smeId, b.id, `/sme/bills/${b.type.toLowerCase()}?s=query`, `AD2 has a query on bill ${b.id} (${b.invoiceNumber})`, q);
+      queryCustomer(db, ctx.now, b.smeId, b.id, `/sme/bills/${b.type.toLowerCase()}?s=query`, `AD2 has a query on bill ${b.id} (${b.invoiceNumber})`, q, b.query.docs);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1532,6 +1556,7 @@
       const r = txt(p.response, 'Response', { max: 500 });
       if (p.shipmentRef) b.shipmentRef = txt(p.shipmentRef, 'Reference', { max: 40 });
       b.query = { ...(b.query || {}), response: r, respondedAt: ctx.now };
+      answerDocs(b, p, []);
       b.review = 'Resubmitted';
       audit(db, a, ctx.now, b.id, 'Resubmitted after query: ' + r);
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Bill ${b.id} resubmitted by ${s.tradingName}`, link: '#/ad2/bills/' + b.type.toLowerCase() });
@@ -1547,6 +1572,7 @@
       const r = txt(p.response, 'The customer’s answer', { max: 500 });
       if (p.shipmentRef) b.shipmentRef = txt(p.shipmentRef, 'Reference', { max: 40 });
       b.query = { ...(b.query || {}), response: r, respondedAt: ctx.now, respondedBy: resolvedBy(a) };
+      answerDocs(b, p, []);
       b.review = 'Resubmitted';
       audit(db, a, ctx.now, b.id, 'Query answered on the customer’s behalf: ' + r);
       notify(db, ctx.now, { toRole: 'AD2 Checker', text: `Bill ${b.id} resubmitted for the SME`, link: '#/ad2/bills/' + b.type.toLowerCase() });

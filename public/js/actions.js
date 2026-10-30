@@ -151,6 +151,12 @@ const val = sel => ($(sel)?.value || '').trim();
 const reason = (label, hint) => `<div class="f"><label for="why">${esc(label)}</label><textarea id="why" maxlength="500"></textarea>
   ${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
 const needText = (sel, msg) => { const v = val(sel); if (!v) throw msg; return v; };
+/* A query can ask for documents: ticked from the item's checklist, or named. */
+const askDocs = list => `<div class="f" style="margin-top:14px"><label>Request documents <small style="font-weight:400;color:var(--muted)">optional — the customer must upload these to answer</small></label>
+  ${list.length ? `<div class="checks" style="gap:8px">${list.map(d => `<label class="chk"><input type="checkbox" data-askdoc="${esc(d.id)}"><span>${esc(d.name)}</span></label>`).join('')}</div>` : ''}
+  ${[1, 2, 3].map(i => `<input type="text" data-othdoc maxlength="80" style="margin-top:8px" placeholder="${i === 1 ? 'Other document, e.g. Signed board resolution' : 'Another document'}">`).join('')}</div>`;
+const askedDocs = () => ({ requestDocs: [...document.querySelectorAll('[data-askdoc]:checked')].map(x => x.dataset.askdoc),
+  otherDocs: [...document.querySelectorAll('[data-othdoc]')].map(x => x.value.trim()).filter(Boolean) });
 
 let PICK = null;                     /* where a chosen file goes: { scope, id } */
 function draftDocs(scope) {
@@ -514,9 +520,8 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'ob-respond') {
-    const response = val('#ap-resp');
-    if (!response) { toast('Write a response first.', 'err'); return; }
-    run('onboarding.respond', { response, iec: val('#ap-iec') || undefined });
+    if (!RESP || !RESP.text.trim()) { toast('Write a response first.', 'err'); return; }
+    run('onboarding.respond', { response:RESP.text, docs:RESP.docs, iec: val('#ap-iec') || undefined }, { after: () => { RESP = null; } });
     return;
   }
   if (act === 'offline-app') { resetDrafts(); location.hash = '#/register'; return; }
@@ -686,8 +691,9 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'or-query')  { commandModal({ title:'Raise a query', okLabel:'Send query', cmd:'outward.query',
-      body: reason('What do you need from the SME?', 'The request returns to the SME and must be verified again after they respond.'),
-      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.') }) }); return; }
+      body: reason('What do you need from the SME?', 'The request returns to the SME and must be verified again after they respond.')
+        + askDocs((o => checklistFor(o.remittanceType, o.purposeCode, o.inrAmount || 0))(outwardRec(t.dataset.id))),
+      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.'), ...askedDocs() }) }); return; }
   if (act === 'or-reject') { commandModal({ title:'Reject request', okLabel:'Reject', okClass:'btn-danger', cmd:'outward.reject',
       body: reason('Reason for rejection', 'Shown to the SME. Any bill reservation is released.'),
       read: () => ({ id:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
@@ -792,8 +798,9 @@ document.addEventListener('click', async e => {
       after: () => setTimeout(() => showFirc(d.id), 80) });
     return;
   }
-  if (act === 'di-query')  { commandModal({ title:'Raise a query', okLabel:'Send query', cmd:'disposal.query', body: reason('What do you need from the SME?'),
-      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.') }) }); return; }
+  if (act === 'di-query')  { commandModal({ title:'Raise a query', okLabel:'Send query', cmd:'disposal.query',
+      body: reason('What do you need from the SME?') + askDocs((d => Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option:d.option }))(disposalRec(t.dataset.id))),
+      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.'), ...askedDocs() }) }); return; }
   if (act === 'di-reject') { commandModal({ title:'Reject instruction', okLabel:'Reject', okClass:'btn-danger', cmd:'disposal.reject',
       body: reason('Reason for rejection', 'The amount becomes available on the receipt again.'),
       read: () => ({ id:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
@@ -842,15 +849,16 @@ document.addEventListener('click', async e => {
   if (act === 'bill-review') { billReview = t.dataset.t; render(); return; }
   if (act === 'bill-clear')  { BILL_DRAFT = null; render(); return; }
   if (act === 'bill-accept') { run('bill.accept', { id:t.dataset.id }); return; }
-  if (act === 'bill-query')  { commandModal({ title:'Query bill ' + t.dataset.id, okLabel:'Send query', cmd:'bill.query', body: reason('What needs correcting?'),
-      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.') }) }); return; }
-  if (act === 'bill-respond') {
-    const b = bill(t.dataset.id);
-    commandModal({ title:'Respond on ' + b.id, okLabel:'Resubmit', cmd:'bill.respond', body:`
-      <div class="note note-warn" style="margin-bottom:14px"><span>${esc(b.query?.question || '')}</span></div>
-      <div class="f"><label for="br-ref">${b.type === 'Export' ? 'Shipping bill' : 'Bill of Entry'} number</label><input id="br-ref" type="text" value="${esc(b.shipmentRef || '')}"></div>
-      <div class="f" style="margin-top:12px"><label for="why">Response</label><textarea id="why"></textarea></div>`,
-      read: () => ({ id:b.id, response: needText('#why', 'Enter a response.'), shipmentRef: val('#br-ref') || undefined }) });
+  if (act === 'bill-query')  { commandModal({ title:'Query bill ' + t.dataset.id, okLabel:'Send query', cmd:'bill.query', body: reason('What needs correcting?') + askDocs([]),
+      read: () => ({ id:t.dataset.id, question: needText('#why', 'Enter the query.'), ...askedDocs() }) }); return; }
+  if (act === 'bill-respond' || act === 'bill-resolve') {
+    RESP = { id:t.dataset.id, text:'', docs:{} }; billTab = 'register'; render(); focusQuery(t.dataset.id);
+    return;
+  }
+  if (act === 'bill-send' || act === 'bill-resolve-send') {
+    if (!RESP || !RESP.text.trim()) { toast(act === 'bill-send' ? 'Write a response first.' : 'Write down what the customer said first.', 'err'); return; }
+    run(act === 'bill-send' ? 'bill.respond' : 'bill.resolveQuery', { id:t.dataset.id, response:RESP.text, docs:RESP.docs, shipmentRef: val('#br-ref') || undefined },
+      { after: () => { RESP = null; } });
     return;
   }
   if (act === 'bill-ai') {
@@ -892,15 +900,6 @@ document.addEventListener('click', async e => {
     modal({ title:'Lodge a bill', body:`<p style="font-size:var(--fs-md);margin:0 0 14px">Which kind? Import bills are what DIR and LC payments settle; export bills are what inward receipts are disposed against.
       Type the details, upload the invoice for document AI to read, or use a CSV file.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${pm.importSide ? go('Import') : ''}${pm.exportSide ? go('Export') : ''}</div>` });
-    return;
-  }
-  if (act === 'bill-resolve') {
-    const b = bill(t.dataset.id);
-    commandModal({ title:'Answer for the customer — ' + b.id, okLabel:'Record and resubmit', cmd:'bill.resolveQuery', body:`
-      <div class="note note-warn" style="margin-bottom:14px"><span>${esc(b.query?.question || '')}</span></div>
-      <div class="f"><label for="br-ref">${b.type === 'Export' ? 'Shipping bill' : 'Bill of Entry'} number</label><input id="br-ref" type="text" value="${esc(b.shipmentRef || '')}"></div>
-      <div class="f" style="margin-top:12px"><label for="why">What the customer sent</label><textarea id="why" placeholder="e.g. Customer emailed the Bill of Entry on …"></textarea></div>`,
-      read: () => ({ id:b.id, response: needText('#why', 'Enter the customer’s answer.'), shipmentRef: val('#br-ref') || undefined }) });
     return;
   }
   if (act === 'csv-template') {
@@ -1070,8 +1069,9 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   }
   if (act === 'rv-return')  { commandModal({ title:'Return to maker', okLabel:'Return', cmd:'onboarding.return', body: reason('What should the maker change?'),
       read: () => ({ smeId:t.dataset.id, note: needText('#why', 'A reason is required.') }), after: () => { REVIEW = null; } }); return; }
-  if (act === 'rv-clarify') { commandModal({ title:'Request clarification', okLabel:'Send', cmd:'onboarding.clarify', body: reason('What is needed from the applicant?'),
-      read: () => ({ smeId:t.dataset.id, question: needText('#why', 'Enter what is needed.') }) }); return; }
+  if (act === 'rv-clarify') { commandModal({ title:'Request clarification', okLabel:'Send', cmd:'onboarding.clarify',
+      body: reason('What is needed from the applicant?') + askDocs(DB.onboardDocs || []),
+      read: () => ({ smeId:t.dataset.id, question: needText('#why', 'Enter what is needed.'), ...askedDocs() }) }); return; }
   if (act === 'rv-reject')  { commandModal({ title:'Reject application', okLabel:'Reject', okClass:'btn-danger', cmd:'onboarding.reject', body: reason('Reason for rejection'),
       read: () => ({ smeId:t.dataset.id, reason: needText('#why', 'A reason is required.') }) }); return; }
 

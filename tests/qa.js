@@ -893,10 +893,14 @@ async function startServer() {
       const row = page.locator('tr:has-text("Halden Trading AS")').first();
       const billId = (await row.locator('td').first().textContent()).trim();
       await row.locator('[data-act="bill-query"]').click(); await wait(200);
-      await page.fill('#why', 'Add the shipping bill number.'); await modalOk();
+      await page.fill('#why', 'Add the shipping bill number.'); await page.fill('[data-othdoc] >> nth=0', 'Shipping bill copy'); await modalOk();
+      check(await state(i => bill(i).query.docs[0].name, billId) === 'Shipping bill copy', 'the query asks for a named document');
       await signAs('AD2', 'MAKER'); await go('#/ad2/bills?s=query');
       await click(`tr:has-text("${billId}") [data-act="bill-resolve"]`);
-      await page.fill('#br-ref', 'SB-2299001'); await page.fill('#why', 'Customer phoned in the shipping bill number.'); await modalOk();
+      await page.fill('#br-ref', 'SB-2299001'); await page.fill('#resp-text', 'Customer emailed the shipping bill.');
+      await click('[data-act="bill-resolve-send"]');
+      check(await state(i => bill(i).review, billId) === 'Query Raised', 'refused without the requested document');
+      await click('[data-act="doc-sample"][data-id="other1"]'); await click('[data-act="bill-resolve-send"]'); await toastSays(/checker|resubmit/i);
       check(await state(i => bill(i).review, billId) === 'Resubmitted', 'the maker’s answer resubmits it');
       await signAs('AD2', 'OPS'); await go('#/ad2/bills?s=accept');
       await click(`tr:has-text("${billId}") [data-act="bill-accept"]`); await toastSays(/accepted/);
@@ -955,7 +959,7 @@ async function startServer() {
 
     await scenario('Onboarding', 'Clarification: the applicant supplies its IEC; the maker prices; Compliance approves', 'Applicant → Maker → Compliance', async () => {
       await signAs('HKTRADING', 'APPLICANT'); await go('#/sme/dashboard');
-      await page.fill('#ap-resp', 'IEC issued last week — attached.'); await page.fill('#ap-iec', '0826011223');
+      await page.fill('#resp-text', 'IEC issued last week — attached.'); await page.fill('#ap-iec', '0826011223');
       await click('[data-act="ob-respond"]'); await toastSays(/Response sent/);
       await signAs('AD2', 'MAKER'); await go('#/ad2/applications/SME-1004');
       await setVal('[data-act="rv-margin"][data-c="USD"]', 55); await click('[data-act="rv-submit"]'); await toastSays(/Compliance/);

@@ -334,8 +334,8 @@ function viewOutwardDetail(id) {
       ${o.boeDueDate ? `<br>Advance payment — the Bill of Entry is due by <b>${dmy(o.boeDueDate)}</b>. Knock it off against the import bill once lodged.` : ''}</span></div>` : ''}
     ${o.query && (o.status === 'Clarification Required' || o.query.response) ? `<div class="note ${o.status === 'Clarification Required' ? 'note-warn' : 'note-info'}" style="margin-bottom:18px">
       <span><b>Query from AD2:</b> ${esc(o.query.question)}<br><small>${esc(o.query.raisedBy)} · ${dmyt(o.query.raisedAt)}</small>
-      ${o.query.response ? `<br><b>Response:</b> ${esc(o.query.response)} <small>· ${o.query.respondedBy ? 'recorded by ' + esc(o.query.respondedBy) + ' · ' : ''}${dmyt(o.query.respondedAt)}</small>` : ''}</span></div>` : ''}
-    ${respond ? queryResponseCard(ad2, checklist, o.docs, ad2 ? 'or-resolve' : 'or-respond', o.id) : ''}
+      ${o.query.response ? `<br><b>Response:</b> ${esc(o.query.response)} <small>· ${o.query.respondedBy ? 'recorded by ' + esc(o.query.respondedBy) + ' · ' : ''}${dmyt(o.query.respondedAt)}</small>` : ''}${queryDocsNote(o.query)}</span></div>` : ''}
+    ${respond ? queryResponseCard(ad2, checklist, o.docs, ad2 ? 'or-resolve' : 'or-respond', o.id, o.query) : ''}
     ${o.status === 'Rejected' && o.rejectReason ? `<div class="note note-err" style="margin-bottom:18px">
       <span><b>Rejected:</b> ${esc(o.rejectReason)}</span></div>` : ''}
 
@@ -415,16 +415,32 @@ function barred(rec) {
 /* Answering a query, inline with the documents. On the AD2 side it records
    what the customer sent in (by email or at the branch), so the request can
    carry on without waiting for the customer to log in. */
-function queryResponseCard(ad2, checklist, onFile, act, id) {
+function queryResponseCard(ad2, checklist, onFile, act, id, query, extra = '') {
+  const asked = (query && query.docs) || [];
+  const rest = checklist.filter(x => !asked.some(d => d.id === x.id));
+  const extras = [1, 2, 3].filter(n => n === 1 || RESP.docs['extra' + (n - 1)]).map(n => ({ id:'extra' + n, name:'Additional document ' + n, required:false, note:'Optional — anything else you want to send' }));
   return `<div class="card" id="query-${esc(id)}" style="margin-bottom:18px"><div class="card-head"><h2>${ad2 ? 'Answer for the customer' : 'Respond to the query'}</h2></div><div class="card-body">
     ${ad2 ? `<div class="note note-info" style="margin-bottom:14px"><span>Received the answer or documents from the customer by email or at the branch?
       Record them here — the request goes back to the maker to verify, exactly as if the customer had answered.</span></div>` : ''}
     <div class="f"><label for="resp-text">${ad2 ? 'The customer’s answer' : 'Your response'}<span class="req">*</span></label>
       <textarea id="resp-text" data-act="resp-text" placeholder="${ad2 ? 'e.g. Customer sent the corrected invoice by email on …' : ''}">${esc(RESP.text)}</textarea></div>
-    <h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Upload or replace documents${ad2 ? ' received from the customer' : ''} (optional)</h3>
-    ${docRows(checklist.map(x => ({ ...x, required:false, note: onFile && onFile[x.id] ? 'On file: ' + onFile[x.id].filename : 'Not on file' })), RESP.docs, 'resp')}
+    ${extra}
+    ${asked.length ? `<h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Documents AD2 asked for</h3>
+      ${docRows(asked.map(d => ({ ...d, required:true, note:'Requested with this query' })), RESP.docs, 'resp')}` : ''}
+    ${rest.length ? `<h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Upload or replace documents${ad2 ? ' received from the customer' : ''} (optional)</h3>
+      ${docRows(rest.map(x => ({ ...x, required:false, note: onFile && onFile[x.id] ? 'On file: ' + onFile[x.id].filename : 'Not on file' })), RESP.docs, 'resp')}` : ''}
+    <h3 style="font-size:var(--fs-sm);margin:16px 0 8px">Other documents (optional)</h3>
+    ${docRows(extras, RESP.docs, 'resp')}
     <button class="btn btn-primary" style="margin-top:16px" type="button" data-act="${act}" data-id="${id}">${ad2 ? 'Record answer and send back to the maker' : 'Send response'}</button>
   </div></div>`;
+}
+
+/* What a query asked for, and what came back with the answer. */
+function queryDocsNote(q) {
+  if (!q) return '';
+  const asked = q.docs || [], got = Object.values(q.received || {});
+  return (asked.length ? `<br><b>Documents requested:</b> ${esc(asked.map(d => d.name).join(', '))}` : '')
+    + (got.length ? `<br><b>Received with the answer:</b> ${got.map(f => `${esc(f.name || 'Document')} — <button class="btn btn-link" type="button" data-act="view-doc" data-n="${esc(f.filename)}">${esc(f.filename)}</button>`).join('; ')}` : '');
 }
 
 /* AD2-only internal notes on a record. */
