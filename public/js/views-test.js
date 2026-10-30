@@ -355,6 +355,15 @@ function viewTestConsole() {
   const recent = [...(DB.audit || [])].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 8).map(a => `<tr><td style="white-space:nowrap">${dmyt(a.at)}</td><td>${esc(a.record)}</td>
       <td>${esc(a.actor)}</td><td>${esc(a.action)}</td></tr>`).join('');
 
+  /* query emails, simulated: nothing leaves the platform */
+  const mail = (DB.emails || []).slice(0, 20).map(m => {
+    const l = DB.logins.find(x => x.smeId === m.smeId && x.active !== false), url = location.origin + location.pathname + m.link;
+    return `<tr><td style="white-space:nowrap">${dmyt(m.sentAt)}</td><td>${esc((m.to || []).join(', '))}<br><small style="color:var(--muted)">${bizName(m.smeId)}</small></td>
+      <td><b>${esc(m.subject)}</b><div style="white-space:pre-line;color:var(--muted);font-size:var(--fs-xs)">${esc(m.body)}</div>
+        <a href="${esc(url)}" style="font-size:var(--fs-xs);word-break:break-all">${esc(url)}</a></td>
+      <td>${l ? goBtn(l, m.link, 'Open as ' + esc(l.name || l.loginId), null, 'btn btn-plain btn-sm') : ''}</td></tr>`;
+  }).join('');
+
   return shell(crumb('Test console'), `
     <div class="page-head"><div><h1>Test console</h1>
       <p>Open the platform as any customer or AD2 user in one click and run a journey end to end. Each step is taken as the person
@@ -379,6 +388,10 @@ function viewTestConsole() {
       <div class="card-body"><p style="margin:0 0 12px;color:var(--muted)">The treasury portal runs on this same platform: every rate booked above is a position there, deals
         treasury issues are applied here, and UTRs and FIRCs conclude the positions and move the Nostro.</p><div class="mt-quicks">${quickTmp}</div></div>
       <div class="card-head" style="border-top:1px solid var(--line)"><h2>Waiting in treasury (${tItems.length})</h2></div>${tTable}</div>
+    <div class="card" style="margin-bottom:var(--s5)" id="mt-emails"><div class="card-head"><h2>Emails sent (${(DB.emails || []).length})</h2>
+      <div class="acts"><small style="color:var(--muted)">Simulated — sent to the business’s registered address when AD2 raises a query</small></div></div>
+      <div class="tablewrap"><table class="dt"><thead><tr><th>Sent</th><th>To</th><th>Email</th><th></th></tr></thead>
+      <tbody>${mail || '<tr><td colspan="4">No emails yet. Raise a query on an application, payment, disposal or bill.</td></tr>'}</tbody></table></div></div>
     <div class="card" style="margin-bottom:var(--s5)"><div class="card-head"><h2>Open the platform as</h2></div>
       <div class="card-body">${peopleHTML}</div></div>
     <div class="card"><div class="card-head"><h2>Latest activity</h2>

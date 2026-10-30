@@ -13,9 +13,14 @@ function render(opts = {}) {
   const keep = opts.keepScroll !== false && hash === lastHash;
   const y = window.scrollY;
   /* a menu entry like "Authorise payments" opens a list already filtered */
-  if (hash !== lastHash) applyRouteFilter(parts, new URLSearchParams(qs || ''));
+  const q = new URLSearchParams(qs || ''), fresh = hash !== lastHash;
+  if (fresh) applyRouteFilter(parts, q);
 
-  if (!S && !['login','register','status'].includes(parts[0])) { location.hash = '#/login'; return; }
+  /* a deep link (from a query email or the bell) survives the sign-in */
+  if (!S && !['login','register','status'].includes(parts[0])) {
+    if (q.get('for')) { sessSet('ad2-next', hash); toast('Sign in to open the item AD2 sent you.'); }
+    location.hash = '#/login'; return;
+  }
   /* Treasury roles work in the Treasury Management Portal: same platform,
      same session. Signed in as one here, this page hands over (and keeps the
      demo guide and user switching available). */
@@ -36,7 +41,8 @@ function render(opts = {}) {
   }
   let html;
   try {
-    if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
+    if (q.get('for') && S && !isTreasury() && ctxSmeId() !== q.get('for')) html = viewWrongUser(q.get('for'), hash);
+    else if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
     else if (parts[0] === 'register') html = viewRegister();
     else if (parts[0] === 'status')   html = viewStatus();
     else if (parts[0] === 'test') {
@@ -98,6 +104,26 @@ function render(opts = {}) {
   document.body.classList.remove('nav-open');
   window.scrollTo(0, keep ? y : 0);
   lastHash = hash;
+  if (!keep && q.get('focus')) focusQuery(q.get('focus'));
+}
+/* Land on where the customer answers the query: scroll to it and focus it. */
+function focusQuery(id) {
+  const el = document.getElementById('query-' + id);
+  if (!el) return;
+  el.scrollIntoView({ block:'center' });
+  el.classList.add('flash');
+  el.querySelector('textarea, [data-act$="respond"]')?.focus({ preventScroll:true });
+}
+/* A deep link for another business: say so and offer the right sign-in. */
+function viewWrongUser(smeId, hash) {
+  const l = DB.logins.find(x => x.smeId === smeId && x.active !== false);
+  const name = sme(smeId)?.tradingName || sme(smeId)?.legalName || smeId;
+  return shell(crumb('Link for another user'), denied('This link is for ' + name,
+    `You are signed in as ${S.name || S.loginId} (${S.role}). Sign in as ${l ? l.domainId + ' / ' + l.loginId : 'that business'} to open it.`)
+    + `<div style="display:flex;gap:10px;justify-content:center;margin-top:16px">
+      ${MASTER && l ? `<button class="btn btn-primary" type="button" data-act="mt-go" data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" data-dest="${esc(hash)}">Open as ${esc(l.name || l.loginId)}</button>` : ''}
+      <button class="btn ${MASTER && l ? 'btn-plain' : 'btn-primary'}" type="button" data-act="deeplink-signout" data-dest="${esc(hash)}">Sign out and sign in as the right user</button>
+      <button class="btn btn-plain" type="button" data-act="go" data-href="${homeHash()}">Go to my home page</button></div>`);
 }
 window.addEventListener('hashchange', () => {
   /* confirmations belong to the screen they were shown on; errors stay */
@@ -218,27 +244,58 @@ function rebookIfChanged(draft, amount) {
     toast('The amount changed, so the booked rate was released. Book it again for the new amount.');
   }
 }
-/* Apply a deal the treasury desk issued for this customer. Only issued,
-   unexpired deals for the same customer, currency and direction are offered;
-   the server checks again when the request is submitted. */
-function dealModal(draft, cur, smeRec, dir) {
-  const side = dir === 'out' ? 'SELL' : 'BUY';
-  const deals = (DB.deals || []).filter(d => d.smeId === smeRec.id && d.currency === cur && d.side === side && d.status === 'Issued' && d.validUntil > nowISO());
-  modal({ title:'Apply an FX deal reference', okLabel:'Apply deal', body:`
-    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">Deals the treasury desk has issued for ${esc(smeRec.tradingName)} in ${esc(cur)}.
-      A deal can be used once, for up to its amount; any unused part goes back to treasury.</p>
-    ${deals.length ? `<div class="f"><label for="dref">Deal</label><select id="dref">${deals.map(d => `<option value="${esc(d.id)}">${esc(d.id)} · up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)} · valid until ${dmyt(d.validUntil)}</option>`).join('')}</select></div>`
-      : `<div class="note note-warn"><span>No deal is open for ${esc(smeRec.tradingName)} in ${esc(cur)}. Ask the treasury desk to issue one, or book the live rate.</span></div>
-         <div class="f" style="margin-top:12px"><label for="dref">Deal reference, if the desk gave you one</label><input id="dref" type="text" placeholder="e.g. FXD-2026-77521"></div>`}`,
+/* An FX deal: one the treasury desk issued for this customer (only issued,
+   unexpired deals for the same customer, currency and direction are offered)
+   or one it dealt by phone, entered with its rate. The INR equivalent follows
+   as the rate is typed; the server checks everything again. */
+const openDeals = (smeId, cur, dir) => (DB.deals || []).filter(d => d.smeId === smeId && d.currency === cur && d.side === (dir === 'out' ? 'SELL' : 'BUY')
+  && d.status === 'Issued' && d.validUntil > nowISO());
+const dealInr = (amt, rate) => Number(amt) > 0 && Number(rate) > 0 ? inr(amt * rate) : '—';
+function dealFields(amt, cur, deals, ref, rate) {
+  return `${deals.length ? `<p style="font-size:var(--fs-sm);margin:0 0 12px">Issued by the treasury desk: ${deals.map(d =>
+      `<b>${esc(d.id)}</b> — up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)}, valid until ${dmyt(d.validUntil)}`).join('; ')}.</p>`
+      : `<div class="note note-warn" style="margin-bottom:12px"><span>No deal is open on the platform for this customer in ${esc(cur)}. Enter the reference and rate the desk gave you by phone.</span></div>`}
+    <div class="grid g2 fields">
+      <div class="f"><label for="dref">Deal reference</label><input id="dref" type="text" list="dref-list" data-act="deal-in" value="${esc(ref || '')}" placeholder="e.g. FXD-2026-77521">
+        <datalist id="dref-list">${deals.map(d => `<option value="${esc(d.id)}">`).join('')}</datalist></div>
+      <div class="f"><label for="drate">Deal rate (₹ per 1 ${esc(cur)})</label><input id="drate" type="number" step="0.0001" min="0" data-act="deal-in" data-amt="${Number(amt) || 0}" value="${rate ? Number(rate).toFixed(4) : ''}">
+        <div class="hint">Held within 3% of the reference rate.</div></div>
+    </div>
+    <div class="calc" style="margin-top:12px"><div class="line total"><span>INR equivalent of ${Number(amt) > 0 ? money(amt, cur) : 'the amount'}</span><b id="dinr">${dealInr(amt, rate)}</b></div></div>`;
+}
+function readDeal(cur, deals) {
+  const dealRef = val('#dref').toUpperCase(), customerRate = Number(val('#drate')), ref = currency(cur)?.refRate;
+  if (!/^[A-Z0-9\-\/]{4,30}$/.test(dealRef)) throw 'Enter the deal reference: 4–30 letters, digits, dashes or slashes.';
+  if (!(customerRate > 0)) throw 'Enter the deal rate as a positive number.';
+  if (ref && Math.abs(customerRate - ref) / ref > 0.03) throw `₹ ${customerRate} is more than 3% from the reference ₹ ${ref}. Check the deal with the treasury desk.`;
+  const d = deals.find(x => x.id === dealRef);
+  if (d && Math.abs(d.rate - customerRate) > 0.00005) throw `Deal ${d.id} was issued at ₹ ${Number(d.rate).toFixed(4)}.`;
+  return { dealRef, customerRate, d };
+}
+function dealModal(draft, cur, smeRec, dir, amt) {
+  const deals = openDeals(smeRec.id, cur, dir), mine = draft.rate.mode === 'deal';
+  modal({ title: mine ? 'Edit the FX deal' : 'Apply an FX deal reference', okLabel:'Apply deal', body:`
+    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">A deal is used once, for up to its amount; any unused part goes back to treasury.</p>
+    ${dealFields(amt, cur, deals, mine ? draft.rate.dealRef : deals[0]?.id, mine ? draft.rate.customerRate : deals[0]?.rate)}`,
     onOk: () => {
-      const ref = val('#dref').toUpperCase();
-      if (!/^[A-Z0-9\-\/]{4,30}$/.test(ref)) { toast('Choose a deal, or enter the reference the desk gave you.', 'err'); return; }
-      const d = (DB.deals || []).find(x => x.id === ref);
+      let v; try { v = readDeal(cur, deals); } catch (m) { toast(m, 'err'); return; }
+      const refRate = currency(cur)?.refRate;
       releaseRate(draft);
-      draft.rate = { mode:'deal', dealRef:ref, positionId:d ? d.positionId : null, customerRate:d ? d.rate : 0, bookedAt:null, expiresAt:null, bookedAmount:null,
-        ...(d ? { refRate: currency(cur)?.refRate } : {}) };
-      closeModal(); render(); toast('Deal ' + ref + ' applied. Treasury already holds the position.', 'ok');
+      draft.rate = { mode:'deal', dealRef:v.dealRef, positionId:v.d ? v.d.positionId : null, customerRate:v.customerRate, bookedAt:null, expiresAt:null, bookedAmount:null,
+        refRate, margin: Math.round((dir === 'out' ? v.customerRate - refRate : refRate - v.customerRate) * 100) };
+      closeModal(); render();
+      toast(`Deal ${v.dealRef} applied at ₹ ${v.customerRate.toFixed(4)}. ${v.d ? 'Treasury already holds the position.' : 'It goes on the treasury book when the request is submitted.'}`, 'ok');
     } });
+}
+/* AD2 changes the deal on a submitted request (before authorisation). */
+function updateDealModal(rec, cmd, dir) {
+  const deals = openDeals(rec.smeId, rec.currency, dir);
+  commandModal({ title:'Update the FX deal on ' + rec.id, okLabel:'Save deal', cmd, body:`
+    <p style="font-size:var(--fs-sm);margin:0 0 14px">Now: ${rec.rate.mode === 'deal' ? 'deal <b>' + esc(rec.rate.dealRef) + '</b>' : 'booked rate'} at ₹ ${(rec.rate.customerRate || 0).toFixed(4)}.
+      Saving releases its treasury position and attaches the deal; the INR amounts follow the new rate.
+      ${rec.status === 'Verified' ? 'The request goes back to be verified again — by another maker.' : 'Another maker verifies it.'}</p>
+    ${dealFields(rec.amount, rec.currency, deals, rec.rate.mode === 'deal' ? rec.rate.dealRef : '', rec.rate.customerRate)}`,
+    read: () => { const { dealRef, customerRate } = readDeal(rec.currency, deals); return { id: rec.id, dealRef, customerRate }; } });
 }
 
 /* The purpose search belongs to the outward or the disposal draft. */
@@ -323,6 +380,7 @@ document.addEventListener('click', async e => {
 
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
+  if (act === 'deeplink-signout') { sessSet('ad2-next', t.dataset.dest); resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
   if (act === 'logout')    { resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
   if (act === 'bk-release') {
     commandModal({ title:'Release rate booking ' + t.dataset.id, okLabel:'Release', okClass:'btn-danger', cmd:'rate.release',
@@ -409,6 +467,8 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'ob-bank-del') { DRAFT.banks.splice(+t.dataset.i, 1); render(); return; }
+  if (act === 'ob-sig-add') { DRAFT.signatories.push({ name:'', designation:'', email:'', mobile:'', authority:'Singly', limit:'' }); render(); return; }
+  if (act === 'ob-sig-del') { DRAFT.signatories.splice(+t.dataset.i, 1); render(); return; }
   if (act === 'ob-penny') {
     const b = DRAFT.banks[+t.dataset.i];
     t.disabled = true; t.textContent = 'Verifying…';
@@ -546,7 +606,8 @@ document.addEventListener('click', async e => {
       toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours — ${OR_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
-  if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out'); return; }
+  if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount); return; }
+  if (act === 'or-deal-update') { updateDealModal(outwardRec(t.dataset.id), 'outward.updateDeal', 'out'); return; }
   if (act === 'or-rate-clear') { releaseRate(OR_DRAFT); render(); return; }
   if (act === 'or-save') {
     run('outward.saveDraft', { draft: OR_DRAFT }, { after: r => { OR_DRAFT.id = r.id; } });
@@ -663,7 +724,8 @@ document.addEventListener('click', async e => {
       toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours — ${DI_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
-  if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in'); return; }
+  if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in', diAmount(DI_DRAFT, i)); return; }
+  if (act === 'di-deal-update') { updateDealModal(disposalRec(t.dataset.id), 'disposal.updateDeal', 'in'); return; }
   if (act === 'di-rate-clear'){ releaseRate(DI_DRAFT); render(); return; }
   if (act === 'di-submit') {
     const d = DI_DRAFT, errs = [], i = inwardRec(d.inwardId), acc = acct(d.creditAccountId);
@@ -953,18 +1015,28 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
 
   /* onboarding review */
   if (act === 'rv-charge-add') {
-    modal({ title:'Add charge', okLabel:'Add', body:`
+    const i = t.dataset.i, c = i != null ? REVIEW.charges[+i] : { name:'', basis:'Fixed', value:500, frequency:'Per transaction' };
+    const opt = (list, v) => list.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('');
+    modal({ title: i != null ? 'Edit charge' : 'Add charge', okLabel: i != null ? 'Save' : 'Add', body:`
       <div class="grid g2 fields">
-        <div class="f"><label for="ch-name">Charge</label><select id="ch-name">${DB.chargeCategories.map(c => `<option>${esc(c.name)}</option>`).join('')}</select></div>
-        <div class="f"><label for="ch-basis">Basis</label><select id="ch-basis"><option>Fixed</option><option>Percentage</option></select></div>
-        <div class="f"><label for="ch-val">Value</label><input id="ch-val" type="number" step="0.01" value="500"></div>
+        <div class="f"><label for="ch-name">Charge</label><select id="ch-name">${opt(DB.chargeCategories.map(x => x.name), c.name)}</select></div>
+        <div class="f"><label for="ch-basis">Basis</label><select id="ch-basis">${opt(['Fixed','Percentage'], c.basis)}</select></div>
+        <div class="f"><label for="ch-val">Value</label><input id="ch-val" type="number" step="0.01" value="${esc(c.value)}"></div>
         <div class="f"><label for="ch-cur">Currency</label><select id="ch-cur"><option>INR</option></select></div>
-        <div class="f span2"><label for="ch-freq">Applied</label><select id="ch-freq"><option>Per transaction</option><option>Per document set</option><option>Monthly</option></select></div>
-      </div>`,
+        <div class="f span2"><label for="ch-freq">Applied</label><select id="ch-freq">${opt(['Per transaction','Per document set','Monthly'], c.frequency)}</select></div>
+      </div>
+      <h3 style="font-size:var(--fs-md);margin:18px 0 6px">SWIFT charge by payment currency (INR)</h3>
+      <p class="hint" style="margin:0 0 10px">For a fixed SWIFT charge only. A blank currency uses the value above.</p>
+      <div class="grid g2 fields">${DB.currencies.map(x => `<div class="f"><label for="ch-bc-${x.code}">${x.code} payments</label>
+        <input id="ch-bc-${x.code}" type="number" min="0" step="0.01" value="${esc(c.byCurrency?.[x.code] ?? '')}"></div>`).join('')}</div>`,
       onOk: () => {
         const v = parseFloat(val('#ch-val'));
         if (isNaN(v) || v < 0) { toast('Enter a value, including zero.', 'err'); return; }
-        REVIEW.charges.push({ name:val('#ch-name'), basis:val('#ch-basis'), value:v, currency:val('#ch-cur'), frequency:val('#ch-freq') });
+        const ch = { name:val('#ch-name'), basis:val('#ch-basis'), value:v, currency:val('#ch-cur'), frequency:val('#ch-freq') };
+        const byCurrency = {};
+        DB.currencies.forEach(x => { const b = val('#ch-bc-' + x.code); if (b !== '') byCurrency[x.code] = Number(b); });
+        if (DB.chargeCategories.find(x => x.name === ch.name)?.id === 'swift' && ch.basis === 'Fixed' && Object.keys(byCurrency).length) ch.byCurrency = byCurrency;
+        i != null ? REVIEW.charges.splice(+i, 1, ch) : REVIEW.charges.push(ch);
         closeModal(); render();
       } });
     return;
@@ -1200,6 +1272,7 @@ document.addEventListener('change', e => {
 
 
   /* registration fields */
+  if (obListField(t)) return;
   if (t.dataset.k) {
     const k = t.dataset.k;
     if (k === 'requestedCurrencies') {
@@ -1235,7 +1308,7 @@ document.addEventListener('change', e => {
     if (k === 'amount') {
       OR_DRAFT.amountFromBills = false;
       const placed = OR_DRAFT.allocations.reduce((s2, a) => s2 + a.amount, 0);
-      if (Number(t.value) + 0.001 < placed) toast(`The bills you chose add up to ${money(placed, OR_DRAFT.currency)}. Lower a bill amount or remove one.`, 'err');
+      if (placed && Math.abs(Number(t.value) - placed) > 0.001) toast(`The bills you chose add up to ${money(placed, OR_DRAFT.currency)} — the amount must equal them. Change a bill amount, or add or remove a bill.`, 'err');
       rebookIfChanged(OR_DRAFT, t.value);
     }
     if (['currency','amount','debitAccountId','executionDate'].includes(k)) render();
@@ -1244,7 +1317,7 @@ document.addEventListener('change', e => {
   if (t.dataset.act === 'or-billpick' && t.value) {
     const d = OR_DRAFT, b = bill(t.value);
     if (!d.currency) d.currency = b.currency;
-    if (d.currency !== b.currency) { toast(`${b.id} is in ${b.currency}; this payment is in ${d.currency}.`, 'err'); render(); return; }
+    if (d.currency !== b.currency) { toast(`${b.id} is in ${b.currency}; this payment is in ${d.currency}. Settling a bill in another currency is not supported yet — pay it in ${b.currency}.`, 'err'); render(); return; }
     const free = Engine.billAvailable(DB, b, d.id);
     const placed = d.allocations.reduce((s2, a) => s2 + a.amount, 0);
     const room = d.amountFromBills || !(Number(d.amount) > 0) ? free : Number(d.amount) - placed;
@@ -1289,6 +1362,7 @@ document.addEventListener('change', e => {
     return;
   }
   if (t.dataset.act === 'di-dec') { DI_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
+  if (t.dataset.act === 'or-billcur') { OR_DRAFT.billsAllCur = t.checked; render(); return; }
   if (t.dataset.act === 'or-dec') { OR_DRAFT.declarations = OR_DRAFT.declarations || {}; OR_DRAFT.declarations[t.dataset.dk] = t.checked; return; }
   if (t.dataset.act === 'di-margin') { DI_DRAFT.marginOverride = t.value; render(); return; }
   if (t.dataset.act === 'or-margin') { OR_DRAFT.marginOverride = t.value; render(); return; }
@@ -1381,12 +1455,28 @@ document.addEventListener('input', e => {
     return;
   }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
+  if (obListField(t)) return;
+  if (t.dataset.act === 'deal-in') {
+    const d = t.id === 'dref' && (DB.deals || []).find(x => x.id === t.value.trim().toUpperCase() && x.status === 'Issued');
+    if (d) $('#drate').value = Number(d.rate).toFixed(4);
+    $('#dinr').textContent = dealInr($('#drate').dataset.amt, $('#drate').value);
+    return;
+  }
   if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; saveObDraft(); return; }
   if (t.dataset.ork && t.tagName !== 'SELECT') { OR_DRAFT[t.dataset.ork] = t.value; return; }
   if (t.dataset.blk) { BILL_DRAFT[t.dataset.blk] = t.value; return; }
   if (t.dataset.dik && t.tagName !== 'SELECT') { DI_DRAFT[t.dataset.dik] = t.value; return; }
   if (t.dataset.act === 'rv-remarks' && REVIEW) { REVIEW.remarks = t.value; return; }
 });
+
+/* registration list fields: signatory rows and the comma-separated countries */
+function obListField(t) {
+  if (t.dataset.sig) DRAFT.signatories[+t.dataset.sig][t.dataset.f] = t.value;
+  else if (t.dataset.k === 'countries') DRAFT.countries = t.value.split(',').map(x => x.trim()).filter(Boolean);
+  else return false;
+  saveObDraft();
+  return true;
+}
 
 let debounceTimer = null;
 function debounceRender() {

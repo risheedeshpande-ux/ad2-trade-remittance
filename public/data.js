@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v10';
+const SEED_VERSION = 'ad2-trade-v11';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -489,7 +489,11 @@ const SMES = [
     contactName:'Kavita Raghunathan', designation:'Director — Finance',
     email:'kavita@meridiantextiles.example', mobile:'+91 98204 11562',
     industry:'Textiles and apparel', description:'Cotton and blended fabric exporter, supplying EU and UK retail.',
-    expectedVolume:'USD 4,000,000', requestedCurrencies:['USD','EUR','GBP'], service:'Both',
+    importVolume:'USD 1,200,000', exportVolume:'USD 2,800,000', countries:['United Kingdom','Germany','Italy','China'],
+    requestedCurrencies:['USD','EUR','GBP'], service:'Both',
+    signatories:[{ name:'Kavita Raghunathan', designation:'Director — Finance', email:'kavita@meridiantextiles.example', mobile:'+91 98204 11562', authority:'Singly', limit:500000 },
+                 { name:'Arjun Raghunathan', designation:'Managing Director', email:'arjun@meridiantextiles.example', mobile:'+91 98204 11570', authority:'Singly', limit:null },
+                 { name:'Neha Kulkarni', designation:'Finance Manager', email:'neha@meridiantextiles.example', mobile:'+91 98204 11588', authority:'Jointly', limit:250000 }],
     source:'Digital', createdBy:'SME Applicant', status:'Approved',
     submittedAt:'2026-07-02T09:20:00', approvedAt:'2026-07-09T15:42:00',
     config:{
@@ -497,7 +501,8 @@ const SMES = [
       margins:{ USD:50, EUR:60, GBP:68 }, marginBasis:'paise',
       charges:[
         { category:'txn',   name:'Transaction handling fee', basis:'Fixed', value:500, currency:'INR', frequency:'Per transaction' },
-        { category:'swift', name:'SWIFT charge',             basis:'Fixed', value:750, currency:'INR', frequency:'Per transaction' },
+        { category:'swift', name:'SWIFT charge',             basis:'Fixed', value:750, currency:'INR', frequency:'Per transaction',
+          byCurrency:{ USD:1500, EUR:1800, GBP:1700 } },
       ],
       effectiveDate:'2026-07-10', remarks:'Standard SME trade pricing. Reviewed at 12 months.'
     }
@@ -511,7 +516,9 @@ const SMES = [
     contactName:'Devansh Mehta', designation:'Managing Partner',
     email:'devansh@arcadiacomponents.example', mobile:'+91 99745 20388',
     industry:'Electronic components', description:'Imports passive components and connectors for domestic assembly.',
-    expectedVolume:'USD 2,200,000', requestedCurrencies:['USD','SGD'], service:'Import',
+    importVolume:'USD 2,200,000', countries:['China','Singapore','Taiwan'], requestedCurrencies:['USD','SGD'], service:'Import',
+    signatories:[{ name:'Devansh Mehta', designation:'Managing Partner', email:'devansh@arcadiacomponents.example', mobile:'+91 99745 20388', authority:'Singly', limit:null },
+                 { name:'Pooja Shah', designation:'Partner', email:'pooja@arcadiacomponents.example', mobile:'+91 99745 20391', authority:'Jointly', limit:200000 }],
     source:'Offline', createdBy:'AD2 Maker (R. Iyer)', status:'Approved',
     submittedAt:'2026-08-01T11:05:00', approvedAt:'2026-08-06T10:12:00',
     config:{
@@ -520,6 +527,8 @@ const SMES = [
       charges:[
         { category:'txn',   name:'Transaction handling fee', basis:'Fixed', value:450, currency:'INR', frequency:'Per transaction' },
         { category:'doc',   name:'Document handling fee',    basis:'Fixed', value:300, currency:'INR', frequency:'Per document set' },
+        { category:'swift', name:'SWIFT charge',             basis:'Fixed', value:750, currency:'INR', frequency:'Per transaction',
+          byCurrency:{ USD:1500, SGD:1400 } },
       ],
       effectiveDate:'2026-08-07', remarks:'Import-only. Export permission on request after six months of activity.'
     }
@@ -533,7 +542,8 @@ const SMES = [
     contactName:'Suresh Palaniappan', designation:'Proprietor',
     email:'suresh@nilgirispice.example', mobile:'+91 94430 71129',
     industry:'Agricultural commodities', description:'Pepper, cardamom and clove exports to the Gulf and Europe.',
-    expectedVolume:'USD 900,000', requestedCurrencies:['USD','AED'], service:'Export',
+    exportVolume:'USD 900,000', countries:['United Arab Emirates','Saudi Arabia','Netherlands'], requestedCurrencies:['USD','AED'], service:'Export',
+    signatories:[{ name:'Suresh Palaniappan', designation:'Proprietor', email:'suresh@nilgirispice.example', mobile:'+91 94430 71129', authority:'Singly', limit:null }],
     source:'Digital', createdBy:'SME Applicant', status:'Approved',
     submittedAt:'2026-08-14T16:40:00', approvedAt:'2026-08-20T12:30:00',
     config:{
@@ -554,7 +564,8 @@ const SMES = [
     contactName:'Harikrishna Patel', designation:'Karta',
     email:'hk@hktrading.example', mobile:'+91 98250 66214',
     industry:'Chemicals and dyes', description:'Dye intermediates, importing from China and Korea.',
-    expectedVolume:'USD 1,400,000', requestedCurrencies:['USD'], service:'Import',
+    importVolume:'USD 1,400,000', countries:['China','South Korea'], requestedCurrencies:['USD'], service:'Import',
+    signatories:[{ name:'Harikrishna Patel', designation:'Karta', email:'hk@hktrading.example', mobile:'+91 98250 66214', authority:'Singly', limit:null }],
     source:'Digital', createdBy:'SME Applicant', status:'Clarification Required',
     submittedAt:'2026-09-15T10:02:00', approvedAt:null, config:null,
     query:{ question:'IEC is mandatory for regular importers. Please provide your Importer Exporter Code.',
@@ -569,7 +580,8 @@ const SMES = [
     contactName:'Ishani Bhattacharya', designation:'Proprietor',
     email:'ishani@ishaniconsulting.example', mobile:'+91 90080 34417',
     industry:'Professional services', description:'Engineering design consultancy billing overseas principals.',
-    expectedVolume:'USD 300,000', requestedCurrencies:['USD','EUR'], service:'Export',
+    exportVolume:'USD 300,000', countries:['Germany','United States'], requestedCurrencies:['USD','EUR'], service:'Export',
+    signatories:[{ name:'Ishani Bhattacharya', designation:'Proprietor', email:'ishani@ishaniconsulting.example', mobile:'+91 90080 34417', authority:'Singly', limit:null }],
     source:'Digital', createdBy:'SME Applicant', status:'Pending Approval',
     submittedAt:'2026-09-18T14:25:00', approvedAt:null, config:null,
     /* prepared by the maker and waiting for a checker */
@@ -588,7 +600,10 @@ const SMES = [
     contactName:'Ramesh Chandran', designation:'Head of Treasury',
     email:'ramesh@calderametals.example', mobile:'+91 99133 88204',
     industry:'Metals and alloys', description:'Aluminium billet importer and semi-finished exporter.',
-    expectedVolume:'USD 7,500,000', requestedCurrencies:['USD','EUR','JPY'], service:'Both',
+    importVolume:'USD 5,000,000', exportVolume:'USD 2,500,000', countries:['Australia','Japan','Germany','United Arab Emirates'],
+    requestedCurrencies:['USD','EUR','JPY'], service:'Both',
+    signatories:[{ name:'Ramesh Chandran', designation:'Head of Treasury', email:'ramesh@calderametals.example', mobile:'+91 99133 88204', authority:'Jointly', limit:1000000 },
+                 { name:'Leela Varghese', designation:'Chief Financial Officer', email:'leela@calderametals.example', mobile:'+91 99133 88219', authority:'Singly', limit:null }],
     source:'Offline', createdBy:'AD2 Maker (R. Iyer)', status:'Submitted',
     submittedAt:'2026-09-20T09:15:00', approvedAt:null, config:null
   },

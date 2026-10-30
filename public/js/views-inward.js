@@ -311,6 +311,7 @@ function viewDisposalDetail(id) {
     if (d.status === 'Submitted' && can('inward.verifyDisposal')) actions.push(`<button class="btn btn-primary" type="button" data-act="di-verify" data-id="${d.id}">Verify</button>`);
     if (d.status === 'Verified' && can('inward.approveDisposal')) actions.push(`<button class="btn btn-primary" type="button" data-act="di-authorise" data-id="${d.id}">Authorise</button>`);
     if (d.status === 'Authorised' && can('inward.processDisposal')) actions.push(`<button class="btn btn-primary" type="button" data-act="di-process" data-id="${d.id}">Credit and issue FIRC</button>`);
+    if (['Submitted','Verified'].includes(d.status) && !fcy && can('inward.verifyDisposal') && can('fx.dealRef')) actions.push(`<button class="btn btn-plain" type="button" data-act="di-deal-update" data-id="${d.id}">Update FX deal</button>`);
     if (['Submitted','Verified'].includes(d.status) && can('outward.query')) actions.push(`<button class="btn btn-plain" type="button" data-act="di-query" data-id="${d.id}">Raise query</button>`);
     if (['Submitted','Verified','Authorised','Clarification Required'].includes(d.status) && can('outward.reject')) actions.push(`<button class="btn btn-danger" type="button" data-act="di-reject" data-id="${d.id}">Reject</button>`);
     const waiting = { 'Submitted':'inward.verifyDisposal', 'Verified':'inward.approveDisposal', 'Authorised':'inward.processDisposal' }[d.status];

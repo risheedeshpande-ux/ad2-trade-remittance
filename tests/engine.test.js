@@ -23,8 +23,9 @@ const application = over => ({
   incorporationDate: '2015-06-01', regNumber: 'U19100TN2015PTC100234', country: 'India', address: '12 Tannery Road, Chennai 600044',
   domainId: 'COROMANDEL', pan: 'AACCC1234F', gstin: '33AACCC1234F1Z5', iec: '0415009876',
   contactName: 'Meena Sundaram', designation: 'CFO', email: 'meena@coromandel.example', mobile: '+91 98400 12345',
-  industry: 'Leather goods', description: 'Imports finished hides, exports leather goods to Europe.', expectedVolume: 'USD 3,000,000',
-  requestedCurrencies: ['USD', 'EUR'], service: 'Both',
+  industry: 'Leather goods', description: 'Imports finished hides, exports leather goods to Europe.', importVolume: 'USD 2,000,000',
+  exportVolume: 'USD 1,000,000', countries: ['Italy', 'Germany'], requestedCurrencies: ['USD', 'EUR'], service: 'Both',
+  signatories: [{ name: 'Meena Sundaram', designation: 'CFO', email: 'meena@coromandel.example', mobile: '+91 98400 12345', authority: 'Singly', limit: '' }],
   banks: [{ bank: 'HDFC Bank', branch: 'Guindy', accountNumber: '50200099887766', ifsc: 'HDFC0000123', currency: 'INR', type: 'Current', verified: true }],
   docs: { coi: doc('coi'), pan: doc('pan'), gst: doc('gst'), iec: doc('iec'), addr: doc('addr') },
   ...over,
@@ -108,8 +109,7 @@ test('end to end: onboard a partner, pay a supplier, dispose export proceeds', (
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, declarations: {}, docs: { ...draft.docs, boe: doc('boe') } } }), /declarations/);
   refuses(() => run(db, SME, 'outward.submit', { draft }), /Bill of Entry/);
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, purposeCode: 'S1006', docs: { ...draft.docs, boe: doc('boe') } } }), /not available under DIR/);
-  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, allocations: [], docs: { ...draft.docs, boe: doc('boe') } } }), /import bill/);
-  /* a booking made three days ago has run past its 48-hour lock */
+  refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, allocations: [], docs: { ...draft.docs, boe: doc('boe') } } }), /import bill/);  /* a booking made three days ago has run past its 48-hour lock */
   const stale = run(db, SME, 'rate.book', { dir: 'out', currency: 'EUR', amount: 40000 }, { now: '2026-09-21T09:00:00.000Z' }).positionId;
   refuses(() => run(db, SME, 'outward.submit', { draft: { ...draft, rate: { mode: 'booked', positionId: stale }, docs: { ...draft.docs, boe: doc('boe') } } }), /expired/);
   const orId = run(db, SME, 'outward.submit', { draft: { ...draft, docs: { ...draft.docs, boe: doc('boe') } } }).id;
@@ -537,4 +537,101 @@ test('master test user: opens anyone, is audited, holds no authority of its own'
   /* a business sees no trace of the master in its own view */
   const mer = Engine.scopeState(db, who('MERIDIANTEX', 'SMEUSER'));
   assert.ok(!mer.audit.some(a => /Master/.test(a.actor)));
+});
+
+test('trade KYC: volumes follow the service, countries and signatories are required', () => {
+  const db = Engine.freshState(SEED);
+  const sub = over => run(db, null, 'onboarding.submit', { application: application(over), password: 'Welcome123' });
+  refuses(() => sub({ exportVolume: '' }), /export volume/);
+  refuses(() => sub({ service: 'Import', importVolume: '' }), /import volume/);
+  refuses(() => sub({ countries: [] }), /country/);
+  refuses(() => sub({ signatories: [] }), /signatory/);
+  const sig = application().signatories[0];
+  refuses(() => sub({ signatories: [{ ...sig, email: 'nope' }] }), /email/);
+  refuses(() => sub({ signatories: [{ ...sig, authority: 'Alone' }] }), /signing authority/);
+  refuses(() => sub({ signatories: [{ ...sig, limit: -5 }] }), /limit/);
+  /* an importer needs no export volume; signatories and countries are stored */
+  const newId = sub({ domainId: 'IMPONLY', service: 'Import', exportVolume: '', countries: ['Iran', ' Italy ', 'Italy'],
+    signatories: [sig, { ...sig, name: 'Ravi K', authority: 'Jointly', limit: '50000' }] }).smeId;
+  const s = db.smes.find(x => x.id === newId);
+  assert.deepEqual(s.countries, ['Iran', 'Italy']);
+  assert.deepEqual(s.signatories.map(g => [g.authority, g.limit]), [['Singly', null], ['Jointly', 50000]]);
+  /* countries traded hit the high-risk jurisdiction rule; the applicant never sees the flag */
+  assert.match(s.riskFlags[0], /Iran is on the high-risk list/);
+  assert.ok(!Engine.scopeState(db, who('IMPONLY', 'ADMIN')).smes[0].riskFlags);
+});
+
+test('SWIFT charge by payment currency, flat value for the rest and for older records', () => {
+  const db = Engine.freshState(SEED);
+  const swift = { name: 'SWIFT charge', basis: 'Fixed', value: 750, byCurrency: { USD: 1500, EUR: 1800, XXX: 9 } };
+  refuses(() => run(db, MAKER, 'onboarding.review', { smeId: 'SME-1006', config: { ...pricing, charges: [{ ...swift, byCurrency: { USD: -1 } }] } }), /SWIFT charge for USD/);
+  run(db, MAKER, 'onboarding.review', { smeId: 'SME-1006', config: { ...pricing, charges: [swift] }, submit: true });
+  run(db, COMPLIANCE, 'onboarding.approve', { smeId: 'SME-1006' });
+  const cal = db.smes.find(s => s.id === 'SME-1006');
+  assert.deepEqual(cal.config.charges[0].byCurrency, { USD: 1500, EUR: 1800 });   // unknown currencies dropped
+  assert.deepEqual(['USD', 'EUR', 'JPY'].map(c => Engine.chargesFor(cal, 100, 90, c)[0].amount), [1500, 1800, 750]);
+  /* a stored flat SWIFT charge with no table still prices */
+  assert.equal(Engine.chargesFor({ config: { charges: [{ name: 'SWIFT charge', basis: 'Fixed', value: 750 }] } }, 100, 90, 'EUR')[0].amount, 750);
+  /* the server prices a EUR payment with the EUR SWIFT charge */
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const id = run(db, MER, 'outward.submit', { draft: { beneficiaryId: 'BEN-001', beneficiary: 'Filatura Ponti S.p.A.', beneficiaryCountry: 'Italy',
+    beneficiaryAccount: 'IT60X0542811101000000123456', beneficiaryBank: 'Intesa Sanpaolo', beneficiaryBankCountry: 'Italy', swift: 'BCITITMM',
+    currency: 'EUR', amount: 45000, remittanceType: 'DIR', purposeCode: 'S0102', executionDate: '2026-09-24', debitAccountId: 'BA-001',
+    allocations: [{ billId: 'BL-24014', amount: 45000 }], docs: { transport: doc('t'), invoice: doc('i'), boe: doc('b') }, declarations: DEC,
+    rate: { mode: 'booked', bookedAt: NOW } } }).id;
+  const o = db.outward.find(x => x.id === id);
+  assert.deepEqual(o.charges, [{ name: 'Transaction handling fee', amount: 500 }, { name: 'SWIFT charge', amount: 1800 }]);
+  assert.equal(o.debitInr, Math.round((o.inrAmount + 2300) * 100) / 100);
+});
+
+test('a query reaches the customer: bell and email, deep-linked, seen only by that customer', () => {
+  const db = Engine.freshState(SEED);
+  const q = run(db, MAKER, 'lab.queue', { smeId: 'SME-1001' }).ids;
+  const bill = db.bills.find(b => b.smeId === 'SME-1001' && ['Submitted', 'Resubmitted', 'Under Review'].includes(b.review))
+    || Object.assign(db.bills.find(b => b.smeId === 'SME-1001'), { review: 'Submitted' });
+  const cases = [
+    [MAKER, 'onboarding.clarify', { smeId: 'SME-1005' }, 'SME-1005', 'SME-1005', '#/sme/dashboard?for=SME-1005&focus=SME-1005'],
+    [MAKER, 'outward.query', { id: q[0] }, 'SME-1001', q[0], `#/sme/outward/${q[0]}?for=SME-1001&focus=${q[0]}`],
+    [MAKER, 'disposal.query', { id: q[3] }, 'SME-1001', q[3], `#/sme/disposals/${q[3]}?for=SME-1001&focus=${q[3]}`],
+    [CHECKER, 'bill.query', { id: bill.id }, 'SME-1001', bill.id, `#/sme/bills/${bill.type.toLowerCase()}?s=query&for=SME-1001&focus=${bill.id}`],
+  ];
+  cases.forEach(([w, cmd, p, smeId, rec, link]) => {
+    run(db, w, cmd, { ...p, question: 'Send the signed invoice' });
+    const n = db.notifications[0], m = db.emails[0];
+    assert.deepEqual([n.toSmeId, n.link], [smeId, link], cmd);
+    assert.deepEqual([m.smeId, m.record, m.link, m.to], [smeId, rec, link, [db.smes.find(s => s.id === smeId).email]], cmd);
+    assert.match(m.body, /Send the signed invoice/);
+  });
+  /* each customer sees only its own; the master sees the whole outbox, the public nothing */
+  const MER = who('MERIDIANTEX', 'SMEUSER'), ARC = who('ARCADIACOMP', 'SMEUSER');
+  const app = db.logins.find(l => l.smeId === 'SME-1005');
+  const mine = Engine.scopeState(db, MER);
+  assert.equal(mine.emails.length, 3);
+  assert.ok(mine.emails.every(m => m.smeId === 'SME-1001') && mine.notifications.every(n => n.toSmeId === 'SME-1001'));
+  const other = Engine.scopeState(db, ARC);
+  assert.ok(!other.emails.length && other.notifications.every(n => n.toSmeId === 'SME-1002'));
+  assert.deepEqual(Engine.scopeState(db, who(app.domainId, app.loginId)).emails.map(m => m.record), ['SME-1005']);
+  assert.equal(Engine.scopeState(db, who('TEST', 'MASTER')).emails.length, 4);
+  assert.equal(Engine.scopeState(db, null).emails.length, 0);
+  /* state stored before the outbox existed */
+  delete db.emails;
+  assert.deepEqual(Engine.scopeState(db, MER).emails, []);
+});
+
+test('outward: with bills chosen, the amount must equal their total; a bill in another currency is refused', () => {
+  const MER = who('MERIDIANTEX', 'SMEUSER');
+  const draft = over => ({ beneficiaryId: 'BEN-001', beneficiary: 'Filatura Ponti S.p.A.', beneficiaryCountry: 'Italy',
+    beneficiaryAccount: 'IT60X0542811101000000123456', beneficiaryBank: 'Intesa Sanpaolo', beneficiaryBankCountry: 'Italy', swift: 'BCITITMM',
+    currency: 'EUR', amount: 45000, remittanceType: 'DIR', purposeCode: 'S0102', executionDate: '2026-09-25', debitAccountId: 'BA-001',
+    rate: { mode: 'booked', bookedAt: NOW }, allocations: [{ billId: 'BL-24014', amount: 45000 }],
+    docs: { transport: doc('t'), invoice: doc('i'), boe: doc('b') }, declarations: DEC, ...over });
+  const submit = over => run(Engine.freshState(SEED, NOW), MER, 'outward.submit', { draft: draft(over) });
+  refuses(() => submit({ amount: 50000 }), /must equal their total/);
+  refuses(() => submit({ amount: 40000 }), /exceed/);
+  refuses(() => submit({ currency: 'USD' }), /another currency is not supported/);
+  assert.ok(submit({}).id);
+  /* OTT: bills optional — none is fine, but a part-allocation is not */
+  const ott = { remittanceType: 'OTT', purposeCode: 'S1006', docs: { invoice: doc('i'), form145: doc('f'), form146: doc('g') } };
+  assert.ok(submit({ ...ott, allocations: [] }).id);
+  refuses(() => submit({ ...ott, amount: 50000 }), /must equal their total/);
 });

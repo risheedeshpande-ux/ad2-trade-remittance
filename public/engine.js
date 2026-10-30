@@ -148,10 +148,11 @@
   const customerRate = (db, code, marginPaise) =>
     +(((currencyOf(db, code) || {}).refRate ?? 0) + (marginPaise || 0) / 100).toFixed(4);
 
-  function chargesFor(s, amt, rate) {
+  /* A fixed charge may carry an INR amount per payment currency (SWIFT); the flat value covers the rest. */
+  function chargesFor(s, amt, rate, cur) {
     return ((s.config && s.config.charges) || []).map(c => ({
       name: c.name,
-      amount: round2(c.basis === 'Fixed' ? c.value : amt * rate * c.value / 100),
+      amount: round2(c.basis === 'Fixed' ? (c.byCurrency && c.byCurrency[cur] != null ? c.byCurrency[cur] : c.value) : amt * rate * c.value / 100),
     }));
   }
 
@@ -182,6 +183,9 @@
     if ((r = rule('bankctry')) && facts.beneCountry && facts.bankCountry && facts.beneCountry !== facts.bankCountry)
       add(r, `Beneficiary in ${facts.beneCountry}, bank in ${facts.bankCountry}`);
     if ((r = rule('deal')) && facts.deal) add(r, 'Rate from FX deal reference');
+    return scored(flags);
+  }
+  function scored(flags) {
     const score = Math.min(100, flags.reduce((t, f) => t + f.weight, 0));
     return { score, level: score >= 60 ? 'High' : score >= 25 ? 'Medium' : 'Low', flags };
   }
@@ -266,6 +270,19 @@
                                text, link: link || '', at: now });
     if (db.notifications.length > 400) db.notifications.length = 400;
   }
+  /* AD2 queries the customer: the bell, and an email (simulated, kept in
+     db.emails) to the registered address. Both deep-link to where the
+     customer answers; the browser makes the link absolute. */
+  function queryCustomer(db, now, smeId, rec, path, text, question) {
+    const link = `#${path}${path.includes('?') ? '&' : '?'}for=${encodeURIComponent(smeId)}&focus=${encodeURIComponent(rec)}`;
+    notify(db, now, { toSmeId: smeId, text, link });
+    const s = smeOf(db, smeId);
+    if (!s || !s.email) return;
+    db.emails = db.emails || [];
+    db.emails.unshift({ id: 'EM-' + seq(db, 'email'), smeId, record: rec, to: [s.email], subject: text, link, sentAt: now,
+      body: `Dear ${s.contactName || s.legalName},\n\n${text}:\n\n"${question}"\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services` });
+    if (db.emails.length > 400) db.emails.length = 400;
+  }
 
   /* ---------- bill reservation ------------------------------------------- */
   const OPEN = ['Submitted', 'Verified', 'Authorised', 'Clarification Required'];
@@ -302,7 +319,7 @@
       if (!b || b.smeId !== s.id) fail('An allocated bill does not belong to this SME.');
       if (b.type !== type) fail(`Bill ${b.id} is not an ${type.toLowerCase()} bill.`);
       if (b.review !== 'Accepted') fail(`Bill ${b.id} has not been accepted by AD2 yet.`);
-      if (b.currency !== currency) fail(`Bill ${b.id} is in ${b.currency}, not ${currency}.`);
+      if (b.currency !== currency) fail(`Bill ${b.id} is in ${b.currency}, not ${currency}. Settling a bill in another currency is not supported yet.`);
       if (out.some(o => o.billId === b.id)) fail(`Bill ${b.id} is allocated twice.`);
       const avail = billAvailable(db, b, exclude);
       if (amt > avail + 0.001) fail(`Bill ${b.id} has only ${fmt(avail, b.currency)} available to allocate.`);
@@ -421,9 +438,29 @@
       mobile: txt(app.mobile, 'Mobile number', { max: 20, pattern: /^\+?[0-9 \-]{8,20}$/, patternMsg: 'Enter a valid mobile number.' }),
       industry: txt(app.industry, 'Industry', { max: 100 }),
       description: txt(app.description, 'Business description', { max: 1000 }),
-      expectedVolume: txt(app.expectedVolume, 'Expected annual volume', { max: 60 }),
+      importVolume: txt(app.importVolume, 'Expected annual import volume', { max: 60, required: false }),
+      exportVolume: txt(app.exportVolume, 'Expected annual export volume', { max: 60, required: false }),
       service: oneOf(app.service, ['Import', 'Export', 'Both'], 'Requested service'),
     };
+    need(out.service === 'Export' || out.importVolume, 'Expected annual import volume is required.');
+    need(out.service === 'Import' || out.exportVolume, 'Expected annual export volume is required.');
+    out.countries = [...new Set((Array.isArray(app.countries) ? app.countries : []).map(c => txt(c, 'Country traded', { max: 60, required: false })).filter(Boolean))];
+    need(out.countries.length, 'List at least one country you trade with.');
+    need(out.countries.length <= 30, 'List up to 30 countries.');
+    const sigs = Array.isArray(app.signatories) ? app.signatories.slice(0, 10) : [];
+    need(sigs.length, 'Add at least one authorised signatory.');
+    out.signatories = sigs.map((g, i) => {
+      const L = `Signatory ${i + 1}`, lim = g.limit == null || g.limit === '' ? null : Number(g.limit);
+      need(lim == null || (isFinite(lim) && lim > 0 && lim <= 1e12), `${L} limit must be a positive amount.`);
+      return {
+        name: txt(g.name, L + ' name', { max: 100 }),
+        designation: txt(g.designation, L + ' designation', { max: 80 }),
+        email: txt(g.email, L + ' email', { max: 120, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, patternMsg: `Enter a valid email for ${L.toLowerCase()}.` }),
+        mobile: txt(g.mobile, L + ' mobile', { max: 20, pattern: /^\+?[0-9 \-]{8,20}$/, patternMsg: `Enter a valid mobile number for ${L.toLowerCase()}.` }),
+        authority: oneOf(g.authority, ['Singly', 'Jointly'], L + ' signing authority'),
+        limit: lim == null ? null : round2(lim),
+      };
+    });
     const curs = Array.isArray(app.requestedCurrencies) ? app.requestedCurrencies.filter(c => currencyCodes(db).includes(c)) : [];
     need(curs.length, 'Request at least one currency.');
     out.requestedCurrencies = [...new Set(curs)];
@@ -468,10 +505,13 @@
          blocked: a rejected business may apply again. */
       const dupFlags = db.smes.filter(x => x.pan === app.pan || x.gstin === app.gstin)
         .map(x => `${x.pan === app.pan ? 'PAN' : 'GSTIN'} matches ${x.id} — ${x.tradingName || x.legalName} (${x.status})`);
+      /* countries traded go through the same high-risk jurisdiction rule as payments */
+      const riskFlags = riskScore(db, { countries: app.countries }).flags.map(f => f.detail);
       db.smes.push({ ...rest, id, source: offline ? 'Offline' : 'Digital',
         createdBy: offline ? actorLabel(a) : 'SME Applicant', status: 'Submitted', pendingWith: 'AD2 Maker',
-        submittedAt: ctx.now, approvedAt: null, config: null, ...(dupFlags.length ? { dupFlags } : {}) });
+        submittedAt: ctx.now, approvedAt: null, config: null, ...(dupFlags.length ? { dupFlags } : {}), ...(riskFlags.length ? { riskFlags } : {}) });
       if (dupFlags.length) audit(db, null, ctx.now, id, 'Duplicate check — ' + dupFlags.join('; '), true);
+      if (riskFlags.length) audit(db, null, ctx.now, id, 'Country check — ' + riskFlags.join('; '), true);
       banks.forEach((b, i) => db.accounts.push({ id: nextId(db.accounts, 'BA', 3), smeId: id, holder: app.legalName, ...b,
         verifiedOn: b.verified ? ctx.now : null, primary: i === 0, balance: b.currency === 'INR' ? 25000000 : 50000 }));
       db.logins.push({ domainId: app.domainId, loginId, role: 'SME Applicant', smeId: id, name: app.contactName,
@@ -502,7 +542,14 @@
       if (basis === 'Percentage' && v > 5) fail('A percentage charge cannot exceed 5%.');
       const cat = (db.chargeCategories || []).find(x => x.name === ch.name);
       if (!cat) fail('Choose a charge from the charge master.');
-      return { category: cat.id, name: cat.name, basis, value: round2(v),
+      const byCurrency = {};
+      if (cat.id === 'swift' && basis === 'Fixed') Object.keys(ch.byCurrency || {}).forEach(k => {
+        const x = ch.byCurrency[k];
+        if (!currencyCodes(db).includes(k) || x === null || x === '' || x === undefined) return;
+        if (!isFinite(Number(x)) || Number(x) < 0) fail(`SWIFT charge for ${k} must be zero or more.`);
+        byCurrency[k] = round2(Number(x));
+      });
+      return { category: cat.id, name: cat.name, basis, value: round2(v), ...(Object.keys(byCurrency).length ? { byCurrency } : {}),
                currency: oneOf(ch.currency || 'INR', ['INR', ...currencyCodes(db)], 'Charge currency'),
                frequency: oneOf(ch.frequency || 'Per transaction', ['Per transaction', 'Per document set', 'Monthly'], 'Charge frequency') };
     });
@@ -588,7 +635,7 @@
       s.status = 'Clarification Required'; s.pendingWith = 'SME';
       s.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now, response: null };
       audit(db, a, ctx.now, s.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: s.id, text: `AD2 needs more information on application ${s.id}`, link: '#/sme/dashboard' });
+      queryCustomer(db, ctx.now, s.id, s.id, '/sme/dashboard', `AD2 needs more information on application ${s.id}`, q);
       return { message: 'Clarification sent to the applicant.' };
     },
   };
@@ -753,11 +800,12 @@
     } else {
       const { list: al, total } = allocationsIn(db, s, d.allocations, { type: 'Import', currency: o.currency, cap: o.amount, exclude: excludeId, label: 'Bill allocations' });
       if (prod.bills === 'required' && !db.settings.allowUnlinked) need(al.length, `${prod.id} payments settle a lodged import bill. Allocate at least one accepted import bill.`);
+      if (al.length) need(Math.abs(total - o.amount) < 0.005, `The bills add up to ${fmt(total, o.currency)} but the amount is ${fmt(o.amount, o.currency)}. When bills are chosen, the amount must equal their total.`);
       o.allocations = al;
       o.allocatedTotal = total;
     }
     o.inrAmount = inrAmt;
-    o.charges = chargesFor(s, o.amount, o.rate.customerRate);
+    o.charges = chargesFor(s, o.amount, o.rate.customerRate, o.currency);
     o.debitInr = round2(inrAmt + o.charges.reduce((t, c) => t + c.amount, 0));
     o.risk = riskScore(db, {
       usd: usdEq(db, o.amount, o.currency), purpose: o.purposeCode, deal: o.rate.mode === 'deal',
@@ -859,7 +907,7 @@
       const req = ['documents', 'sanctions', 'purpose', 'beneficiary'];
       const notDone = req.filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.dealUpdated], 'request');
       o.wf = o.wf || {};
       o.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(o, p, 'verifying') };
       o.status = 'Verified'; o.pendingWith = 'AD2 Checker';
@@ -875,7 +923,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Verified', 'Only a verified request can be authorised.');
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified, o.wf && o.wf.dealUpdated], 'request');
       o.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(o, p, 'authorising') };
       o.status = 'Authorised'; o.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, o.id, 'Authorised for payment');
@@ -891,7 +939,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Authorised', 'Only an authorised request can be executed.');
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf.verified, o.wf.authorised], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf.verified, o.wf.authorised, o.wf.dealUpdated], 'request');
       const acc = find(db.accounts, o.debitAccountId);
       need(acc, 'The remitter account no longer exists.');
       const debit = o.debitInr != null ? o.debitInr
@@ -931,7 +979,7 @@
       o.status = 'Clarification Required'; o.pendingWith = 'SME';
       if (o.wf) delete o.wf.verified;
       audit(db, a, ctx.now, o.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: o.smeId, text: `AD2 has a query on ${o.id}`, link: '#/sme/outward/' + o.id });
+      queryCustomer(db, ctx.now, o.smeId, o.id, '/sme/outward/' + o.id, `AD2 has a query on ${o.id}`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -974,6 +1022,44 @@
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Query on ${o.id} answered by ${a.name || a.role} for the SME — verify again`, link: '#/ad2/outward/' + o.id });
       notify(db, ctx.now, { toSmeId: o.smeId, text: `AD2 recorded your answer to the query on ${o.id}`, link: '#/sme/outward/' + o.id });
       return { message: 'Answer recorded for the customer. The request is back with the maker to verify.' };
+    },
+  };
+
+  /* AD2 changes the FX deal on a request before authorisation: the rate the
+     desk actually dealt, often by phone. The amounts follow the new rate; a
+     verified request goes back to be verified again, and whoever changed the
+     rate takes no later step on it (four-eyes). */
+  function updateDeal(db, a, rec, kind, p, now, what, recompute) {
+    requireCap(db, a, 'fx.dealRef');
+    need(['Submitted', 'Verified'].includes(rec.status), `The FX deal can be changed only before authorisation; this ${what} is ${rec.status.toLowerCase()}.`);
+    const was = rec.rate || {};
+    rec.rate = T.replaceRate(db, a, smeOf(db, rec.smeId), rec, kind, kind === 'outward' ? 'out' : 'in', p, now);
+    recompute();
+    const r = (db.complianceRules || []).find(x => x.id === 'deal' && x.enabled);
+    if (r && rec.risk && !rec.risk.flags.some(f => f.rule === 'deal'))
+      rec.risk = scored([...rec.risk.flags, { rule: r.id, label: r.label, weight: r.weight, detail: 'Rate from FX deal reference' }]);
+    rec.wf = rec.wf || {};
+    rec.wf.dealUpdated = stamp(a, now, 'changed the FX deal on');
+    const back = rec.status === 'Verified';
+    if (back) { delete rec.wf.verified; rec.status = 'Submitted'; rec.pendingWith = 'AD2 Maker'; }
+    const old = was.mode === 'deal' ? `deal ${was.dealRef}` : was.mode === 'booked' ? 'booked rate' : 'no rate';
+    audit(db, a, now, rec.id, `FX deal updated — ${old} at ${(was.customerRate || 0).toFixed(4)} → deal ${rec.rate.dealRef} at ${rec.rate.customerRate.toFixed(4)}; ` +
+      `treasury position ${rec.rate.positionId}${back ? '; back for verification by another maker' : ''}`);
+    notify(db, now, { toRole: 'AD2 Maker', text: `FX deal on ${rec.id} changed to ${rec.rate.dealRef} — verify it (another maker)`, link: `#/ad2/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    notify(db, now, { toSmeId: rec.smeId, text: `The rate on ${rec.id} is now ₹ ${rec.rate.customerRate.toFixed(4)} under deal ${rec.rate.dealRef}`, link: `#/sme/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    return { message: `${rec.id} now uses deal ${rec.rate.dealRef} at ₹ ${rec.rate.customerRate.toFixed(4)}.${back ? ' It goes back to be verified again.' : ''}` };
+  }
+  C['outward.updateDeal'] = {
+    cap: 'outward.verify',
+    run(db, a, p, ctx) {
+      const o = outwardFor(db, p.id);
+      return updateDeal(db, a, o, 'outward', p, ctx.now, 'request', () => {
+        o.inrAmount = round2(o.amount * o.rate.customerRate);
+        const miss = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount).filter(x => x.required && !(o.docs || {})[x.id]).map(x => x.name);
+        need(!miss.length, `At this rate the request also needs ${miss.join(', ')}. Raise a query for it first.`, miss);
+        o.charges = chargesFor(smeOf(db, o.smeId), o.amount, o.rate.customerRate, o.currency);
+        o.debitInr = round2(o.inrAmount + o.charges.reduce((t, c) => t + c.amount, 0));
+      });
     },
   };
 
@@ -1196,7 +1282,7 @@
       const checks = p.checks || {};
       const notDone = disposalChecks(d).filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf && d.wf.dealUpdated], 'instruction');
       d.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(d, p, 'verifying') };
       d.status = 'Verified'; d.pendingWith = 'AD2 Checker';
       audit(db, a, ctx.now, d.id, 'Verified — documents, sanctions screening, ' + ((d.allocations || []).length ? 'bill match ' : '') + 'and credit account checked');
@@ -1211,7 +1297,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Verified', 'Only a verified instruction can be authorised.');
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.dealUpdated], 'instruction');
       d.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(d, p, 'authorising') };
       d.status = 'Authorised'; d.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, d.id, 'Authorised for processing');
@@ -1226,7 +1312,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Authorised', 'Only an authorised instruction can be processed.');
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised, d.wf.dealUpdated], 'instruction');
       const acc = find(db.accounts, d.creditAccountId);
       need(acc, 'The credit account no longer exists.');
       const fcy = (d.creditCurrency || 'INR') !== 'INR';
@@ -1262,6 +1348,15 @@
     },
   };
 
+  C['disposal.updateDeal'] = {
+    cap: 'inward.verifyDisposal',
+    run(db, a, p, ctx) {
+      const d = disposalFor(db, p.id);
+      need((d.creditCurrency || 'INR') === 'INR', 'This instruction credits EEFC, so no rate applies.');
+      return updateDeal(db, a, d, 'disposal', p, ctx.now, 'instruction', () => { d.creditInr = round2(d.amount * d.rate.customerRate); });
+    },
+  };
+
   C['disposal.query'] = {
     cap: 'outward.query',
     run(db, a, p, ctx) {
@@ -1272,7 +1367,7 @@
       d.status = 'Clarification Required'; d.pendingWith = 'SME';
       delete d.wf.verified;
       audit(db, a, ctx.now, d.id, 'Clarification requested: ' + q);
-      notify(db, ctx.now, { toSmeId: d.smeId, text: `AD2 has a query on disposal ${d.id}`, link: '#/sme/disposals/' + d.id });
+      queryCustomer(db, ctx.now, d.smeId, d.id, '/sme/disposals/' + d.id, `AD2 has a query on disposal ${d.id}`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1423,7 +1518,7 @@
       const q = txt(p.question, 'Query', { max: 500 });
       b.review = 'Query Raised'; b.query = { question: q, raisedBy: actorLabel(a), raisedAt: ctx.now };
       audit(db, a, ctx.now, b.id, 'Query raised: ' + q);
-      notify(db, ctx.now, { toSmeId: b.smeId, text: `Query on bill ${b.id}: ${q}`, link: '#/sme/bills/' + b.type.toLowerCase() });
+      queryCustomer(db, ctx.now, b.smeId, b.id, `/sme/bills/${b.type.toLowerCase()}?s=query`, `AD2 has a query on bill ${b.id} (${b.invoiceNumber})`, q);
       return { message: 'Query sent to the SME.' };
     },
   };
@@ -1898,7 +1993,9 @@
       address: `Plot ${10 + (n % 80)}, Industrial Area, ${prof.city}`, domainId, ad2Name: 'AD2 Trade Services', category: 'SME',
       pan, gstin: prof.state + pan + '1Z' + String(n % 10), iec: pan,
       contactName: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`,
-      industry: prof.industry, description: `Test business — ${prof.industry}.`, expectedVolume: 'USD 2,500,000',
+      industry: prof.industry, description: `Test business — ${prof.industry}.`, importVolume: prof.permission === 'Export' ? '' : 'USD 1,500,000',
+      exportVolume: prof.permission === 'Import' ? '' : 'USD 1,000,000', countries: ['United States', 'Germany'],
+      signatories: [{ name: prof.contact, designation: 'Director', email: `${domainId.toLowerCase()}@test.example`, mobile: `+91 90000 ${String(10000 + n).slice(-5)}`, authority: 'Singly', limit: null }],
       requestedCurrencies: prof.currencies.slice(), service: prof.permission, source: 'Test data lab', createdBy: 'Test data lab',
       status: approved ? 'Approved' : 'Submitted', pendingWith: approved ? '—' : 'AD2 Maker', submittedAt: now, approvedAt: approved ? now : null,
       docs, config: null, test: true, profile: prof.key };
@@ -1906,7 +2003,8 @@
       const margins = {}; prof.currencies.forEach((c, j) => { margins[c] = Math.round(45 * ((currencyOf(db, c) || {}).marginMultiplier ?? 1)) + j; });
       s.config = { permission: prof.permission, currencies: prof.currencies.slice(), margins, marginBasis: 'paise',
         charges: [{ category: 'txn', name: 'Transaction handling fee', basis: 'Fixed', value: 500, currency: 'INR', frequency: 'Per transaction' },
-                  { category: 'swift', name: 'SWIFT charge', basis: 'Fixed', value: 750, currency: 'INR', frequency: 'Per transaction' }],
+                  { category: 'swift', name: 'SWIFT charge', basis: 'Fixed', value: 750, currency: 'INR', frequency: 'Per transaction',
+                    byCurrency: { USD: 1500, EUR: 1800, GBP: 1700 } }],
         effectiveDate: ymd(now), remarks: 'Test data pricing.' };
       s.approvedBy = labStamp(now, 'approved');
     }
@@ -2078,7 +2176,7 @@
     tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
     'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings'];
-  const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications'];
+  const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications', 'emails'];
 
   function scopeState(db, who) {
     const out = {};
@@ -2136,7 +2234,7 @@
     X.scope(out, db, a, 'trade');
     out.rateDesk = out.rateDesk.filter(r => ['REM', 'INW'].includes(r.product)).map(r => ({ product: r.product, currency: r.currency, status: r.status }));
     out.smes = clone(db.smes.filter(s => s.id === sid)).map(s => {
-      delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags;
+      delete s.notes; delete s.pendingConfig; delete s.reviewedBy; delete s.dupFlags; delete s.riskFlags;
       if (s.config) {
         delete s.config.remarks;
         const live = smeOf(db, s.id);
@@ -2149,7 +2247,7 @@
       }
       return s;
     });
-    ['accounts', 'beneficiaries', 'bills', 'inward', 'allocations', 'jobs'].forEach(k => { out[k] = clone((db[k] || []).filter(mine)); });
+    ['accounts', 'beneficiaries', 'bills', 'inward', 'allocations', 'jobs', 'emails'].forEach(k => { out[k] = clone((db[k] || []).filter(mine)); });
     out.outward = clone(db.outward.filter(mine)).map(strip);
     out.disposals = clone(db.disposals.filter(mine)).map(strip);
     const ids = new Set([sid, ...out.outward.map(x => x.id), ...out.inward.map(x => x.id), ...out.disposals.map(x => x.id),

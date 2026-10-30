@@ -263,6 +263,7 @@ async function switchTo(domainId, loginId, { dest } = {}) {
   });
 }
 function afterSignIn(dest) {
+  dest = dest || sessGet('ad2-next') || ''; sessSet('ad2-next', null);
   /* a treasury step opens the Treasury Management Portal, on the same session */
   if (dest && dest.startsWith('treasury/')) { location.href = dest; return; }
   if (!dest && isTreasury()) { location.href = TMP_HOME; return; }
