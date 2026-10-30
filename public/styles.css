@@ -630,6 +630,7 @@ body.busy [data-act]{pointer-events:none}
 .notif{display:flex;justify-content:space-between;gap:var(--s4);padding:var(--s3);border:1px solid var(--r4m-border);border-radius:6px;color:var(--ink);text-decoration:none}
 .notif small{color:var(--muted);white-space:nowrap}
 .notif.new{border-color:var(--r4m-primary-300);background:var(--r4m-primary-50)}
+.flash{outline:3px solid var(--r4m-primary-300);outline-offset:2px}
 .navcount{margin-left:auto;background:var(--r4m-red);color:#fff;border-radius:10px;font-size:10px;font-weight:600;padding:1px 7px}
 
 /* segmented filter */

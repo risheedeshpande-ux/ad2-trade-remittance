@@ -13,9 +13,14 @@ function render(opts = {}) {
   const keep = opts.keepScroll !== false && hash === lastHash;
   const y = window.scrollY;
   /* a menu entry like "Authorise payments" opens a list already filtered */
-  if (hash !== lastHash) applyRouteFilter(parts, new URLSearchParams(qs || ''));
+  const q = new URLSearchParams(qs || ''), fresh = hash !== lastHash;
+  if (fresh) applyRouteFilter(parts, q);
 
-  if (!S && !['login','register','status'].includes(parts[0])) { location.hash = '#/login'; return; }
+  /* a deep link (from a query email or the bell) survives the sign-in */
+  if (!S && !['login','register','status'].includes(parts[0])) {
+    if (q.get('for')) { sessSet('ad2-next', hash); toast('Sign in to open the item AD2 sent you.'); }
+    location.hash = '#/login'; return;
+  }
   /* Treasury roles work in the Treasury Management Portal: same platform,
      same session. Signed in as one here, this page hands over (and keeps the
      demo guide and user switching available). */
@@ -36,7 +41,8 @@ function render(opts = {}) {
   }
   let html;
   try {
-    if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
+    if (q.get('for') && S && !isTreasury() && ctxSmeId() !== q.get('for')) html = viewWrongUser(q.get('for'), hash);
+    else if (parts[0] === 'login') html = S ? (location.hash = homeHash(), '') : viewLogin();
     else if (parts[0] === 'register') html = viewRegister();
     else if (parts[0] === 'status')   html = viewStatus();
     else if (parts[0] === 'test') {
@@ -98,6 +104,26 @@ function render(opts = {}) {
   document.body.classList.remove('nav-open');
   window.scrollTo(0, keep ? y : 0);
   lastHash = hash;
+  if (!keep && q.get('focus')) focusQuery(q.get('focus'));
+}
+/* Land on where the customer answers the query: scroll to it and focus it. */
+function focusQuery(id) {
+  const el = document.getElementById('query-' + id);
+  if (!el) return;
+  el.scrollIntoView({ block:'center' });
+  el.classList.add('flash');
+  el.querySelector('textarea, [data-act$="respond"]')?.focus({ preventScroll:true });
+}
+/* A deep link for another business: say so and offer the right sign-in. */
+function viewWrongUser(smeId, hash) {
+  const l = DB.logins.find(x => x.smeId === smeId && x.active !== false);
+  const name = sme(smeId)?.tradingName || sme(smeId)?.legalName || smeId;
+  return shell(crumb('Link for another user'), denied('This link is for ' + name,
+    `You are signed in as ${S.name || S.loginId} (${S.role}). Sign in as ${l ? l.domainId + ' / ' + l.loginId : 'that business'} to open it.`)
+    + `<div style="display:flex;gap:10px;justify-content:center;margin-top:16px">
+      ${MASTER && l ? `<button class="btn btn-primary" type="button" data-act="mt-go" data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" data-dest="${esc(hash)}">Open as ${esc(l.name || l.loginId)}</button>` : ''}
+      <button class="btn ${MASTER && l ? 'btn-plain' : 'btn-primary'}" type="button" data-act="deeplink-signout" data-dest="${esc(hash)}">Sign out and sign in as the right user</button>
+      <button class="btn btn-plain" type="button" data-act="go" data-href="${homeHash()}">Go to my home page</button></div>`);
 }
 window.addEventListener('hashchange', () => {
   /* confirmations belong to the screen they were shown on; errors stay */
@@ -323,6 +349,7 @@ document.addEventListener('click', async e => {
 
   /* generic */
   if (act === 'go')        { e.preventDefault(); location.hash = t.dataset.href; return; }
+  if (act === 'deeplink-signout') { sessSet('ad2-next', t.dataset.dest); resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
   if (act === 'logout')    { resetDrafts(); setSession(null); endMaster(); location.hash = '#/login'; render(); return; }
   if (act === 'bk-release') {
     commandModal({ title:'Release rate booking ' + t.dataset.id, okLabel:'Release', okClass:'btn-danger', cmd:'rate.release',

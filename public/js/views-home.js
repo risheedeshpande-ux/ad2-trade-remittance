@@ -110,7 +110,7 @@ function applicantHome(me) {
         <div class="wf-dot">${i < at ? '✓' : i + 1}</div><div class="wf-txt"><b>${esc(s[0])}</b><span>${esc(s[1])}</span></div></div>`).join('')}</div>
       ${where ? `<p style="margin:16px 0 0;font-size:var(--fs-md)"><b>Where it is now:</b> ${esc(where)}</p>` : ''}</div></div>
     ${me.status === 'Rejected' ? `<div class="note note-err"><span>This application was not approved. ${esc(me.rejectReason || '')}</span></div>` : ''}
-    ${open ? `<div class="card" style="margin-bottom:18px"><div class="card-head"><h2>AD2 needs more information</h2></div><div class="card-body">
+    ${open ? `<div class="card" id="query-${esc(me.id)}" style="margin-bottom:18px"><div class="card-head"><h2>AD2 needs more information</h2></div><div class="card-body">
         <div class="note note-warn" style="margin-bottom:14px"><span>${esc(me.query.question)}<br><small>${esc(me.query.raisedBy)} · ${dmyt(me.query.raisedAt)}</small></span></div>
         <div class="grid g2 fields">
           <div class="f span2"><label for="ap-resp">Your response<span class="req">*</span></label><textarea id="ap-resp"></textarea></div>

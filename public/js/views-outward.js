@@ -409,7 +409,7 @@ function barred(rec) {
    what the customer sent in (by email or at the branch), so the request can
    carry on without waiting for the customer to log in. */
 function queryResponseCard(ad2, checklist, onFile, act, id) {
-  return `<div class="card" style="margin-bottom:18px"><div class="card-head"><h2>${ad2 ? 'Answer for the customer' : 'Respond to the query'}</h2></div><div class="card-body">
+  return `<div class="card" id="query-${esc(id)}" style="margin-bottom:18px"><div class="card-head"><h2>${ad2 ? 'Answer for the customer' : 'Respond to the query'}</h2></div><div class="card-body">
     ${ad2 ? `<div class="note note-info" style="margin-bottom:14px"><span>Received the answer or documents from the customer by email or at the branch?
       Record them here — the request goes back to the maker to verify, exactly as if the customer had answered.</span></div>` : ''}
     <div class="f"><label for="resp-text">${ad2 ? 'The customer’s answer' : 'Your response'}<span class="req">*</span></label>
