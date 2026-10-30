@@ -344,3 +344,78 @@ test('test data lab: requests it parks are real positions', () => {
   assert.ok(db.positions.length > n);
   balanced(db);
 });
+
+test('update FX deal: a phone deal replaces the booked rate after submission, and the book follows', () => {
+  const db = fresh();
+  const o = db.outward.find(x => x.id === 'OR-5103');            /* seeded: Verified, booked EUR 88,400, no stage keys */
+  const p0 = pos(db, o.rate.positionId);
+  const cov = db.covers.find(c => c.id === db.coverAllocations.find(x => x.positionId === p0.id).coverId);
+  const alloc0 = cov.allocated;
+  /* validation and who may */
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'ab', customerRate: 96 }), /4–30/);
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: -96 }), /positive/);
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: 'x' }), /positive/);
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: 99.5 }), /3%/);
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7' }), /not issued by treasury/);
+  [CHECKER, OPS, MER, DEALER].forEach(w => refuses(() => run(db, w, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: 96.1 }), /cannot/));
+  /* happy path */
+  run(db, MAKER2, 'outward.updateDeal', { id: o.id, dealRef: 'desk-0924/7', customerRate: 96.1 });
+  assert.deepEqual([o.rate.mode, o.rate.dealRef, o.rate.customerRate], ['deal', 'DESK-0924/7', 96.1]);
+  assert.equal(o.inrAmount, Math.round(88400 * 96.1 * 100) / 100);
+  assert.equal(o.debitInr, Math.round((o.inrAmount + o.charges.reduce((t, c) => t + c.amount, 0)) * 100) / 100);
+  assert.ok(o.risk.flags.some(f => f.rule === 'deal'), 'compliance sees the deal');
+  assert.equal(p0.status, 'Cancelled', 'the booking is released');
+  assert.equal(cov.allocated, alloc0 - 50000, 'its cover goes back to the pool');
+  const p1 = pos(db, o.rate.positionId);
+  assert.deepEqual([p1.status, p1.source, p1.dealId, p1.recordId, p1.amount, p1.customerRate], ['Attached', 'Deal', 'DESK-0924/7', o.id, 88400, 96.1]);
+  assert.equal(p1.margin, Math.round((96.1 - 95.87) * 100));
+  assert.equal(db.deals.find(d => d.id === 'DESK-0924/7').status, 'Used');
+  assert.ok(db.audit.some(x => x.record === o.id && /AD2 Maker/.test(x.actor) && /booked rate at [\d.]+ → deal DESK-0924\/7 at 96\.1000/.test(x.action)));
+  /* four-eyes: back to Submitted, and whoever changed the rate takes no later step */
+  assert.equal(o.status, 'Submitted'); assert.ok(!o.wf.verified);
+  refuses(() => run(db, MAKER2, 'outward.verify', { id: o.id, checks: CHECKS }), /changed the FX deal/);
+  /* the same phone deal is corrected in place */
+  refuses(() => run(db, MAKER2, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: 96.1 }), /already at/);
+  run(db, MAKER2, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/7', customerRate: 96.05 });
+  assert.equal(o.rate.positionId, p1.id); assert.equal(p1.customerRate, 96.05);
+  run(db, MAKER, 'outward.verify', { id: o.id, checks: CHECKS });
+  refuses(() => run(db, MAKER2, 'outward.authorise', { id: o.id }), /cannot/);
+  run(db, CHECKER, 'outward.authorise', { id: o.id });
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-0924/8', customerRate: 96 }), /only before authorisation/);
+  run(db, OPS, 'outward.execute', { id: o.id });
+  assert.equal(p1.status, 'Concluded');
+  balanced(db);
+});
+
+test('update FX deal: an issued deal keeps its rate; drafts take a typed phone-deal rate; disposals too', () => {
+  const db = fresh();
+  const o = db.outward.find(x => x.id === 'OR-5106');            /* Arcadia, Submitted, USD 52,000 */
+  const d = run(db, DEALER, 'deal.issue', { smeId: o.smeId, dir: 'out', currency: 'USD', amount: 60000, rate: 88.9 });
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: d.id, customerRate: 88.7 }), /issued at 88\.9000/);
+  run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: d.id, customerRate: 88.9 });
+  assert.equal(pos(db, d.positionId).cancelledAmount, 8000, 'the unused part of the deal goes back');
+  refuses(() => run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: d.id, customerRate: 88.8 }), /reissue/);
+  run(db, MAKER, 'outward.updateDeal', { id: o.id, dealRef: 'DESK-77', customerRate: 88.75 });
+  assert.equal(pos(db, d.positionId).status, 'Cancelled'); assert.equal(db.deals.find(x => x.id === d.id).status, 'Withdrawn');
+  /* draft: a typed deal reference carries its rate onto the book at submit */
+  const arcPay = { beneficiaryId: 'BEN-005', beneficiary: 'Shenzhen Ruiyang Electronics', beneficiaryCountry: 'China', beneficiaryAccount: '6222021001128845',
+    beneficiaryBank: 'Bank of China', beneficiaryBankCountry: 'China', swift: 'BKCHCNBJ', currency: 'USD', amount: 8000, remittanceType: 'AIR',
+    purposeCode: 'S0101', executionDate: '2026-09-26', debitAccountId: 'BA-004', allocations: [], declarations: DEC,
+    docs: Engine.checklist(db, 'AIR', 'S0101', 8000 * 88.8).filter(x => x.required).reduce((m, x) => ({ ...m, [x.id]: doc(x.id) }), {}) };
+  const sub = rate => run(db, MAKER, 'outward.submit', { actingFor: 'SME-1002', draft: { ...arcPay, rate: { mode: 'deal', dealRef: 'PH-1', customerRate: rate } } });
+  refuses(() => sub(0), /not issued by treasury/);
+  refuses(() => sub(80), /3%/);
+  const id = sub(88.8).id, r = db.outward.find(x => x.id === id);
+  assert.equal(r.inrAmount, 8000 * 88.8);
+  assert.deepEqual([pos(db, r.rate.positionId).status, pos(db, r.rate.positionId).channel], ['Attached', 'Assisted']);
+  /* disposal: the same command */
+  const di = db.disposals.find(x => x.id === 'DI-9003');
+  const old = pos(db, di.rate.positionId);
+  refuses(() => run(db, CHECKER, 'disposal.updateDeal', { id: di.id, dealRef: 'PH-IN-1', customerRate: 24 }), /cannot/);
+  run(db, MAKER, 'disposal.updateDeal', { id: di.id, dealRef: 'PH-IN-1', customerRate: 24 });
+  assert.equal(old.status, 'Cancelled');
+  assert.equal(di.creditInr, Math.round(di.amount * 24 * 100) / 100);
+  assert.deepEqual([pos(db, di.rate.positionId).side, pos(db, di.rate.positionId).margin], ['BUY', 7]);
+  refuses(() => run(db, MAKER, 'disposal.verify', { id: di.id, checks: { documents: true, account: true, sanctions: true, bills: true } }), /changed the FX deal/);
+  balanced(db);
+});

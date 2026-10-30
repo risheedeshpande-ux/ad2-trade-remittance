@@ -297,6 +297,7 @@ function viewOutwardDetail(id) {
     if (o.status === 'Submitted' && can('outward.verify')) actions.push(`<button class="btn btn-primary" type="button" data-act="or-verify" data-id="${o.id}">Verify</button>`);
     if (o.status === 'Verified' && can('outward.approve')) actions.push(`<button class="btn btn-primary" type="button" data-act="or-authorise" data-id="${o.id}">Authorise</button>`);
     if (o.status === 'Authorised' && can('outward.complete')) actions.push(`<button class="btn btn-primary" type="button" data-act="or-execute" data-id="${o.id}">Release payment</button>`);
+    if (['Submitted','Verified'].includes(o.status) && can('outward.verify') && can('fx.dealRef')) actions.push(`<button class="btn btn-plain" type="button" data-act="or-deal-update" data-id="${o.id}">Update FX deal</button>`);
     if (['Submitted','Verified'].includes(o.status) && can('outward.query')) actions.push(`<button class="btn btn-plain" type="button" data-act="or-query" data-id="${o.id}">Raise query</button>`);
     if (['Submitted','Verified','Authorised'].includes(o.status) && can('outward.reject')) actions.push(`<button class="btn btn-danger" type="button" data-act="or-reject" data-id="${o.id}">Reject</button>`);
     const waiting = { 'Submitted':'outward.verify', 'Verified':'outward.approve', 'Authorised':'outward.complete' }[o.status];
