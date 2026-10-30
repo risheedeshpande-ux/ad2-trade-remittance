@@ -24,6 +24,7 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
     </div>`;
   const ad2Note = r => seesMargin() && r ? `<div class="tick">Reference ₹ ${Number(r.refRate || currency(cur)?.refRate || 0).toFixed(4)}
       ${dir === 'out' ? 'plus' : 'less'} margin ${r.margin != null ? r.margin : m} paise — AD2 only, never shown to the customer</div>` : '';
+  const dealBtn = label => can('fx.dealRef') && isAD2() ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">${label}</button>` : '';
 
   if (draft.rate.mode === 'booked') {
     const amt = draft.rate.bookedAmount || fx;
@@ -43,14 +44,16 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
         <div class="tick">The rate is held on the treasury book; submitting uses exactly this rate.</div>
         ${ad2Note(draft.rate)}</div>
         <div class="spacer"></div>
+        ${dealBtn('Use a deal instead')}
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Release</button></div>
       ${lines(draft.rate.customerRate, amt)}</div>`;
   }
   if (draft.rate.mode === 'deal') return `<div class="ratebox locked">
       <div class="row"><div><div class="k">FX deal applied</div>
         <div class="live">Deal ${esc(draft.rate.dealRef)} · ₹ ${Number(draft.rate.customerRate).toFixed(4)}</div>
-        <div class="tick">Issued by the treasury desk${draft.rate.positionId ? ' · position ' + esc(draft.rate.positionId) : ''}. Checked again when the request is submitted.</div></div>
+        <div class="tick">${draft.rate.positionId ? 'Issued by the treasury desk · position ' + esc(draft.rate.positionId) : 'Dealt by phone with the treasury desk — it goes on the treasury book when the request is submitted'}. Checked again when the request is submitted.</div></div>
         <div class="spacer"></div>
+        ${dealBtn('Edit deal')}
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Clear</button></div>
       ${lines(draft.rate.customerRate, fx)}</div>`;
 
@@ -71,7 +74,7 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
       ${seesMargin() ? ad2Note({ margin: m, refRate: currency(cur)?.refRate }) : `<div class="tick">Your rate for ${dir === 'out' ? 'buying' : 'selling'} ${esc(cur)}, including AD2’s pricing.</div>`}</div>
       <div class="spacer"></div>
       <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>
-      ${can('fx.dealRef') && isAD2() ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">FX deal reference</button>` : ''}</div>
+      ${dealBtn('FX deal reference')}</div>
     ${lines(live, fx)}
     <p class="tick" style="margin:10px 0 0">${fx ? 'Booking locks this rate for 48 hours and puts it on the treasury book straight away.' : 'Enter the amount to see what it comes to in INR.'}</p>
     ${marginIn}</div>`;

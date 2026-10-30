@@ -169,10 +169,16 @@
       const side = sideOf(dir);
       if (req.mode === 'deal') {
         if (!can(db, a, 'fx.dealRef') || !isAD2(a)) fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
-        const ref = txt(req.dealRef, 'FX deal reference', { max: 30, pattern: /^[A-Za-z0-9\-\/]{4,30}$/,
-          patternMsg: 'FX deal reference should be 4–30 letters, digits or dashes.' }).toUpperCase();
+        const ref = dealRefOf(req.dealRef);
         const dl = (db.deals || []).find(x => x.id === ref);
-        need(dl, `Deal ${ref} was not issued by treasury. Ask the treasury desk to issue it on the platform.`);
+        /* a rate typed with the reference: the deal the desk dealt by phone */
+        const typed = req.customerRate != null && req.customerRate !== '' && Number(req.customerRate) !== 0;
+        if (!dl) {
+          need(typed, `Deal ${ref} was not issued by treasury on the platform. Enter the rate the treasury desk dealt, or ask the desk to issue it here.`);
+          return phoneDeal(db, a, s, ref, cur, dir, amt, req.customerRate, now);
+        }
+        if (typed) need(Math.abs(Number(req.customerRate) - dl.rate) < 0.00005,
+          `Deal ${dl.id} was issued at ${r4(dl.rate).toFixed(4)}. Enter that rate, or ask the treasury desk to reissue the deal.`);
         need(dl.smeId === s.id, `Deal ${dl.id} was issued for another customer.`);
         const p = find(db.positions, dl.positionId);
         const st = positionStatus(p, now);
@@ -204,6 +210,55 @@
           bookedAt: p.bookedAt, expiresAt: p.expiresAt, dealRef: null } };
       }
       fail('Book a rate or enter an FX deal reference.');
+    }
+
+    const dealRefOf = v => txt(v, 'FX deal reference', { max: 30, pattern: /^[A-Za-z0-9\-\/]{4,30}$/,
+      patternMsg: 'FX deal reference should be 4–30 letters, digits or dashes.' }).toUpperCase();
+    const dealMargin = (dir, rate, ref) => Math.round((dir === 'out' ? rate - ref : ref - rate) * 100);
+    /* A dealt rate is held within 3% of the reference, as on deal issue and cover. */
+    function dealRate(db, cur, v) {
+      const rate = Number(v), ref = (currencyOf(db, cur) || {}).refRate || 0;
+      need(isFinite(rate) && rate > 0, 'Enter the deal rate as a positive number.');
+      need(Math.abs(rate - ref) / ref <= 0.03, `The deal rate ${rate} is more than 3% from the reference ${ref}. Check it with the treasury desk.`);
+      return r4(rate);
+    }
+    /* A deal the desk dealt by phone, entered by AD2 with its rate: it goes on
+       the book under the desk's reference, ready to attach. */
+    function phoneDeal(db, a, s, ref, cur, dir, amt, v, now) {
+      const rate = dealRate(db, cur, v), refRate = currencyOf(db, cur).refRate;
+      if (H.rateCheck) H.rateCheck(db, dir === 'out' ? 'REM' : 'INW', cur);
+      const p = newPosition(db, a, s, { currency: cur, side: sideOf(dir), amount: amt, customerRate: rate, refRate, margin: dealMargin(dir, rate, refRate),
+        source: 'Deal', dealId: ref, ibrAtBooking: marketRate(db, cur, now) }, now);
+      const dl = { id: ref, smeId: s.id, currency: cur, side: p.side, amount: amt, rate, refRate, positionId: p.id, validUntil: now, status: 'Issued',
+        issuedAt: now, issuedBy: actorLabel(a), issuedByKey: actorKey(a), note: 'Dealt by phone with the treasury desk; entered by AD2', phone: true };
+      arr(db, 'deals').unshift(dl);
+      audit(db, a, now, p.id, `Deal ${ref} entered for ${s.tradingName} — ${fmt(amt, cur)} ${dirWord(p.side)} at ${rate.toFixed(4)}, dealt by phone with the treasury desk`);
+      const breach = holdIfOverLimit(db, a, p, now);
+      need(!breach, `Deal ${ref} would take ${s.tradingName} over its treasury limit (${breach && breach.reason}). Ask the treasury desk to issue it on the platform.`);
+      return { position: p, deal: dl, rate: { mode: 'deal', positionId: p.id, refRate, margin: p.margin, customerRate: rate, bookedAt: null, expiresAt: null, dealRef: ref } };
+    }
+    /* AD2 changes a submitted request's rate to a deal. Its old position is
+       released and the deal attached; the same phone deal is corrected in place. */
+    function replaceRate(db, a, s, rec, kind, dir, req, now) {
+      const ref = dealRefOf(req.dealRef);
+      const old = rec.rate && rec.rate.positionId && find(db.positions, rec.rate.positionId);
+      if (old && old.dealId === ref && old.status === 'Attached') {
+        const dl = find(db.deals, ref);
+        need(dl && dl.phone, `Deal ${ref} was issued by the treasury desk at ${r4(old.customerRate).toFixed(4)}. Ask the desk to reissue it at the new rate.`);
+        const rate = dealRate(db, rec.currency, req.customerRate);
+        need(rate !== old.customerRate, `Deal ${ref} is already at ${rate.toFixed(4)}.`);
+        audit(db, a, now, old.id, `Deal ${ref} rate corrected from ${r4(old.customerRate).toFixed(4)} to ${rate.toFixed(4)} on ${rec.id}`);
+        old.customerRate = dl.rate = rate; old.margin = dealMargin(dir, rate, old.refRate);
+        return { ...rec.rate, customerRate: rate, margin: old.margin };
+      }
+      if (old) {
+        cancel(db, a, old, `Rate on ${rec.id} replaced by deal ${ref}`, now);
+        const d0 = old.dealId && find(db.deals, old.dealId);
+        if (d0 && d0.usedOn === rec.id) d0.status = 'Withdrawn';
+      }
+      const rr = resolveRate(db, a, s, rec.currency, dir, rec.amount, { mode: 'deal', dealRef: ref, customerRate: req.customerRate }, now);
+      attach(db, a, rr, kind, rec.id, rec.amount, now);
+      return rr.rate;
     }
 
     /* The request now exists: the position carries it until settlement. */
@@ -603,15 +658,12 @@
         const cur = oneOf(p.currency, db.currencies.map(c => c.code), 'Currency');
         need(((s.config || {}).currencies || []).includes(cur), `${cur} is not enabled for ${s.tradingName}.`);
         const amt = amount(p.amount, 'Amount');
-        const rate = Number(p.rate);
+        const rate = dealRate(db, cur, p.rate);
         const ref = currencyOf(db, cur).refRate;
-        need(isFinite(rate) && rate > 0, 'Enter the agreed rate.');
-        need(Math.abs(rate - ref) / ref <= 0.03, `The agreed rate ${rate} is more than 3% from the reference ${ref}.`);
         if (H.rateCheck) H.rateCheck(db, dir === 'out' ? 'REM' : 'INW', cur);
         const hours = Math.round(Number(p.validHours || 24));
         need(hours >= 1 && hours <= 72, 'Validity must be between 1 and 72 hours.');
-        const margin = Math.round((dir === 'out' ? rate - ref : ref - rate) * 100);
-        const pos = newPosition(db, a, s, { currency: cur, side: sideOf(dir), amount: amt, customerRate: rate, refRate: ref, margin,
+        const pos = newPosition(db, a, s, { currency: cur, side: sideOf(dir), amount: amt, customerRate: rate, refRate: ref, margin: dealMargin(dir, rate, ref),
           source: 'Deal', channel: 'Treasury deal', ibrAtBooking: marketRate(db, cur, ctx.now) }, ctx.now);
         const dl = issueDeal(db, a, s, pos, hours, txt(p.note, 'Note', { max: 200, required: false }), ctx.now);
         const breach = holdIfOverLimit(db, a, pos, ctx.now);
@@ -771,7 +823,7 @@
       db.positions.sort((x, y) => String(y.bookedAt).localeCompare(String(x.bookedAt)));
     }
 
-    return { priceFor, book, resolveRate, attach, link, release, sweep, scope, seed,
+    return { priceFor, book, resolveRate, replaceRate, attach, link, release, sweep, scope, seed,
       newPosition, issueDeal, addLink, cancelResidual, unwind, cancel, remaining, isTrade,
       positionStatus, coverState, linkState, uncovered, live, netByCurrency, suggestions, marketRate, pnl, exceptions, istDate, pastCutoff };
   };

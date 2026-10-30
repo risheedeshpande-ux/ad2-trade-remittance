@@ -244,27 +244,58 @@ function rebookIfChanged(draft, amount) {
     toast('The amount changed, so the booked rate was released. Book it again for the new amount.');
   }
 }
-/* Apply a deal the treasury desk issued for this customer. Only issued,
-   unexpired deals for the same customer, currency and direction are offered;
-   the server checks again when the request is submitted. */
-function dealModal(draft, cur, smeRec, dir) {
-  const side = dir === 'out' ? 'SELL' : 'BUY';
-  const deals = (DB.deals || []).filter(d => d.smeId === smeRec.id && d.currency === cur && d.side === side && d.status === 'Issued' && d.validUntil > nowISO());
-  modal({ title:'Apply an FX deal reference', okLabel:'Apply deal', body:`
-    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">Deals the treasury desk has issued for ${esc(smeRec.tradingName)} in ${esc(cur)}.
-      A deal can be used once, for up to its amount; any unused part goes back to treasury.</p>
-    ${deals.length ? `<div class="f"><label for="dref">Deal</label><select id="dref">${deals.map(d => `<option value="${esc(d.id)}">${esc(d.id)} · up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)} · valid until ${dmyt(d.validUntil)}</option>`).join('')}</select></div>`
-      : `<div class="note note-warn"><span>No deal is open for ${esc(smeRec.tradingName)} in ${esc(cur)}. Ask the treasury desk to issue one, or book the live rate.</span></div>
-         <div class="f" style="margin-top:12px"><label for="dref">Deal reference, if the desk gave you one</label><input id="dref" type="text" placeholder="e.g. FXD-2026-77521"></div>`}`,
+/* An FX deal: one the treasury desk issued for this customer (only issued,
+   unexpired deals for the same customer, currency and direction are offered)
+   or one it dealt by phone, entered with its rate. The INR equivalent follows
+   as the rate is typed; the server checks everything again. */
+const openDeals = (smeId, cur, dir) => (DB.deals || []).filter(d => d.smeId === smeId && d.currency === cur && d.side === (dir === 'out' ? 'SELL' : 'BUY')
+  && d.status === 'Issued' && d.validUntil > nowISO());
+const dealInr = (amt, rate) => Number(amt) > 0 && Number(rate) > 0 ? inr(amt * rate) : '—';
+function dealFields(amt, cur, deals, ref, rate) {
+  return `${deals.length ? `<p style="font-size:var(--fs-sm);margin:0 0 12px">Issued by the treasury desk: ${deals.map(d =>
+      `<b>${esc(d.id)}</b> — up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)}, valid until ${dmyt(d.validUntil)}`).join('; ')}.</p>`
+      : `<div class="note note-warn" style="margin-bottom:12px"><span>No deal is open on the platform for this customer in ${esc(cur)}. Enter the reference and rate the desk gave you by phone.</span></div>`}
+    <div class="grid g2 fields">
+      <div class="f"><label for="dref">Deal reference</label><input id="dref" type="text" list="dref-list" data-act="deal-in" value="${esc(ref || '')}" placeholder="e.g. FXD-2026-77521">
+        <datalist id="dref-list">${deals.map(d => `<option value="${esc(d.id)}">`).join('')}</datalist></div>
+      <div class="f"><label for="drate">Deal rate (₹ per 1 ${esc(cur)})</label><input id="drate" type="number" step="0.0001" min="0" data-act="deal-in" data-amt="${Number(amt) || 0}" value="${rate ? Number(rate).toFixed(4) : ''}">
+        <div class="hint">Held within 3% of the reference rate.</div></div>
+    </div>
+    <div class="calc" style="margin-top:12px"><div class="line total"><span>INR equivalent of ${Number(amt) > 0 ? money(amt, cur) : 'the amount'}</span><b id="dinr">${dealInr(amt, rate)}</b></div></div>`;
+}
+function readDeal(cur, deals) {
+  const dealRef = val('#dref').toUpperCase(), customerRate = Number(val('#drate')), ref = currency(cur)?.refRate;
+  if (!/^[A-Z0-9\-\/]{4,30}$/.test(dealRef)) throw 'Enter the deal reference: 4–30 letters, digits, dashes or slashes.';
+  if (!(customerRate > 0)) throw 'Enter the deal rate as a positive number.';
+  if (ref && Math.abs(customerRate - ref) / ref > 0.03) throw `₹ ${customerRate} is more than 3% from the reference ₹ ${ref}. Check the deal with the treasury desk.`;
+  const d = deals.find(x => x.id === dealRef);
+  if (d && Math.abs(d.rate - customerRate) > 0.00005) throw `Deal ${d.id} was issued at ₹ ${Number(d.rate).toFixed(4)}.`;
+  return { dealRef, customerRate, d };
+}
+function dealModal(draft, cur, smeRec, dir, amt) {
+  const deals = openDeals(smeRec.id, cur, dir), mine = draft.rate.mode === 'deal';
+  modal({ title: mine ? 'Edit the FX deal' : 'Apply an FX deal reference', okLabel:'Apply deal', body:`
+    <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">A deal is used once, for up to its amount; any unused part goes back to treasury.</p>
+    ${dealFields(amt, cur, deals, mine ? draft.rate.dealRef : deals[0]?.id, mine ? draft.rate.customerRate : deals[0]?.rate)}`,
     onOk: () => {
-      const ref = val('#dref').toUpperCase();
-      if (!/^[A-Z0-9\-\/]{4,30}$/.test(ref)) { toast('Choose a deal, or enter the reference the desk gave you.', 'err'); return; }
-      const d = (DB.deals || []).find(x => x.id === ref);
+      let v; try { v = readDeal(cur, deals); } catch (m) { toast(m, 'err'); return; }
+      const refRate = currency(cur)?.refRate;
       releaseRate(draft);
-      draft.rate = { mode:'deal', dealRef:ref, positionId:d ? d.positionId : null, customerRate:d ? d.rate : 0, bookedAt:null, expiresAt:null, bookedAmount:null,
-        ...(d ? { refRate: currency(cur)?.refRate } : {}) };
-      closeModal(); render(); toast('Deal ' + ref + ' applied. Treasury already holds the position.', 'ok');
+      draft.rate = { mode:'deal', dealRef:v.dealRef, positionId:v.d ? v.d.positionId : null, customerRate:v.customerRate, bookedAt:null, expiresAt:null, bookedAmount:null,
+        refRate, margin: Math.round((dir === 'out' ? v.customerRate - refRate : refRate - v.customerRate) * 100) };
+      closeModal(); render();
+      toast(`Deal ${v.dealRef} applied at ₹ ${v.customerRate.toFixed(4)}. ${v.d ? 'Treasury already holds the position.' : 'It goes on the treasury book when the request is submitted.'}`, 'ok');
     } });
+}
+/* AD2 changes the deal on a submitted request (before authorisation). */
+function updateDealModal(rec, cmd, dir) {
+  const deals = openDeals(rec.smeId, rec.currency, dir);
+  commandModal({ title:'Update the FX deal on ' + rec.id, okLabel:'Save deal', cmd, body:`
+    <p style="font-size:var(--fs-sm);margin:0 0 14px">Now: ${rec.rate.mode === 'deal' ? 'deal <b>' + esc(rec.rate.dealRef) + '</b>' : 'booked rate'} at ₹ ${(rec.rate.customerRate || 0).toFixed(4)}.
+      Saving releases its treasury position and attaches the deal; the INR amounts follow the new rate.
+      ${rec.status === 'Verified' ? 'The request goes back to be verified again — by another maker.' : 'Another maker verifies it.'}</p>
+    ${dealFields(rec.amount, rec.currency, deals, rec.rate.mode === 'deal' ? rec.rate.dealRef : '', rec.rate.customerRate)}`,
+    read: () => { const { dealRef, customerRate } = readDeal(rec.currency, deals); return { id: rec.id, dealRef, customerRate }; } });
 }
 
 /* The purpose search belongs to the outward or the disposal draft. */
@@ -575,7 +606,8 @@ document.addEventListener('click', async e => {
       toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours — ${OR_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
-  if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out'); return; }
+  if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount); return; }
+  if (act === 'or-deal-update') { updateDealModal(outwardRec(t.dataset.id), 'outward.updateDeal', 'out'); return; }
   if (act === 'or-rate-clear') { releaseRate(OR_DRAFT); render(); return; }
   if (act === 'or-save') {
     run('outward.saveDraft', { draft: OR_DRAFT }, { after: r => { OR_DRAFT.id = r.id; } });
@@ -692,7 +724,8 @@ document.addEventListener('click', async e => {
       toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours — ${DI_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
-  if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in'); return; }
+  if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in', diAmount(DI_DRAFT, i)); return; }
+  if (act === 'di-deal-update') { updateDealModal(disposalRec(t.dataset.id), 'disposal.updateDeal', 'in'); return; }
   if (act === 'di-rate-clear'){ releaseRate(DI_DRAFT); render(); return; }
   if (act === 'di-submit') {
     const d = DI_DRAFT, errs = [], i = inwardRec(d.inwardId), acc = acct(d.creditAccountId);
@@ -1422,6 +1455,12 @@ document.addEventListener('input', e => {
   }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
   if (obListField(t)) return;
+  if (t.dataset.act === 'deal-in') {
+    const d = t.id === 'dref' && (DB.deals || []).find(x => x.id === t.value.trim().toUpperCase() && x.status === 'Issued');
+    if (d) $('#drate').value = Number(d.rate).toFixed(4);
+    $('#dinr').textContent = dealInr($('#drate').dataset.amt, $('#drate').value);
+    return;
+  }
   if (t.dataset.k && t.type !== 'checkbox' && t.type !== 'radio') { DRAFT[t.dataset.k] = t.value; saveObDraft(); return; }
   if (t.dataset.ork && t.tagName !== 'SELECT') { OR_DRAFT[t.dataset.ork] = t.value; return; }
   if (t.dataset.blk) { BILL_DRAFT[t.dataset.blk] = t.value; return; }

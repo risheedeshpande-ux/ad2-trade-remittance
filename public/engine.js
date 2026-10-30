@@ -183,6 +183,9 @@
     if ((r = rule('bankctry')) && facts.beneCountry && facts.bankCountry && facts.beneCountry !== facts.bankCountry)
       add(r, `Beneficiary in ${facts.beneCountry}, bank in ${facts.bankCountry}`);
     if ((r = rule('deal')) && facts.deal) add(r, 'Rate from FX deal reference');
+    return scored(flags);
+  }
+  function scored(flags) {
     const score = Math.min(100, flags.reduce((t, f) => t + f.weight, 0));
     return { score, level: score >= 60 ? 'High' : score >= 25 ? 'Medium' : 'Low', flags };
   }
@@ -903,7 +906,7 @@
       const req = ['documents', 'sanctions', 'purpose', 'beneficiary'];
       const notDone = req.filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.dealUpdated], 'request');
       o.wf = o.wf || {};
       o.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(o, p, 'verifying') };
       o.status = 'Verified'; o.pendingWith = 'AD2 Checker';
@@ -919,7 +922,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Verified', 'Only a verified request can be authorised.');
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified, o.wf && o.wf.dealUpdated], 'request');
       o.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(o, p, 'authorising') };
       o.status = 'Authorised'; o.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, o.id, 'Authorised for payment');
@@ -935,7 +938,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Authorised', 'Only an authorised request can be executed.');
-      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf.verified, o.wf.authorised], 'request');
+      distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf.verified, o.wf.authorised, o.wf.dealUpdated], 'request');
       const acc = find(db.accounts, o.debitAccountId);
       need(acc, 'The remitter account no longer exists.');
       const debit = o.debitInr != null ? o.debitInr
@@ -1018,6 +1021,44 @@
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Query on ${o.id} answered by ${a.name || a.role} for the SME — verify again`, link: '#/ad2/outward/' + o.id });
       notify(db, ctx.now, { toSmeId: o.smeId, text: `AD2 recorded your answer to the query on ${o.id}`, link: '#/sme/outward/' + o.id });
       return { message: 'Answer recorded for the customer. The request is back with the maker to verify.' };
+    },
+  };
+
+  /* AD2 changes the FX deal on a request before authorisation: the rate the
+     desk actually dealt, often by phone. The amounts follow the new rate; a
+     verified request goes back to be verified again, and whoever changed the
+     rate takes no later step on it (four-eyes). */
+  function updateDeal(db, a, rec, kind, p, now, what, recompute) {
+    requireCap(db, a, 'fx.dealRef');
+    need(['Submitted', 'Verified'].includes(rec.status), `The FX deal can be changed only before authorisation; this ${what} is ${rec.status.toLowerCase()}.`);
+    const was = rec.rate || {};
+    rec.rate = T.replaceRate(db, a, smeOf(db, rec.smeId), rec, kind, kind === 'outward' ? 'out' : 'in', p, now);
+    recompute();
+    const r = (db.complianceRules || []).find(x => x.id === 'deal' && x.enabled);
+    if (r && rec.risk && !rec.risk.flags.some(f => f.rule === 'deal'))
+      rec.risk = scored([...rec.risk.flags, { rule: r.id, label: r.label, weight: r.weight, detail: 'Rate from FX deal reference' }]);
+    rec.wf = rec.wf || {};
+    rec.wf.dealUpdated = stamp(a, now, 'changed the FX deal on');
+    const back = rec.status === 'Verified';
+    if (back) { delete rec.wf.verified; rec.status = 'Submitted'; rec.pendingWith = 'AD2 Maker'; }
+    const old = was.mode === 'deal' ? `deal ${was.dealRef}` : was.mode === 'booked' ? 'booked rate' : 'no rate';
+    audit(db, a, now, rec.id, `FX deal updated — ${old} at ${(was.customerRate || 0).toFixed(4)} → deal ${rec.rate.dealRef} at ${rec.rate.customerRate.toFixed(4)}; ` +
+      `treasury position ${rec.rate.positionId}${back ? '; back for verification by another maker' : ''}`);
+    notify(db, now, { toRole: 'AD2 Maker', text: `FX deal on ${rec.id} changed to ${rec.rate.dealRef} — verify it (another maker)`, link: `#/ad2/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    notify(db, now, { toSmeId: rec.smeId, text: `The rate on ${rec.id} is now ₹ ${rec.rate.customerRate.toFixed(4)} under deal ${rec.rate.dealRef}`, link: `#/sme/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    return { message: `${rec.id} now uses deal ${rec.rate.dealRef} at ₹ ${rec.rate.customerRate.toFixed(4)}.${back ? ' It goes back to be verified again.' : ''}` };
+  }
+  C['outward.updateDeal'] = {
+    cap: 'outward.verify',
+    run(db, a, p, ctx) {
+      const o = outwardFor(db, p.id);
+      return updateDeal(db, a, o, 'outward', p, ctx.now, 'request', () => {
+        o.inrAmount = round2(o.amount * o.rate.customerRate);
+        const miss = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount).filter(x => x.required && !(o.docs || {})[x.id]).map(x => x.name);
+        need(!miss.length, `At this rate the request also needs ${miss.join(', ')}. Raise a query for it first.`, miss);
+        o.charges = chargesFor(smeOf(db, o.smeId), o.amount, o.rate.customerRate, o.currency);
+        o.debitInr = round2(o.inrAmount + o.charges.reduce((t, c) => t + c.amount, 0));
+      });
     },
   };
 
@@ -1240,7 +1281,7 @@
       const checks = p.checks || {};
       const notDone = disposalChecks(d).filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf && d.wf.dealUpdated], 'instruction');
       d.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(d, p, 'verifying') };
       d.status = 'Verified'; d.pendingWith = 'AD2 Checker';
       audit(db, a, ctx.now, d.id, 'Verified — documents, sanctions screening, ' + ((d.allocations || []).length ? 'bill match ' : '') + 'and credit account checked');
@@ -1255,7 +1296,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Verified', 'Only a verified instruction can be authorised.');
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.dealUpdated], 'instruction');
       d.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(d, p, 'authorising') };
       d.status = 'Authorised'; d.pendingWith = 'AD2 Operations';
       audit(db, a, ctx.now, d.id, 'Authorised for processing');
@@ -1270,7 +1311,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Authorised', 'Only an authorised instruction can be processed.');
-      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised], 'instruction');
+      distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised, d.wf.dealUpdated], 'instruction');
       const acc = find(db.accounts, d.creditAccountId);
       need(acc, 'The credit account no longer exists.');
       const fcy = (d.creditCurrency || 'INR') !== 'INR';
@@ -1303,6 +1344,15 @@
       if (i) audit(db, a, ctx.now, i.id, `${d.firc} issued against disposal ${d.id}`);
       notify(db, ctx.now, { toSmeId: d.smeId, text: `${credited} credited — ${d.firc} issued for ${d.id}${d.unallocated > 0 ? ' (knock off the balance against bills)' : ''}`, link: '#/sme/disposals/' + d.id });
       return { firc: d.firc, message: `Processed. ${credited} credited and ${d.firc} issued.` };
+    },
+  };
+
+  C['disposal.updateDeal'] = {
+    cap: 'inward.verifyDisposal',
+    run(db, a, p, ctx) {
+      const d = disposalFor(db, p.id);
+      need((d.creditCurrency || 'INR') === 'INR', 'This instruction credits EEFC, so no rate applies.');
+      return updateDeal(db, a, d, 'disposal', p, ctx.now, 'instruction', () => { d.creditInr = round2(d.amount * d.rate.customerRate); });
     },
   };
 
