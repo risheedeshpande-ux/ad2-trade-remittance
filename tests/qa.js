@@ -201,6 +201,7 @@ async function startServer() {
   }
 
   const scenario = async (area, name, roles, fn) => {
+    if (process.env.ONLY && !name.includes(process.env.ONLY)) return;   /* ONLY=<text>: run the matching journeys */
     current = { area, name, roles, checks: [], status: 'pass', error: null, ms: 0 };
     process.stdout.write(`• [${area}] ${name} … `);
     const t = Date.now();
@@ -274,7 +275,7 @@ async function startServer() {
     });
 
     /* ================= customer view ================= */
-    await scenario('Customer', 'The customer never sees AD2’s margin or a deal-reference box', 'SME', async () => {
+    await scenario('Customer', 'The customer never sees AD2’s margin, and quotes a deal by reference only', 'SME', async () => {
       await signAs('MERIDIANTEX', 'SMEUSER');
       const view = await state(() => ({ margins: DB.smes[0].config.margins, rates: DB.smes[0].config.customerRates, ref: DB.currencies[0].refRate,
         rate: DB.outward.find(o => o.rate && o.rate.customerRate)?.rate }));
@@ -286,7 +287,9 @@ async function startServer() {
       await select('#or-currency', 'GBP'); await setVal('#or-amount', 1000);
       const body = (await page.locator('.page').innerText()).toLowerCase();
       check(!/margin|paise|reference rate/.test(body), 'the new-request form shows no margin, paise or reference rate');
-      check(!(await page.locator('[data-act="or-deal-ref"]').count()), 'the customer has no “Enter FX deal reference” button');
+      await click('[data-act="or-deal-ref"]');
+      check(await page.locator('#drate').evaluate(e => e.readOnly), 'the customer may quote a deal reference, but the rate is the deal’s — read-only');
+      await page.keyboard.press('Escape');
       check(/foreign currency you pay/.test(body) && /inr equivalent/.test(body), 'the rate card shows the FX amount and its INR value');
       await shot('customer-rate-card', true);
       for (const h of ['#/sme/outward/OR-5103', '#/sme/profile', '#/sme/dashboard', '#/sme/disposals/DI-9004']) {
@@ -302,7 +305,7 @@ async function startServer() {
         beneficiaryAccount: 'GB82WEST12345698765432', beneficiaryBank: 'Barclays', beneficiaryBankCountry: 'United Kingdom', swift: 'BARCGB22',
         currency: 'GBP', amount: 1000, remittanceType: 'OTT', purposeCode: 'S1006', executionDate: new Date().toISOString().slice(0, 10), debitAccountId: 'BA-001',
         docs: { invoice: doc('i'), form145: doc('f') }, declarations: { fema: true, ofac: true }, rate: { mode: 'deal', dealRef: 'FXD-2026-1', customerRate: 113 } } });
-      check(!deal.ok && /applied by AD2/.test(deal.msg), 'the server refuses a deal reference from the customer');
+      check(!deal.ok && /not open for you/.test(deal.msg), 'the server refuses a deal reference the desk did not issue this customer');
     });
 
     /* ================= outward ================= */
@@ -959,8 +962,13 @@ async function startServer() {
 
     await scenario('Onboarding', 'Clarification: the applicant supplies its IEC; the maker prices; Compliance approves', 'Applicant → Maker → Compliance', async () => {
       await signAs('HKTRADING', 'APPLICANT'); await go('#/sme/dashboard');
-      await page.fill('#resp-text', 'IEC issued last week — attached.'); await page.fill('#ap-iec', '0826011223');
+      check(await page.locator('#query-SME-1004').count() > 0, 'the open query and its requested documents wait on the dashboard');
+      await page.fill('#resp-text', 'IEC issued last week — attached.'); await page.locator('#resp-text').dispatchEvent('input'); await page.fill('#ap-iec', '0826011223'); await page.locator('#ap-iec').dispatchEvent('input');
+      await click('[data-act="doc-sample"][data-scope="resp"][data-id="iec"]');
+      await click('[data-act="doc-sample"][data-scope="resp"][data-id="other1"]');
       await click('[data-act="ob-respond"]'); await toastSays(/Response sent/);
+      await shot('applicant-answered-query', true);
+      check(Object.keys(await state(() => sme('SME-1004').query.received || {})).length === 2, 'both requested documents arrive with the answer');
       await signAs('AD2', 'MAKER'); await go('#/ad2/applications/SME-1004');
       await setVal('[data-act="rv-margin"][data-c="USD"]', 55); await click('[data-act="rv-submit"]'); await toastSays(/Compliance/);
       await signAs('AD2', 'COMPLIANCE'); await go('#/ad2/applications/SME-1004');

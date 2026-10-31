@@ -425,7 +425,7 @@ test('pricing: the customer books the live rate, never a deal, and never sees th
     beneficiaryBank: 'Intesa Sanpaolo', beneficiaryBankCountry: 'Italy', swift: 'BCITITMM', currency: 'EUR', amount: 45000,
     remittanceType: 'DIR', purposeCode: 'S0102', executionDate: '2026-09-24', debitAccountId: 'BA-001',
     allocations: [{ billId: 'BL-24014', amount: 45000 }], docs: { transport: doc('t'), invoice: doc('i'), boe: doc('b') }, declarations: DEC };
-  refuses(() => run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'deal', dealRef: 'FXD-2026-1', customerRate: 96 } } }), /applied by AD2/);
+  refuses(() => run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'deal', dealRef: 'FXD-2026-1', customerRate: 96 } } }), /not open for you/);
   const id = run(db, MER, 'outward.submit', { draft: { ...base, rate: { mode: 'booked', bookedAt: NOW } } }).id;
   /* AD2 in an assisted journey may apply a deal */
   run(db, MAKER, 'outward.submit', { actingFor: 'SME-1001', draft: { ...base, amount: 10000, allocations: [{ billId: 'BL-24015', amount: 10000 }],
@@ -611,7 +611,7 @@ test('a query reaches the customer: bell and email, deep-linked, seen only by th
   const other = Engine.scopeState(db, ARC);
   assert.ok(!other.emails.length && other.notifications.every(n => n.toSmeId === 'SME-1002'));
   assert.deepEqual(Engine.scopeState(db, who(app.domainId, app.loginId)).emails.map(m => m.record), ['SME-1005']);
-  assert.equal(Engine.scopeState(db, who('TEST', 'MASTER')).emails.length, 4);
+  assert.equal(Engine.scopeState(db, who('TEST', 'MASTER')).emails.length, 5, 'four new plus the seeded HK Trading alert');
   assert.equal(Engine.scopeState(db, null).emails.length, 0);
   /* state stored before the outbox existed */
   delete db.emails;

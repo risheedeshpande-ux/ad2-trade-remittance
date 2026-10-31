@@ -113,7 +113,7 @@ function applicantHome(me) {
     ${me.status === 'Rejected' ? `<div class="note note-err"><span>This application was not approved. ${esc(me.rejectReason || '')}</span></div>` : ''}
     ${open ? `<div class="note note-warn" style="margin-bottom:14px"><span><b>AD2 needs more information:</b> ${esc(me.query.question)}<br><small>${esc(me.query.raisedBy)} · ${dmyt(me.query.raisedAt)}</small></span></div>
       ${queryResponseCard(false, DB.onboardDocs || [], me.docs, 'ob-respond', me.id, me.query,
-        !me.iec ? `<div class="f" style="margin-top:12px;max-width:260px"><label for="ap-iec">IEC</label><input id="ap-iec" type="text" placeholder="10 characters"></div>` : '')}` : ''}
+        !me.iec ? `<div class="f" style="margin-top:12px;max-width:260px"><label for="ap-iec">IEC</label><input id="ap-iec" type="text" data-act="resp-iec" value="${esc((RESP && RESP.iec) || '')}" placeholder="10 characters"></div>` : '')}` : ''}
     ${me.query && me.query.response && !open ? `<div class="note note-info" style="margin-bottom:18px"><span><b>Your last answer:</b> ${esc(me.query.response)} <small>· ${dmyt(me.query.respondedAt)}</small></span></div>` : ''}
     <div class="card"><div class="card-head"><h2>History</h2></div><div class="card-body">${timeline(me.id)}</div></div>`;
 }

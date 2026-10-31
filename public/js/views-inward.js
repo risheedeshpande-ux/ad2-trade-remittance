@@ -318,6 +318,8 @@ function viewDisposalDetail(id) {
     if (waiting && !can(waiting)) actions.push(`<span class="badge b-amber" style="align-self:center">With ${esc(d.pendingWith)} — ${segregated(waiting) ? 'withheld from your role by design' : 'not your step'}</span>`);
     else if (waiting && barred(d)) actions.push(`<span class="badge b-amber" style="align-self:center">Four-eyes: you acted on this earlier, so another user takes this step</span>`);
   }
+  if (asSme() && ['Submitted','Verified'].includes(d.status) && !fcy && can('inward.dispose'))
+    actions.push(`<button class="btn btn-plain" type="button" data-act="di-deal-update" data-id="${d.id}">Apply FX deal reference</button>`);
   if (d.status === 'Processed') actions.push(`<button class="btn btn-ghost" type="button" data-act="di-firc" data-id="${d.id}">Download FIRC</button>`);
   if (d.status === 'Processed' && (d.unallocated || 0) > 0 && asSme() && can('recon.propose'))
     actions.push(`<button class="btn btn-primary" type="button" data-act="ko-from-firc" data-id="${d.id}">Knock off ${money(d.unallocated, d.currency)}</button>`);
