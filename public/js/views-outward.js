@@ -295,6 +295,8 @@ function viewOutwardDetail(id) {
   const checklist = prod ? checklistFor(prod.id, o.purposeCode, inrAmt) : [];
 
   const actions = [];
+  if (asSme() && ['Submitted','Verified'].includes(o.status) && can('outward.create'))
+    actions.push(`<button class="btn btn-plain" type="button" data-act="or-deal-update" data-id="${o.id}">Apply FX deal reference</button>`);
   if (asSme() && o.status === 'Draft' && can('outward.create')) {
     actions.push(`<button class="btn btn-primary" type="button" data-act="or-continue" data-id="${o.id}">Continue editing</button>`);
     actions.push(`<button class="btn btn-plain" type="button" data-act="or-discard" data-id="${o.id}">Discard draft</button>`);

@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v12';
+const SEED_VERSION = 'ad2-trade-v13';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -387,7 +387,7 @@ const ROLES = [
     can:['outward.create','outward.viewOwn','inward.viewOwn','inward.dispose','bills.lodge',
          'recon.propose','masters.beneficiary','reports.view','lab.use'],
     segregated:['outward.approve','recon.confirm','fx.dealRef'],
-    note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition. FX deal references are entered by AD2, not the customer.' },
+    note:'An SME user submits without a second SME approver. SME-side maker-checker is a later addition. The customer may quote an FX deal reference the treasury desk issued it — the rate comes from the deal; only AD2 enters a phone deal or a rate.' },
 
   { id:'AD2 Sales', portal:'AD2', order:3,
     summary:'Branch relationship manager. Captures offline applications and transacts on behalf of the SMEs it looks after — bookings, disposals, bill lodgement — which then go to a maker to verify.',
@@ -569,7 +569,8 @@ const SMES = [
     source:'Digital', createdBy:'SME Applicant', status:'Clarification Required',
     submittedAt:'2026-09-15T10:02:00', approvedAt:null, config:null,
     query:{ question:'IEC is mandatory for regular importers. Please provide your Importer Exporter Code.',
-            raisedBy:'AD2 Maker (Rohit Iyer)', raisedAt:'2026-09-16T11:20:00', response:null }
+            raisedBy:'AD2 Maker (Rohit Iyer)', raisedAt:'2026-09-16T11:20:00', response:null,
+            docs:[{ id:'iec', name:'IEC certificate' }, { id:'other1', name:'Import licence for dye intermediates' }] }
   },
   {
     id:'SME-1005', legalName:'Ishani Consulting (Individual)', tradingName:'Ishani Consulting',
@@ -981,11 +982,20 @@ const SEED = {
   capabilities:CAPABILITIES, roles:ROLES, chargeCategories:CHARGE_CATEGORIES, onboardDocs:ONBOARD_DOCS,
   smes:SMES, accounts:BANK_ACCOUNTS, beneficiaries:BENEFICIARIES, bills:BILLS, outward:OUTWARD, inward:INWARD,
   disposals:DISPOSALS, allocations:ALLOCATIONS, jobs:JOBS, audit:AUDIT, logins:ACCOUNTS,
-  notifications:[],
+  notifications:[
+    { id:'NT-1', toRole:null, toSmeId:'SME-1004', text:'AD2 needs more information on application SME-1004',
+      link:'#/sme/dashboard?for=SME-1004&focus=SME-1004', at:'2026-09-16T11:20:00' } ],
+  /* the query alert already sent to HK Trading, so the demo inbox opens with one to follow */
+  emails:[
+    { id:'EM-1', smeId:'SME-1004', record:'SME-1004', to:['hk.hktrading@mailinator.com'], subject:'AD2 needs more information on application SME-1004',
+      link:'#/sme/dashboard?for=SME-1004&focus=SME-1004', sentAt:'2026-09-16T11:20:00',
+      docs:['IEC certificate', 'Import licence for dye intermediates'],
+      body:'Dear Harikrishna Patel,\n\nAD2 needs more information on application SME-1004:\n\n"IEC is mandatory for regular importers. Please provide your Importer Exporter Code."\n\n' +
+           'Documents requested:\n  - IEC certificate\n  - Import licence for dye intermediates\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services' } ],
   tmpProducts:TMP_PRODUCTS, org:ORG, counterparties:COUNTERPARTIES, cardPrefixes:CARD_PREFIXES, correspondents:CORRESPONDENTS,
   settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
              steppedThresholdInr:4000000, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
-  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
+  seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, email:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { SEED };

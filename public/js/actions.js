@@ -258,14 +258,16 @@ const openDeals = (smeId, cur, dir) => (DB.deals || []).filter(d => d.smeId === 
   && d.status === 'Issued' && d.validUntil > nowISO());
 const dealInr = (amt, rate) => Number(amt) > 0 && Number(rate) > 0 ? inr(amt * rate) : '—';
 function dealFields(amt, cur, deals, ref, rate) {
+  const own = !isAD2();   /* the customer quotes the reference; the rate is the deal's */
   return `${deals.length ? `<p style="font-size:var(--fs-sm);margin:0 0 12px">Issued by the treasury desk: ${deals.map(d =>
       `<b>${esc(d.id)}</b> — up to ${money(d.amount, d.currency)} at ₹ ${Number(d.rate).toFixed(4)}, valid until ${dmyt(d.validUntil)}`).join('; ')}.</p>`
-      : `<div class="note note-warn" style="margin-bottom:12px"><span>No deal is open on the platform for this customer in ${esc(cur)}. Enter the reference and rate the desk gave you by phone.</span></div>`}
+      : `<div class="note note-warn" style="margin-bottom:12px"><span>${own ? `No FX deal from the treasury desk is open for you in ${esc(cur)}. Ask the desk to issue one, or book the live rate.`
+        : `No deal is open on the platform for this customer in ${esc(cur)}. Enter the reference and rate the desk gave you by phone.`}</span></div>`}
     <div class="grid g2 fields">
       <div class="f"><label for="dref">Deal reference</label><input id="dref" type="text" list="dref-list" data-act="deal-in" value="${esc(ref || '')}" placeholder="e.g. FXD-2026-77521">
         <datalist id="dref-list">${deals.map(d => `<option value="${esc(d.id)}">`).join('')}</datalist></div>
-      <div class="f"><label for="drate">Deal rate (₹ per 1 ${esc(cur)})</label><input id="drate" type="number" step="0.0001" min="0" data-act="deal-in" data-amt="${Number(amt) || 0}" value="${rate ? Number(rate).toFixed(4) : ''}">
-        <div class="hint">Held within 3% of the reference rate.</div></div>
+      <div class="f"><label for="drate">Deal rate (₹ per 1 ${esc(cur)})</label><input id="drate" type="number" step="0.0001" min="0" data-act="deal-in" data-amt="${Number(amt) || 0}" value="${rate ? Number(rate).toFixed(4) : ''}"${own ? ' readonly' : ''}>
+        <div class="hint">${own ? 'Set by the treasury desk on the deal — it cannot be changed here.' : 'Held within 3% of the reference rate.'}</div></div>
     </div>
     <div class="calc" style="margin-top:12px"><div class="line total"><span>INR equivalent of ${Number(amt) > 0 ? money(amt, cur) : 'the amount'}</span><b id="dinr">${dealInr(amt, rate)}</b></div></div>`;
 }
@@ -275,6 +277,7 @@ function readDeal(cur, deals) {
   if (!(customerRate > 0)) throw 'Enter the deal rate as a positive number.';
   if (ref && Math.abs(customerRate - ref) / ref > 0.03) throw `₹ ${customerRate} is more than 3% from the reference ₹ ${ref}. Check the deal with the treasury desk.`;
   const d = deals.find(x => x.id === dealRef);
+  if (!d && !isAD2()) throw `Deal ${dealRef} is not open for you. Check the reference with the treasury desk, or book the live rate.`;
   if (d && Math.abs(d.rate - customerRate) > 0.00005) throw `Deal ${d.id} was issued at ₹ ${Number(d.rate).toFixed(4)}.`;
   return { dealRef, customerRate, d };
 }
@@ -296,12 +299,14 @@ function dealModal(draft, cur, smeRec, dir, amt) {
 /* AD2 changes the deal on a submitted request (before authorisation). */
 function updateDealModal(rec, cmd, dir) {
   const deals = openDeals(rec.smeId, rec.currency, dir);
-  commandModal({ title:'Update the FX deal on ' + rec.id, okLabel:'Save deal', cmd, body:`
+  const own = !isAD2();
+  commandModal({ title:(own ? 'Apply an FX deal reference to ' : 'Update the FX deal on ') + rec.id, okLabel: own ? 'Apply deal' : 'Save deal', cmd, body:`
     <p style="font-size:var(--fs-sm);margin:0 0 14px">Now: ${rec.rate.mode === 'deal' ? 'deal <b>' + esc(rec.rate.dealRef) + '</b>' : 'booked rate'} at ₹ ${(rec.rate.customerRate || 0).toFixed(4)}.
-      Saving releases its treasury position and attaches the deal; the INR amounts follow the new rate.
-      ${rec.status === 'Verified' ? 'The request goes back to be verified again — by another maker.' : 'Another maker verifies it.'}</p>
-    ${dealFields(rec.amount, rec.currency, deals, rec.rate.mode === 'deal' ? rec.rate.dealRef : '', rec.rate.customerRate)}`,
-    read: () => { const { dealRef, customerRate } = readDeal(rec.currency, deals); return { id: rec.id, dealRef, customerRate }; } });
+      ${own ? 'The deal’s rate replaces it and the INR amounts follow; AD2 verifies the request again.'
+        : `Saving releases its treasury position and attaches the deal; the INR amounts follow the new rate.
+      ${rec.status === 'Verified' ? 'The request goes back to be verified again — by another maker.' : 'Another maker verifies it.'}`}</p>
+    ${dealFields(rec.amount, rec.currency, deals, rec.rate.mode === 'deal' ? rec.rate.dealRef : (own ? deals[0]?.id : ''), rec.rate.mode === 'deal' ? rec.rate.customerRate : (own ? deals[0]?.rate : rec.rate.customerRate))}`,
+    read: () => { const { dealRef, customerRate } = readDeal(rec.currency, deals); return own ? { id: rec.id, dealRef } : { id: rec.id, dealRef, customerRate }; } });
 }
 
 /* The purpose search belongs to the outward or the disposal draft. */
@@ -521,7 +526,7 @@ document.addEventListener('click', async e => {
   }
   if (act === 'ob-respond') {
     if (!RESP || !RESP.text.trim()) { toast('Write a response first.', 'err'); return; }
-    run('onboarding.respond', { response:RESP.text, docs:RESP.docs, iec: val('#ap-iec') || undefined }, { after: () => { RESP = null; } });
+    run('onboarding.respond', { response:RESP.text, docs:RESP.docs, iec: RESP.iec || undefined }, { after: () => { RESP = null; } });
     return;
   }
   if (act === 'offline-app') { resetDrafts(); location.hash = '#/register'; return; }
@@ -612,7 +617,7 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount); return; }
-  if (act === 'or-deal-update') { updateDealModal(outwardRec(t.dataset.id), 'outward.updateDeal', 'out'); return; }
+  if (act === 'or-deal-update') { updateDealModal(outwardRec(t.dataset.id), isAD2() ? 'outward.updateDeal' : 'outward.applyDeal', 'out'); return; }
   if (act === 'or-rate-clear') { releaseRate(OR_DRAFT); render(); return; }
   if (act === 'or-save') {
     run('outward.saveDraft', { draft: OR_DRAFT }, { after: r => { OR_DRAFT.id = r.id; } });
@@ -731,7 +736,7 @@ document.addEventListener('click', async e => {
     return;
   }
   if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in', diAmount(DI_DRAFT, i)); return; }
-  if (act === 'di-deal-update') { updateDealModal(disposalRec(t.dataset.id), 'disposal.updateDeal', 'in'); return; }
+  if (act === 'di-deal-update') { updateDealModal(disposalRec(t.dataset.id), isAD2() ? 'disposal.updateDeal' : 'disposal.applyDeal', 'in'); return; }
   if (act === 'di-rate-clear'){ releaseRate(DI_DRAFT); render(); return; }
   if (act === 'di-submit') {
     const d = DI_DRAFT, errs = [], i = inwardRec(d.inwardId), acc = acct(d.creditAccountId);
@@ -1455,10 +1460,12 @@ document.addEventListener('input', e => {
     return;
   }
   if (t.dataset.act === 'resp-text' && RESP) { RESP.text = t.value; return; }
+  if (t.dataset.act === 'resp-iec' && RESP) { RESP.iec = t.value.trim(); return; }
   if (obListField(t)) return;
   if (t.dataset.act === 'deal-in') {
     const d = t.id === 'dref' && (DB.deals || []).find(x => x.id === t.value.trim().toUpperCase() && x.status === 'Issued');
     if (d) $('#drate').value = Number(d.rate).toFixed(4);
+    else if (t.id === 'dref' && !isAD2()) $('#drate').value = '';
     $('#dinr').textContent = dealInr($('#drate').dataset.amt, $('#drate').value);
     return;
   }
@@ -1528,8 +1535,11 @@ document.addEventListener('pointerup', e => {
   const p = PRESS; PRESS = null;
   if (!p || document.contains(p.el)) return;
   const under = document.elementFromPoint(e.clientX, e.clientY);
-  const t = under && under.closest('[data-act]');
-  if (t && t.dataset.act === p.act && (t.dataset.id || '') === p.id && !t.disabled) setTimeout(() => t.click(), 0);
+  const same = t => t && t.dataset.act === p.act && (t.dataset.id || '') === p.id && !t.disabled;
+  let t = under && under.closest('[data-act]');
+  /* the re-render may move it (a longer label, a reflowed row): the one button left with that action */
+  if (!same(t)) { const all = [...document.querySelectorAll('[data-act]')].filter(same); t = all.length === 1 ? all[0] : null; }
+  if (t) setTimeout(() => t.click(), 0);
 }, true);
 
 /* ---------- boot --------------------------------------------------------------------- */

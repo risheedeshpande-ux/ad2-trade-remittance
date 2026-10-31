@@ -168,9 +168,11 @@
       req = req || {};
       const side = sideOf(dir);
       if (req.mode === 'deal') {
-        if (!can(db, a, 'fx.dealRef') || !isAD2(a)) fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
+        /* the customer may quote a deal the desk issued it; only AD2 enters a phone deal or a rate */
+        if (isAD2(a) && !can(db, a, 'fx.dealRef')) fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
         const ref = dealRefOf(req.dealRef);
         const dl = (db.deals || []).find(x => x.id === ref);
+        if (!isAD2(a)) need(dl && dl.smeId === s.id && !dl.phone, `Deal ${ref} is not open for you on the platform. Check the reference with the treasury desk, or book the live rate.`);
         /* a rate typed with the reference: the deal the desk dealt by phone */
         const typed = req.customerRate != null && req.customerRate !== '' && Number(req.customerRate) !== 0;
         if (!dl) {
@@ -243,6 +245,7 @@
       const ref = dealRefOf(req.dealRef);
       const old = rec.rate && rec.rate.positionId && find(db.positions, rec.rate.positionId);
       if (old && old.dealId === ref && old.status === 'Attached') {
+        need(isAD2(a), `Deal ${ref} is already applied to ${rec.id}.`);
         const dl = find(db.deals, ref);
         need(dl && dl.phone, `Deal ${ref} was issued by the treasury desk at ${r4(old.customerRate).toFixed(4)}. Ask the desk to reissue it at the new rate.`);
         const rate = dealRate(db, rec.currency, req.customerRate);
@@ -706,6 +709,9 @@
         return;
       }
       out.positions = pos.filter(p => p.smeId === a.smeId && p.source === 'Booked').map(base);
+      /* the deals the desk issued this customer: its own rate, never the reference or margin */
+      out.deals = (db.deals || []).filter(d => d.smeId === a.smeId && d.status === 'Issued' && !d.phone).map(d => ({ id: d.id, smeId: d.smeId,
+        currency: d.currency, side: d.side, amount: d.amount, rate: d.rate, validUntil: d.validUntil, status: d.status, positionId: d.positionId }));
     }
 
     /* ---------- seed ------------------------------------------------------------

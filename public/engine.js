@@ -1054,7 +1054,9 @@
      verified request goes back to be verified again, and whoever changed the
      rate takes no later step on it (four-eyes). */
   function updateDeal(db, a, rec, kind, p, now, what, recompute) {
-    requireCap(db, a, 'fx.dealRef');
+    const ad2 = isAD2(a);
+    if (ad2) requireCap(db, a, 'fx.dealRef');
+    else { need(rec.smeId === ownSme(db, a).id, `${rec.id} is not yours.`); p = { dealRef: p.dealRef }; }
     need(['Submitted', 'Verified'].includes(rec.status), `The FX deal can be changed only before authorisation; this ${what} is ${rec.status.toLowerCase()}.`);
     const was = rec.rate || {};
     rec.rate = T.replaceRate(db, a, smeOf(db, rec.smeId), rec, kind, kind === 'outward' ? 'out' : 'in', p, now);
@@ -1069,23 +1071,29 @@
     const old = was.mode === 'deal' ? `deal ${was.dealRef}` : was.mode === 'booked' ? 'booked rate' : 'no rate';
     audit(db, a, now, rec.id, `FX deal updated — ${old} at ${(was.customerRate || 0).toFixed(4)} → deal ${rec.rate.dealRef} at ${rec.rate.customerRate.toFixed(4)}; ` +
       `treasury position ${rec.rate.positionId}${back ? '; back for verification by another maker' : ''}`);
-    notify(db, now, { toRole: 'AD2 Maker', text: `FX deal on ${rec.id} changed to ${rec.rate.dealRef} — verify it (another maker)`, link: `#/ad2/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
-    notify(db, now, { toSmeId: rec.smeId, text: `The rate on ${rec.id} is now ₹ ${rec.rate.customerRate.toFixed(4)} under deal ${rec.rate.dealRef}`, link: `#/sme/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    notify(db, now, { toRole: 'AD2 Maker', text: `FX deal on ${rec.id} changed to ${rec.rate.dealRef}${ad2 ? ' — verify it (another maker)' : ' by the customer — verify it'}`, link: `#/ad2/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+    if (ad2) notify(db, now, { toSmeId: rec.smeId, text: `The rate on ${rec.id} is now ₹ ${rec.rate.customerRate.toFixed(4)} under deal ${rec.rate.dealRef}`, link: `#/sme/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
     return { message: `${rec.id} now uses deal ${rec.rate.dealRef} at ₹ ${rec.rate.customerRate.toFixed(4)}.${back ? ' It goes back to be verified again.' : ''}` };
   }
   C['outward.updateDeal'] = {
     cap: 'outward.verify',
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
-      return updateDeal(db, a, o, 'outward', p, ctx.now, 'request', () => {
-        o.inrAmount = round2(o.amount * o.rate.customerRate);
-        const miss = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount).filter(x => x.required && !(o.docs || {})[x.id]).map(x => x.name);
-        need(!miss.length, `At this rate the request also needs ${miss.join(', ')}. Raise a query for it first.`, miss);
-        o.charges = chargesFor(smeOf(db, o.smeId), o.amount, o.rate.customerRate, o.currency);
-        o.debitInr = round2(o.inrAmount + o.charges.reduce((t, c) => t + c.amount, 0));
-      });
+      return updateDeal(db, a, o, 'outward', p, ctx.now, 'request', () => outwardRepriced(db, o));
     },
   };
+  /* the customer quotes a deal the desk issued it; the rate comes from the deal */
+  C['outward.applyDeal'] = {
+    cap: 'outward.create',
+    run(db, a, p, ctx) { need(!isAD2(a), 'AD2 updates the FX deal from the request.'); return C['outward.updateDeal'].run(db, a, p, ctx); },
+  };
+  function outwardRepriced(db, o) {
+    o.inrAmount = round2(o.amount * o.rate.customerRate);
+    const miss = checklist(db, o.remittanceType, o.purposeCode, o.inrAmount).filter(x => x.required && !(o.docs || {})[x.id]).map(x => x.name);
+    need(!miss.length, `At this rate the request also needs ${miss.join(', ')}. Raise a query for it first.`, miss);
+    o.charges = chargesFor(smeOf(db, o.smeId), o.amount, o.rate.customerRate, o.currency);
+    o.debitInr = round2(o.inrAmount + o.charges.reduce((t, c) => t + c.amount, 0));
+  }
 
   C['outward.reject'] = {
     cap: 'outward.reject',
@@ -1379,6 +1387,10 @@
       need((d.creditCurrency || 'INR') === 'INR', 'This instruction credits EEFC, so no rate applies.');
       return updateDeal(db, a, d, 'disposal', p, ctx.now, 'instruction', () => { d.creditInr = round2(d.amount * d.rate.customerRate); });
     },
+  };
+  C['disposal.applyDeal'] = {
+    cap: 'inward.dispose',
+    run(db, a, p, ctx) { need(!isAD2(a), 'AD2 updates the FX deal from the instruction.'); return C['disposal.updateDeal'].run(db, a, p, ctx); },
   };
 
   C['disposal.query'] = {

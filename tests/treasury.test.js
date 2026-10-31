@@ -207,7 +207,7 @@ test('deals: treasury issues, branch applies, single use, bound to the customer'
     purposeCode: 'S0101', executionDate: '2026-09-26', debitAccountId: 'BA-004', allocations: [], docs: { pi: doc('pi') }, declarations: DEC };
   const docsFor = Engine.checklist(db, 'AIR', 'S0101', 8000 * 88.8).filter(x => x.required).reduce((o, x) => ({ ...o, [x.id]: doc(x.id) }), {});
   arcPay.docs = docsFor;
-  refuses(() => run(db, ARC, 'outward.submit', { draft: { ...arcPay, rate: { mode: 'deal', dealRef: d.id } } }), /applied by AD2/);
+  refuses(() => run(db, ARC, 'outward.submit', { draft: { ...arcPay, rate: { mode: 'deal', dealRef: 'DESK-PHONE-1', customerRate: 88.8 } } }), /not open for you/);
   refuses(() => run(db, MAKER, 'outward.submit', { actingFor: 'SME-1001', draft: { ...payment(), rate: { mode: 'deal', dealRef: d.id } } }), /another customer/);
   refuses(() => run(db, MAKER, 'outward.submit', { actingFor: 'SME-1002', draft: { ...arcPay, amount: 12000, rate: { mode: 'deal', dealRef: d.id } } }), /covers up to/);
   const id = run(db, MAKER, 'outward.submit', { actingFor: 'SME-1002', draft: { ...arcPay, rate: { mode: 'deal', dealRef: d.id } } }).id;
@@ -419,5 +419,30 @@ test('update FX deal: an issued deal keeps its rate; drafts take a typed phone-d
   assert.equal(di.creditInr, Math.round(di.amount * 24 * 100) / 100);
   assert.deepEqual([pos(db, di.rate.positionId).side, pos(db, di.rate.positionId).margin], ['BUY', 7]);
   refuses(() => run(db, MAKER, 'disposal.verify', { id: di.id, checks: { documents: true, account: true, sanctions: true, bills: true } }), /changed the FX deal/);
+  balanced(db);
+});
+
+test('customer FX deal: the SME quotes a deal the desk issued it, never a rate', () => {
+  const db = fresh();
+  const o = db.outward.find(x => x.id === 'OR-5106');            /* Arcadia, Submitted, USD 52,000 */
+  const own = run(db, DEALER, 'deal.issue', { smeId: o.smeId, dir: 'out', currency: 'USD', amount: 60000, rate: 88.9 });
+  const other = run(db, DEALER, 'deal.issue', { smeId: 'SME-1001', dir: 'out', currency: 'USD', amount: 60000, rate: 88.9 });
+  /* it sees its own issued deals, with its rate and no reference or margin */
+  const view = Engine.scopeState(db, ARC);
+  assert.ok(view.deals.some(d => d.id === own.id) && view.deals.every(d => d.smeId === o.smeId), 'only its own deals');
+  assert.ok(!('refRate' in view.deals[0]) && !('margin' in view.deals[0]));
+  refuses(() => run(db, ARC, 'outward.updateDeal', { id: o.id, dealRef: own.id }), /cannot/);
+  refuses(() => run(db, ARC, 'outward.applyDeal', { id: o.id, dealRef: other.id }), /not open for you/);
+  refuses(() => run(db, ARC, 'outward.applyDeal', { id: o.id, dealRef: 'DESK-PHONE-9' }), /not open for you/);
+  refuses(() => run(db, MER, 'outward.applyDeal', { id: o.id, dealRef: own.id }), /not yours/);
+  refuses(() => run(db, MAKER, 'outward.applyDeal', { id: o.id, dealRef: own.id }), /cannot|AD2 updates/);
+  /* a typed rate is ignored: the deal's rate applies */
+  run(db, ARC, 'outward.applyDeal', { id: o.id, dealRef: own.id.toLowerCase(), customerRate: 80 });
+  assert.deepEqual([o.rate.mode, o.rate.dealRef, o.rate.customerRate], ['deal', own.id, 88.9]);
+  assert.equal(o.inrAmount, Math.round(52000 * 88.9 * 100) / 100);
+  assert.equal(o.status, 'Submitted');
+  assert.ok(db.notifications.some(n => n.toRole === 'AD2 Maker' && /by the customer/.test(n.text)));
+  refuses(() => run(db, ARC, 'outward.applyDeal', { id: o.id, dealRef: own.id }), /already applied/);
+  run(db, MAKER, 'outward.verify', { id: o.id, checks: CHECKS });
   balanced(db);
 });

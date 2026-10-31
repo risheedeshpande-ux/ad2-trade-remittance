@@ -24,7 +24,7 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
     </div>`;
   const ad2Note = r => seesMargin() && r ? `<div class="tick">Reference ₹ ${Number(r.refRate || currency(cur)?.refRate || 0).toFixed(4)}
       ${dir === 'out' ? 'plus' : 'less'} margin ${r.margin != null ? r.margin : m} paise — AD2 only, never shown to the customer</div>` : '';
-  const dealBtn = label => can('fx.dealRef') && isAD2() ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">${label}</button>` : '';
+  const dealBtn = label => (isAD2() ? can('fx.dealRef') : true) ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">${label}</button>` : '';
 
   if (draft.rate.mode === 'booked') {
     const amt = draft.rate.bookedAmount || fx;
