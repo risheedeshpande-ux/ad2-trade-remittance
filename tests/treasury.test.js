@@ -446,3 +446,22 @@ test('customer FX deal: the SME quotes a deal the desk issued it, never a rate',
   run(db, MAKER, 'outward.verify', { id: o.id, checks: CHECKS });
   balanced(db);
 });
+
+test('demo deals: a customer always has an open deal to quote, however long the demo sits', () => {
+  const db = fresh();
+  const open = (cur, now) => db.deals.filter(d => d.smeId === 'SME-1001' && d.currency === cur && d.status === 'Issued' && d.validUntil > now);
+  const t0 = new Date().toISOString();
+  assert.equal(Engine.refreshDemoDeals(db, t0), true);
+  assert.equal(open('EUR', t0).length, 1);
+  assert.equal(open('EUR', t0)[0].rate, Engine.scopeState(db, MER).smes[0].config.customerRates.EUR.out, 'at the customer’s own rate');
+  assert.equal(Engine.refreshDemoDeals(db, t0), false, 'nothing to do while one is open');
+  /* four days later everything has expired: a fresh one replaces it */
+  const t1 = new Date(Date.now() + 96 * 3600000).toISOString();
+  assert.equal(open('EUR', t1).length, 0);
+  assert.equal(Engine.refreshDemoDeals(db, t1), true);
+  assert.equal(open('EUR', t1).length, 1);
+  /* switched off with the test tools */
+  const off = fresh(); off.settings.testLab = false;
+  assert.equal(Engine.refreshDemoDeals(off, t0), false);
+  balanced(db);
+});

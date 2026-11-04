@@ -2309,7 +2309,7 @@
   return {
     EngineError, freshState, execute, scopeState, publicStatus, resolveActor,
     checklist, purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
-    actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C),
+    actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C), refreshDemoDeals: T.refreshDemoDeals,
     /* read-only treasury views, shared by every screen so they agree */
     treasury: { positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
       remaining: T.remaining, isTrade: T.isTrade, netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate,
