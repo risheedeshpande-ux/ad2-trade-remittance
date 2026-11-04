@@ -460,6 +460,12 @@ test('demo deals: a customer always has an open deal to quote, however long the 
   assert.equal(open('EUR', t1).length, 0);
   assert.equal(Engine.refreshDemoDeals(db, t1), true);
   assert.equal(open('EUR', t1).length, 1);
+  assert.ok(!db.notifications.some(n => /^Deal .* issued/.test(n.text)), 'no alerts for standing deals');
+  /* the alerts the first version raised are cleared */
+  const standing = db.deals.find(d => d.note === 'Standing deal for the demo');
+  db.notifications.unshift({ id: 'NT-X', toRole: 'AD2 Maker', text: `Deal ${standing.id} issued for Meridian Textiles: 1 at 1`, link: '', at: t1 });
+  assert.equal(Engine.refreshDemoDeals(db, t1), true);
+  assert.ok(!db.notifications.some(n => n.id === 'NT-X'));
   /* switched off with the test tools */
   const off = fresh(); off.settings.testLab = false;
   assert.equal(Engine.refreshDemoDeals(off, t0), false);
