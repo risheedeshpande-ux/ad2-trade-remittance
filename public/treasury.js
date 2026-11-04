@@ -341,14 +341,14 @@
     }
     /* An FX deal reference for a position already on the book: the rate the
        trade portal applies to the customer's request. */
-    function issueDeal(db, a, s, p, hours, note, now) {
+    function issueDeal(db, a, s, p, hours, note, now, quiet) {
       const id = `FXD-${now.slice(0, 4)}-${pad(seq(db, 'fxd'), 5)}`;
       p.source = 'Deal'; p.dealId = id; p.expiresAt = addHours(now, hours);
       const dl = { id, smeId: s.id, currency: p.currency, side: p.side, amount: p.amount, rate: r4(p.customerRate), refRate: p.refRate, positionId: p.id,
         validUntil: p.expiresAt, status: 'Issued', issuedAt: now, issuedBy: actorLabel(a), issuedByKey: actorKey(a), note: note || '' };
       arr(db, 'deals').unshift(dl);
       audit(db, a, now, p.id, `Deal ${id} issued for ${s.tradingName} — ${fmt(p.amount, p.currency)} ${dirWord(p.side)} at ${r4(p.customerRate).toFixed(4)}, valid ${hours}h`);
-      ['AD2 Maker', 'AD2 Sales', 'AD2 Operations'].forEach(r => notify(db, now, { toRole: r, text: `Deal ${id} issued for ${s.tradingName}: ${fmt(p.amount, p.currency)} at ${r4(p.customerRate).toFixed(4)}`, link: '#/ad2/directory' }));
+      if (!quiet) ['AD2 Maker', 'AD2 Sales', 'AD2 Operations'].forEach(r => notify(db, now, { toRole: r, text: `Deal ${id} issued for ${s.tradingName}: ${fmt(p.amount, p.currency)} at ${r4(p.customerRate).toFixed(4)}`, link: '#/ad2/directory' }));
       return dl;
     }
 
@@ -357,9 +357,14 @@
        Returns whether anything changed. */
     const DEMO_DEALS = [['SME-1001', 'EUR', 'out', 100000], ['SME-1001', 'GBP', 'out', 50000],
                         ['SME-1002', 'USD', 'out', 60000], ['SME-1003', 'USD', 'in', 50000]];
+    const STANDING = 'Standing deal for the demo';
     function refreshDemoDeals(db, now) {
       if ((db.settings || {}).testLab === false) return false;
-      let changed = false;
+      /* ponytail: clears the alerts the first standing deals raised on 4 Nov 2026; harmless once they are gone */
+      const standing = new Set((db.deals || []).filter(d => d.note === STANDING).map(d => d.id));
+      const kept = (db.notifications || []).filter(n => !standing.has((/^Deal (FXD-\S+) issued/.exec(n.text) || [])[1]));
+      let changed = kept.length !== (db.notifications || []).length;
+      if (changed) db.notifications = kept;
       DEMO_DEALS.forEach(([smeId, cur, dir, amt]) => {
         const s = smeOf(db, smeId), side = sideOf(dir);
         if (!s || s.status !== 'Approved' || !((s.config || {}).currencies || []).includes(cur)) return;
@@ -367,7 +372,7 @@
         const ref = currencyOf(db, cur).refRate, m = marginFor(db, s, cur), rate = customerRate(db, cur, dir === 'out' ? m : -m);
         const p = newPosition(db, SYSTEM, s, { currency: cur, side, amount: amt, customerRate: rate, refRate: ref, margin: m, source: 'Deal', channel: 'Treasury deal',
           ibrAtBooking: marketRate(db, cur, now) }, now);
-        issueDeal(db, SYSTEM, s, p, 72, 'Standing deal for the demo', now);
+        issueDeal(db, SYSTEM, s, p, 72, STANDING, now, true);
         changed = true;
       });
       return changed;

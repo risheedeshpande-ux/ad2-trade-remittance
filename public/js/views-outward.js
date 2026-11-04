@@ -111,7 +111,9 @@ function viewOutwardNew() {
   const billGap = d.allocations.length && Math.abs(Number(d.amount) - allocated) > 0.001 ? Number(d.amount) - allocated : 0;
   const billPool = DB.bills.filter(b => b.smeId === d.smeId && b.type === 'Import' && b.review === 'Accepted' && b.outstanding > 0);
 
-  const billCard = !prod ? '' : prod.bills === 'none'
+  const billCard = !prod ? `<div class="card"><div class="card-head"><h2>4 · Bills</h2></div><div class="card-body">
+        <div class="note note-info"><span>Choose the product above to see which bills this payment can settle.</span></div></div></div>`
+    : prod.bills === 'none'
     ? `<div class="card"><div class="card-head"><h2>4 · Bills</h2></div><div class="card-body">
         <div class="note note-info"><span><b>Advance payment — no bill yet.</b> The Bill of Entry is due within 90 days of payment.
         Once the goods arrive, lodge the import bill and knock it off against this payment.</span></div></div></div>`
@@ -126,8 +128,6 @@ function viewOutwardNew() {
             : empty('No accepted import bills', 'Lodge the import bill first — AD2 accepts it, then it can be paid here.')}
           ${prod.bills === 'required' ? '' : `<p class="hint" style="margin:10px 0 0;font-size:var(--fs-xs);color:var(--muted)">OTT payments for goods may settle a bill; for services leave this empty.</p>`}
         </div></div>`;
-  const hasBillStep = !!prod;
-  const step = k => k + (hasBillStep ? 1 : 0);
 
   return shell(crumb('Outward Remittance', d.id ? d.id + ' (draft)' : 'New request'), `
     <div class="page-head"><div><h1>${d.id ? 'Continue draft ' + esc(d.id) : 'New outward request'}</h1>
@@ -217,11 +217,11 @@ function viewOutwardNew() {
 
         ${billCard}
 
-        <div class="card"><div class="card-head"><h2>${step(4)} · Book the rate</h2></div><div class="card-body">
+        <div class="card"><div class="card-head"><h2>5 · Book the rate</h2></div><div class="card-body">
           ${!d.currency ? `<div class="note note-info"><span>Choose the currency and amount to see the live rate and what it comes to in INR.</span></div>`
             : rateBoxHTML(d, d.currency, me, 'out', 'or', d.amount)}</div></div>
 
-        <div class="card"><div class="card-head"><h2>${step(5)} · Documents</h2>
+        <div class="card"><div class="card-head"><h2>6 · Documents</h2>
           ${prod && p ? `<div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">${esc(prod.id)} · ${esc(p.code)}</span></div>` : ''}</div>
           <div class="card-body">${!prod || !p
             ? `<div class="note note-info"><span>Select a product and purpose code to load the document checklist.</span></div>`
@@ -229,7 +229,7 @@ function viewOutwardNew() {
                 ${checklist.some(x => x.rule === 'threshold' || x.rule === 'goods') ? 'Some documents depend on the purpose code or the INR amount — the list updates as you go.' : ''}</span></div>
                ${docRows(checklist, d.docs, 'or')}`}</div></div>
 
-        <div class="card"><div class="card-head"><h2>${step(6)} · Declarations<span class="req">*</span></h2></div><div class="card-body">
+        <div class="card"><div class="card-head"><h2>7 · Declarations<span class="req">*</span></h2></div><div class="card-body">
           ${declarationsHTML(d, 'or')}</div></div>
       </div>
 
