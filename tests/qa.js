@@ -26,7 +26,7 @@ async function startServer() {
   if (process.env.BASE) return { base: process.env.BASE.replace(/\/$/, ''), stop: () => {} };
   const port = 8700 + Math.floor(Math.random() * 500);
   const stateFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ad2-qa-')), 'state.json');
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port), STATE_FILE: stateFile }, stdio: 'pipe' });
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(port), STATE_FILE: stateFile, VERCEL_GIT_COMMIT_SHA: 'qa-build' }, stdio: 'pipe' });
   await new Promise((res, rej) => { proc.stdout.on('data', d => /on http/.test(d) && res()); proc.on('exit', rej); setTimeout(res, 3000); });
   return { base: `http://localhost:${port}`, stop: () => proc.kill() };
 }
@@ -289,6 +289,7 @@ async function startServer() {
       check(!/margin|paise|reference rate/.test(body), 'the new-request form shows no margin, paise or reference rate');
       await click('[data-act="or-deal-ref"]');
       check(await page.locator('#drate').evaluate(e => e.readOnly), 'the customer may quote a deal reference, but the rate is the deal’s — read-only');
+      check(/^FXD-/.test(await page.inputValue('#dref')) && Number(await page.inputValue('#drate')) > 0, 'an open deal from the desk is ready to quote, with its rate');
       await page.keyboard.press('Escape');
       check(/foreign currency you pay/.test(body) && /inr equivalent/.test(body), 'the rate card shows the FX amount and its INR value');
       await shot('customer-rate-card', true);
@@ -1093,6 +1094,14 @@ async function startServer() {
       await page.fill('#di-amt', '5000');
       await page.click('[data-act="di-option"][data-id="advance"]'); await wait(400);
       check(await state(() => DI_DRAFT.option) === 'advance' && await state(() => DI_DRAFT.amount) === '5000', 'a click right after typing is not lost on the disposal form either');
+    });
+
+    await scenario('Platform', 'A tab left open picks up a new deployment by itself', 'Any', async () => {
+      await signAs('AD2', 'MAKER'); await go('#/ad2/dashboard');
+      await page.evaluate(() => { window.OLD_TAB = true; BUILD = 'an-older-build'; poll(); });
+      await page.waitForFunction(() => !window.OLD_TAB, null, { timeout: 10000 });
+      check(true, 'the page reloaded onto the new code');
+      await wait(800);
     });
 
     await scenario('Platform', 'The browser never goes back to an older copy of the state', 'Any', async () => {

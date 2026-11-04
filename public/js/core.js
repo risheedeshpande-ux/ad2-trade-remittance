@@ -113,6 +113,16 @@ function refreshUser(user) {
   } catch (e) { setSession(null); }
 }
 
+/* The app never reloads by itself, so a tab left open would run the code it
+   opened with for ever, through any number of sign-ins. Pick up a new
+   deployment as soon as nothing is half-filled. */
+let BUILD = null;
+function checkBuild(r) {
+  if (!r.build) return;
+  if (!BUILD) BUILD = r.build;
+  else if (r.build !== BUILD && !DRAFT && !OR_DRAFT && !DI_DRAFT && !BILL_DRAFT && !RESP && !$('#modal-host').innerHTML) location.reload();
+}
+
 /* Never go back in time: a reply built from an older copy of the state (a
    lagging server instance or CDN) is ignored rather than shown. */
 function isNewer(r) {
@@ -141,6 +151,7 @@ async function pull() {
     return;
   }
   const r = await http('/api/state' + floorQuery('min'), { token: S && S.token });
+  checkBuild(r);
   applyServer(r);
 }
 /* Tells the server which revision this browser already holds, so it never
@@ -289,6 +300,7 @@ async function poll() {
     /* after a sign-in or switch the view must be rebuilt for the new user */
     const q = floorQuery(API.view === (S ? myKey() : 'public') ? 'since' : 'min');
     const r = await http('/api/state' + q, { token: S && S.token, timeout: 8000 });
+    checkBuild(r);
     if (r.unchanged) { if (pendingRender) safeRender(); return; }
     const had = S && S.token;
     applyServer(r);
@@ -478,7 +490,7 @@ function simBanner() {
   return `
   <div class="sim-bar">
     <b>Demo</b>
-    <span>${esc(mode)}. Fictional businesses; FX, SWIFT, PennyDrop and document AI are simulated.</span>
+    <span>${esc(mode)}. Fictional businesses; FX, SWIFT, PennyDrop and document AI are simulated.${API.epoch ? ` Data last reset ${esc(dmyt(API.epoch.split('~')[0]))}.` : ''}</span>
     <button type="button" data-act="guide-open">Demo guide</button>
     <a href="inbox.html" target="_blank" rel="noopener" style="margin-left:var(--s3);color:#7a5c00;font-size:var(--fs-xs);font-weight:600">Demo inbox ↗</a>
     <a href="screens.html" style="margin-left:var(--s3);color:#7a5c00;font-size:var(--fs-xs)">All screens</a>

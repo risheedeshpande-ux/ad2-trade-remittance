@@ -26,6 +26,8 @@ const getStore = () => (store = store || makeStore());
    store before it writes, so the cache can never cause a lost update. */
 let cache = null;           // { state, etag, at }
 const CACHE_MS = 4000;
+/* which deployment answered: an open tab reloads when this changes */
+const BUILD = process.env.VERCEL_GIT_COMMIT_SHA || '';
 
 /* A state is newer than another if it was seeded later (epoch), or it is the
    same seeding with a higher revision. Revisions carry on across a reset, so
@@ -39,6 +41,11 @@ async function readState({ fresh } = {}) {
   if (!state || state.version !== SEED.version) {
     const seeded = Engine.freshState(SEED, null, { rev: state ? (state.rev || 0) + 1 : 0 });
     try { etag = await s.write(seeded, etag); state = seeded; }
+    catch (e) { if (!e.conflict) throw e; ({ state, etag } = await s.read()); }
+  }
+  if (Engine.refreshDemoDeals(state, new Date().toISOString())) {
+    state.rev = (state.rev || 0) + 1;
+    try { etag = await s.write(state, etag); }
     catch (e) { if (!e.conflict) throw e; ({ state, etag } = await s.read()); }
   }
   /* A lagging read (a CDN copy, another instance) never replaces a newer
@@ -177,10 +184,10 @@ async function handle({ method, route, query, headers, body, ip }) {
         if (newer(theirs, state)) return json(200, { unchanged: true, stale: true, rev: theirs.rev, epoch: theirs.epoch });
       }
       if (query.since != null && String(state.rev) === String(query.since) && (!query.epoch || query.epoch === state.epoch))
-        return json(200, { unchanged: true, rev: state.rev, epoch: state.epoch });
+        return json(200, { unchanged: true, rev: state.rev, epoch: state.epoch, build: BUILD });
       const user = publicUser(state, w.who);
       if (w.who && !user) return json(401, { error: 'Your session is no longer valid. Sign in again.', code: 'auth' });
-      return json(200, { rev: state.rev, epoch: state.epoch, state: Engine.scopeState(state, w.who), user });
+      return json(200, { rev: state.rev, epoch: state.epoch, build: BUILD, state: Engine.scopeState(state, w.who), user });
     }
 
     if (route === 'command' && method === 'POST') {

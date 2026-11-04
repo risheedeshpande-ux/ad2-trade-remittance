@@ -352,6 +352,27 @@
       return dl;
     }
 
+    /* The live demo: deals expire within 72 hours and a customer's use uses them
+       up, which left customers with nothing to quote. Keep one open per journey.
+       Returns whether anything changed. */
+    const DEMO_DEALS = [['SME-1001', 'EUR', 'out', 100000], ['SME-1001', 'GBP', 'out', 50000],
+                        ['SME-1002', 'USD', 'out', 60000], ['SME-1003', 'USD', 'in', 50000]];
+    function refreshDemoDeals(db, now) {
+      if ((db.settings || {}).testLab === false) return false;
+      let changed = false;
+      DEMO_DEALS.forEach(([smeId, cur, dir, amt]) => {
+        const s = smeOf(db, smeId), side = sideOf(dir);
+        if (!s || s.status !== 'Approved' || !((s.config || {}).currencies || []).includes(cur)) return;
+        if ((db.deals || []).some(d => d.smeId === smeId && d.currency === cur && d.side === side && d.status === 'Issued' && d.validUntil > now)) return;
+        const ref = currencyOf(db, cur).refRate, m = marginFor(db, s, cur), rate = customerRate(db, cur, dir === 'out' ? m : -m);
+        const p = newPosition(db, SYSTEM, s, { currency: cur, side, amount: amt, customerRate: rate, refRate: ref, margin: m, source: 'Deal', channel: 'Treasury deal',
+          ibrAtBooking: marketRate(db, cur, now) }, now);
+        issueDeal(db, SYSTEM, s, p, 72, 'Standing deal for the demo', now);
+        changed = true;
+      });
+      return changed;
+    }
+
     /* Undo cover allocations when a position (or part of it) goes away. */
     function releaseCover(db, p, cap) {
       let left = cap == null ? Infinity : cap;
@@ -829,7 +850,7 @@
       db.positions.sort((x, y) => String(y.bookedAt).localeCompare(String(x.bookedAt)));
     }
 
-    return { priceFor, book, resolveRate, replaceRate, attach, link, release, sweep, scope, seed,
+    return { priceFor, book, resolveRate, replaceRate, attach, link, release, sweep, scope, seed, refreshDemoDeals,
       newPosition, issueDeal, addLink, cancelResidual, unwind, cancel, remaining, isTrade,
       positionStatus, coverState, linkState, uncovered, live, netByCurrency, suggestions, marketRate, pnl, exceptions, istDate, pastCutoff };
   };
