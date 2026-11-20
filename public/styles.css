@@ -414,6 +414,13 @@ table.dt tfoot td{padding:11px var(--s4);font-weight:600;border-top:2px solid va
 .ratebox .spacer{flex:1}
 .ratebox.locked{background:#e6f4ea;border-color:#c9e7d5}
 .ratebox.locked .live{color:#14663a}
+.ratebox.rfq-wait{background:#f6f7f9;border-color:#d8dde3}
+.ratebox.rfq-quoted{background:#fff8e6;border-color:#f0d58a}
+.ratebox.rfq-quoted .live{color:#7a5300}
+.ratebox.rfq-rejected{background:#fdecec;border-color:#f3b4b4}
+.ratebox.rfq-rejected .k,.ratebox.rfq-rejected .live{color:#a32020}
+.ratebox.rfq-expired{background:#f3f4f6;border-color:#d8dde3}
+.ratebox.rfq-expired .live{color:var(--muted)}
 .ratebox .k{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:#0b5f61}
 .rate-calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s3);margin-top:var(--s4)}
 .rate-calc > div{background:rgba(255,255,255,.75);border:1px solid rgba(9,142,144,.18);border-radius:8px;padding:var(--s2) var(--s3)}

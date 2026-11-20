@@ -39,6 +39,8 @@ function overview(viewer) {
     if (can('treasury.approve') && apr.length) items.push({ k: `${plural(apr.length, 'approval')} waiting`, d: `${breach.length ? `<span class=v-bad>${breach.length} past the ${(DB.settings || {}).approvalSlaMin || 120}-minute SLA</span> · ` : ''}${[...new Set(apr.map(a => a.type))].slice(0, 3).map(esc).join(', ')}`, a: golink('Approvals', 'T-21') });
     book.filter(r => Math.abs(r.net) > 0.005).slice(0, 2).forEach(r => items.push({ k: `${esc(r.currency)} ${r.direction.toLowerCase()} ${num(Math.abs(r.net), r.currency)}`, d: `Uncovered across ${plural(r.branches.length, 'branch', 'branches')}${TR.pastCutoff(DB, now) ? ' — past cut-off' : ''}`, a: golink('Cover it', 'T-04', { cur: r.currency, side: r.net > 0 ? 'BUY' : 'SELL', amt: Math.abs(r.net) }) }));
     if (held.length) items.push({ k: `${plural(held.length, 'deal')} held on limits`, d: held.map(p => `${esc(p.id)} ${esc(p.customerName)}`).join(', '), a: golink('Review', 'T-21', { type: 'Held deal' }) });
+    const rfqWaiting = (DB.rfqs || []).filter(r => r.status === 'Pending');
+    if (rfqWaiting.length) items.push({ k: `${plural(rfqWaiting.length, 'rate request')} waiting`, d: rfqWaiting.slice(0, 3).map(r => `${esc(r.customerName)} ${fcy(r.amount, r.currency)} · ${ago(r.requestedAt)}`).join(', '), a: golink('Quote', 'T-30') });
     if (unpublished.length) items.push({ k: `${plural(unpublished.length, 'card rate')} not published`, d: unpublished.slice(0, 5).map(r => `${esc(r.product)} ${esc(r.currency)}`).join(', ') + (unpublished.length > 5 ? '…' : '') + ' — nothing can be quoted there', a: golink('Rate desk', 'T-24') });
     if (fwdDue.length) items.push({ k: `${plural(fwdDue.length, 'forward cover')} due or overdue`, d: fwdDue.map(c => `${esc(c.id)} ${esc(c.currency)} value ${dmy(c.valueDate)}`).join(', '), a: golink('Forwards', 'T-12') });
     if (staleFeeds.length) items.push({ k: `${plural(staleFeeds.length, 'feed')} delayed or stale`, d: staleFeeds.map(i => esc(i.name)).join(', '), a: golink('Data health', 'T-18') });
@@ -201,6 +203,10 @@ act('cv-save', el => {
 act('cv-cancel', el => cmdDlg({ title: `Cancel ${esc(el.dataset.id)}`, ok: 'Cancel cover deal', okClass: 'danger', body: reasonBody('A spot deal’s cash movement is reversed. Only an unallocated, unsettled deal can be cancelled.') }, 'cover.cancel', () => ({ id: el.dataset.id, reason: $('#dlg-reason').value })));
 
 /* ---------- T-05 allocate bank cover --------------------------------------------------- */
+/* which bank a cover (and so a position's cover) came from */
+const coverBank = id => ((DB.covers || []).find(c => c.id === id) || {}).counterparty || '—';
+const coveredBy = p => [...new Set((DB.coverAllocations || []).filter(x => x.positionId === p.id && x.status === 'Active')
+  .map(x => x.kind === 'cross' ? 'internal cross' : coverBank(x.coverId)))].map(esc).join(', ');
 screen({ id: 'T-05', title: 'Allocate bank cover',
   sub: () => `A source — a bank cover deal, or a customer position on the other side (an internal cross) — is allocated to positions &nbsp;·&nbsp; a position is never covered beyond its live amount`,
   render(q) {
@@ -231,6 +237,7 @@ screen({ id: 'T-05', title: 'Allocate bank cover',
           { h: 'Position', v: p => posRef(p), csv: p => p.id, cls: 'ref' }, { h: 'Product / channel', v: p => esc(posLabel(p)) + `<span class=sm>${esc(p.channel)}</span>` },
           { h: 'Customer', v: p => esc(p.customerName || '—') + `<span class=sm>${esc(node(p.branchId))}</span>` },
           { h: 'Base', num: true, v: p => rate(p.refRate) }, { h: 'Uncovered', num: true, v: p => num(TR.uncovered(p), curr) },
+          { h: 'Covered by', v: p => coveredBy(p) || '<span class=dim>—</span>', csv: p => strip$(coveredBy(p)) },
           { h: 'Allocate', num: true, csv: false, v: p => { const a = Math.min(TR.uncovered(p), Math.max(0, left)); left -= a; return `<input type=text inputmode=decimal data-alamt="${esc(p.id)}" data-input="al-recalc" value="${a > 0 ? a : ''}">`; } },
           { h: 'Txn link', v: p => st(V.linkTrack(DB, p, now)) },
         ], cands, { title: `${want === 'SELL' ? 'Customer sales' : 'Customer purchases'} in ${esc(curr)} this source offsets`, noun: 'position', name: 'Allocation candidates', empty: `No uncovered ${want === 'SELL' ? 'sales' : 'purchases'} in ${esc(curr)}.` })}
@@ -244,6 +251,7 @@ screen({ id: 'T-05', title: 'Allocate bank cover',
     ${body}
     ${table('t05-recent', [
       { h: 'Allocation', v: x => esc(x.id) }, { h: 'Source', v: x => esc(x.coverId || x.crossId) + `<span class=sm>${x.kind === 'cross' ? 'internal cross' : 'bank cover'}</span>` },
+      { h: 'Cover bank', v: x => x.kind === 'cross' ? '<span class=dim>—</span>' : esc(coverBank(x.coverId)), csv: x => x.kind === 'cross' ? '' : coverBank(x.coverId) },
       { h: 'Position', v: x => posRef({ id: x.positionId }), csv: x => x.positionId }, { h: 'Amount', num: true, v: x => num(x.amount, (posFind(x.positionId) || {}).currency) },
       { h: 'Rate', num: true, v: x => rate(x.rate) }, { h: 'When', v: x => `<span class=dim>${istDT(x.at)}</span>`, csv: x => x.at }, { h: 'By', v: x => esc(x.by || '') },
     ], recent, { title: 'Recent allocations', noun: 'allocation', name: 'Allocations' })}`;
@@ -649,49 +657,125 @@ screen({ id: 'T-22', title: 'Reports',
   } });
 
 /* ---------- T-24 rate desk -------------------------------------------------------------------- */
-screen({ id: 'T-24', title: 'Rate desk — base rates and card rate',
-  sub: () => `The base rate is the reference trade pricing is built on; the card rate is the ceiling a branch may sell at (the floor it may buy at) &nbsp;·&nbsp; nothing publishes until a checker approves &nbsp;·&nbsp; no card rate, no quote and no trade booking`,
-  acts: () => (can('tmp.rates') ? btn('Re-import now', 'rd-import', null, 'sec') + btn('Propose rates', 'rd-propose') : '') + (can('tmp.admin') ? btn('Add product line', 'rd-product', null, 'sec') : ''),
-  render(q) {
-    const now = NOW();
-    const prods = (DB.tmpProducts || []).filter(p => p.status !== 'Inactive');
-    const pend = pendingApprovals().filter(a => a.type === 'Card rate');
-    const unpub = (DB.rateDesk || []).filter(r => r.status !== 'Published');
-    const ibr = (DB.integrations || []).find(i => i.id === 'IBR');
-    return `${pend.length ? banner('warn', `${plural(pend.length, 'rate revision')} waiting for a checker`, `<br>${pend.map(a => `${esc(a.id)} — ${esc(a.title)} (${esc(a.maker)}, ${ago(a.submittedAt)})`).join('<br>')}. The current rates stay live until approved. ${golink('Open approvals', 'T-21', { type: 'Card rate' })}`) : ''}
-    ${unpub.length ? banner('bad', `${plural(unpub.length, 'card rate')} not published`, `<br>${unpub.map(r => `${esc(prodName(r.product))} ${esc(r.currency)}`).join(', ')} — nothing can be quoted${unpub.some(r => ['REM', 'INW'].includes(r.product)) ? ' or booked in the trade portal' : ''} there.`) : ''}
+/* ---------- T-24 rate desk ------------------------------------------------------------
+   The interbank rate is the provider's, two-way and read only; the dealer
+   sets one margin over it per currency, which publishes the moment it is saved. */
+const DESK = [['REM', 'out', 'TT selling', 'outward remittance'], ['INW', 'in', 'TT buying', 'inward remittance']];
+const ibrStale = () => { const i = (DB.integrations || []).find(x => x.id === 'IBR'); return i && (freshOf(i.lastSuccess, 10, 60) === 'Stale' || ['Delayed', 'Failed'].includes(i.status)) ? i : null; };
+screen({ id: 'T-24', title: 'Rate desk',
+  sub: () => `Interbank rate from the provider, two-way and read only &nbsp;·&nbsp; your margin over it publishes as soon as you save &nbsp;·&nbsp; outward = ask + margin, inward = bid − margin, in steps of 0.25 paise`,
+  acts: () => btn('Refresh IBR', 'rd-import', null, 'sec') + gobtn('Card rates', 'T-29', null, 'sec') + gobtn('Rate requests', 'T-30', null, 'sec'),
+  render() {
+    const now = NOW(), stale = ibrStale(), i = (DB.integrations || []).find(x => x.id === 'IBR');
+    const unpub = DESK.flatMap(([p]) => (DB.rateDesk || []).filter(r => r.product === p && r.status !== 'Published'));
+    const cell = (p, c) => {
+      const r = V.deskRow(DB, p, c.code);
+      if (!r || r.status !== 'Published') return `<span class=v-bad>Not published</span>${can('tmp.rates') && !readOnly() ? `<br>${lnk('Set margin', 'rd-margin', { p, c: c.code })}` : ''}`;
+      const rateNow = TR.deskRate(DB, p, c.code, now);
+      return `<b>${rate(rateNow)}</b><span class=sm>${p === 'REM' ? 'ask +' : 'bid −'} ${r.margin} p · ${r.publishedAt ? ist(r.publishedAt) : ''}${r.publishedBy ? ' · ' + esc(String(r.publishedBy).replace(/^AD2 Treasury Dealer \((.*)\)$/, '$1')) : ''}</span>${can('tmp.rates') && !readOnly() ? lnk('Edit margin', 'rd-margin', { p, c: c.code }) : ''}`;
+    };
+    return `${stale ? banner('warn', 'Interbank feed is stale', `<br>Last tick ${ist(stale.lastSuccess)}. Rates below are the last ones received; quotes are still allowed — check the market before sending one.`) : ''}
+    ${unpub.length ? banner('bad', `${plural(unpub.length, 'rate')} not published`, `<br>${unpub.map(r => `${esc(prodName(r.product))} ${esc(r.currency)}`).join(', ')} — customers cannot request a rate there until you set a margin.`) : ''}
     ${table('t24', [
       { h: 'Currency', v: c => `<b>${esc(c.code)}</b><span class=sm>${esc(c.name || '')}</span>`, csv: c => c.code },
-      { h: 'Base (published)', num: true, v: c => `<b>${rate(c.refRate)}</b><span class=sm>${c.publishedAt ? ist(c.publishedAt) : ''}</span>`, csv: c => c.refRate },
-      { h: 'Imported base', num: true, v: c => rate(c.importedBase) + `<span class=sm>${c.importedAt ? ago(c.importedAt) : ''}</span>`, csv: c => c.importedBase },
-      { h: 'IBR now', num: true, v: c => rate(TR.marketRate(DB, c.code, now)) },
-      ...prods.map(p => ({ h: esc(p.name), num: true, csv: c => { const r = V.deskRow(DB, p.code, c.code); return r && r.status === 'Published' ? r.card : 'Not published'; },
-        v: c => { const r = V.deskRow(DB, p.code, c.code); if (!r) return '—';
-          const cell = r.status === 'Published' ? `${rate(r.card)}<span class=sm>${p.sides.includes('SELL') ? '+' : '−'}${rate(Math.abs(r.card - c.refRate))}${r.pendingId ? ' · ' + esc(r.pendingId) : ''}</span>` : `<span class=v-bad>Not published</span>${r.pendingId ? `<span class=sm>${esc(r.pendingId)}</span>` : ''}`;
-          return can('tmp.rates') && !readOnly() ? `<button type=button class=lnk style="font-weight:normal;text-align:right" data-act="rd-propose" data-p="${esc(p.code)}" data-c="${esc(c.code)}">${cell}</button>` : cell; } })),
-    ], DB.currencies || [], { title: 'Base and card rates — select a card rate to revise it', name: 'Rate desk', noun: 'currency' })}
-    <p class=small>IBR source: ${ibr ? `${esc(ibr.transport)} — ${st(ibr.status)} ${fresh(freshOf(ibr.lastSuccess, 10, 60), ibr.lastSuccess)}` : '—'} &nbsp;·&nbsp; Trade portal pricing: <b>outward</b> uses the base ± the customer’s approved margin and needs the <b>Outward remittance</b> card rate published; <b>inward</b> conversions need <b>Inward remittance</b>.</p>
-    ${table('t24-h', [{ h: 'Revision', v: a => esc(a.id) }, { h: 'What', v: a => esc(a.title) + `<span class=sm>${(a.diff || []).map(d => `${d.field}: ${d.before} → ${d.after}`).join('; ')}</span>`, cls: 'wrap' },
-      { h: 'Maker', v: a => esc(a.maker) }, { h: 'Checker', v: a => esc(a.checker || '—') }, { h: 'Status', v: a => st(a.status) }, { h: 'When', v: a => istDT(a.decidedAt || a.submittedAt), csv: a => a.decidedAt || a.submittedAt }],
-      (DB.approvals || []).filter(a => a.type === 'Card rate').slice(0, 12), { title: 'Rate history', name: 'Rate history', noun: 'revision' })}`;
+      { h: 'IBR bid', num: true, cls: 'dim', v: c => rate(TR.ibrQuote(DB, c.code, now).bid), csv: c => TR.ibrQuote(DB, c.code, now).bid },
+      { h: 'IBR ask', num: true, cls: 'dim', v: c => rate(TR.ibrQuote(DB, c.code, now).ask), csv: c => TR.ibrQuote(DB, c.code, now).ask },
+      ...DESK.map(([p, , label, what]) => ({ h: `${label} <span class=sm style="font-weight:normal">${what}</span>`, num: true, v: c => cell(p, c),
+        csv: c => { const r = V.deskRow(DB, p, c.code); return r && r.status === 'Published' ? TR.deskRate(DB, p, c.code, now) : 'Not published'; } })),
+    ], DB.currencies || [], { title: `Desk rates — as at ${istClock(now)} IST`, name: 'Rate desk', noun: 'currency' })}
+    <p class=small>IBR source: ${i ? `${esc(i.transport)} — ${st(i.status)} ${fresh(freshOf(i.lastSuccess, 10, 60), i.lastSuccess)}` : '—'} &nbsp;·&nbsp; A customer's rate is the desk rate ± its approved margin, never worse than the ${golink('card rate', 'T-29')}. Trade portal bookings come to you as ${golink('rate requests', 'T-30')}.</p>`;
   } });
 act('rd-import', () => run('rates.import', {}));
-act('rd-propose', el => {
-  const now = NOW();
-  const prods = (DB.tmpProducts || []).filter(p => p.status !== 'Inactive');
-  const rowsFor = el.dataset.p ? [[el.dataset.p, el.dataset.c]] : (DB.rateDesk || []).filter(r => r.status !== 'Published').map(r => [r.product, r.currency]);
-  const list = rowsFor.length ? rowsFor : [['REM', 'USD']];
-  const line = ([p, c], i) => {
-    const cur = cur$(c), prod = prods.find(x => x.code === p) || {}, r = V.deskRow(DB, p, c) || {};
-    const base = cur.importedBase || cur.refRate, sugg = r.status === 'Published' ? r.card : r.suggested || +(prod.sides.includes('SELL') ? base * (1 + prod.spreadPct / 100) : base * (1 - prod.spreadPct / 100)).toFixed(4);
-    return `<tr><td>${esc(prod.name || p)}<span class=sm>${esc(c)} · IBR ${rate(TR.marketRate(DB, c, now))}</span></td>
-      <td><input type=text data-rp="${i}" data-k=base data-p="${esc(p)}" data-c="${esc(c)}" value="${rate(base)}"></td><td><input type=text data-rp="${i}" data-k=card value="${rate(sugg)}"></td><td class=dim>${r.status === 'Published' ? rate(r.card) : 'Not published'}</td></tr>`;
-  };
-  cmdDlg({ title: 'Propose rates for publication', ok: 'Send to checker', wide: true, body: `<p class=small>The base changes the trade reference for that currency; each card rate keeps its spread over the base. The checker sees before and after.</p>
-    <div class="tbl scroll"><table class=dt><thead><tr><th>Product / currency</th><th>Base</th><th>Card rate</th><th>Now</th></tr></thead><tbody>${list.map(line).join('')}</tbody></table></div>
-    ${field('Reason', `<input type=text id=rp-reason placeholder="e.g. opening rates, intraday revision">`)}` },
-  'rates.propose', () => ({ rows: $$('[data-k=base]').map(b => ({ product: b.dataset.p, currency: b.dataset.c, base: Number(b.value), card: Number(($(`[data-rp="${b.dataset.rp}"][data-k=card]`) || {}).value) })), reason: $('#rp-reason').value }));
+act('rd-margin', el => {
+  const p = el.dataset.p, c = el.dataset.c, r = V.deskRow(DB, p, c) || {}, q = TR.ibrQuote(DB, c, NOW()), out = p === 'REM';
+  const side = out ? q.ask : q.bid;
+  cmdDlg({ title: `${prodName(p)} ${esc(c)} — margin`, ok: 'Publish', body: `<p class=small>Interbank ${out ? 'ask' : 'bid'} when you opened this: <b>${rate(side)}</b> (bid ${rate(q.bid)} / ask ${rate(q.ask)}). The published rate follows the live interbank rate; this margin stays.</p>
+    <div class=fgrid>${field('Margin (paise)', `<input type=number id=rd-m step=0.25 min=0 max=500 value="${r.margin ?? 10}" data-input="rd-prev" data-side="${side}" data-out="${out ? 1 : ''}">`, { req: true, hint: 'Steps of 0.25 paise — 0.25 adds ₹ 0.0025' })}
+    ${field('Publishes at', `<input type=text class=computed id=rd-at readonly value="${rate(out ? side + (r.margin ?? 10) / 100 : side - (r.margin ?? 10) / 100)}">`)}</div>` },
+    'rates.margin', () => ({ product: p, currency: c, margin: Number($('#rd-m').value) }));
 });
+act('rd-prev', el => { const m = Number(el.value) || 0, s = Number(el.dataset.side); $('#rd-at').value = rate(el.dataset.out ? s + m / 100 : s - m / 100); });
+
+/* ---------- T-29 card rates -------------------------------------------------------------
+   The outer limit for customers: a ceiling where the bank sells, a floor where
+   it buys. Fixed, or floating at a margin over the interbank rate. */
+screen({ id: 'T-29', title: 'Card rates',
+  sub: () => `The card rate is the limit a customer is ever priced at — the ceiling when the bank sells, the floor when it buys &nbsp;·&nbsp; fixed, or floating with the interbank rate at a margin`,
+  acts: () => gobtn('Rate desk', 'T-24', null, 'sec'),
+  render() {
+    const now = NOW(), prods = (DB.tmpProducts || []).filter(p => p.status !== 'Inactive');
+    const rows = prods.flatMap(p => (DB.currencies || []).map(c => ({ p, c, r: V.deskRow(DB, p.code, c.code) })));
+    const card = x => TR.cardOf(DB, x.r, now);
+    return table('t29', [
+      { h: 'Product', v: x => esc(x.p.name) + `<span class=sm>${(x.p.sides || []).includes('SELL') ? 'bank sells — ceiling' : 'bank buys — floor'}</span>`, csv: x => x.p.name },
+      { h: 'Currency', v: x => `<b>${esc(x.c.code)}</b>`, csv: x => x.c.code },
+      { h: 'Type', v: x => !x.r || !card(x) ? '<span class=dim>—</span>' : st(x.r.cardMode === 'margin' ? 'Floating' : 'Fixed'), csv: x => x.r ? x.r.cardMode || 'fixed' : '' },
+      { h: 'Card rate now', num: true, v: x => card(x) ? `<b>${rate(card(x))}</b>${x.r.cardMode === 'margin' ? `<span class=sm>IBR ${(x.p.sides || []).includes('SELL') ? 'ask +' : 'bid −'} ${x.r.cardMargin} p (₹ ${(x.r.cardMargin / 100).toFixed(2)})</span>` : ''}`
+        : (['REM', 'INW'].includes(x.p.code) ? '<span class=v-warn>None — no cap</span>' : '<span class=v-bad>Not published</span>'), csv: x => card(x) || '' },
+      { h: 'Set', v: x => x.r && x.r.cardAt ? `<span class=dim>${istDT(x.r.cardAt)}</span><span class=sm>${esc(x.r.cardBy || '')}</span>` : '<span class=dim>Seeded</span>', csv: x => x.r ? x.r.cardAt || '' : '' },
+      { h: '', cls: 'acts', csv: false, v: x => can('tmp.rates') && !readOnly() ? lnk('Edit', 'cr-edit', { p: x.p.code, c: x.c.code }) : '' },
+    ], rows, { title: 'Card rates by product and currency', name: 'Card rates', noun: 'rate' });
+  } });
+act('cr-edit', el => {
+  const p = el.dataset.p, c = el.dataset.c, r = V.deskRow(DB, p, c) || {}, prod = (DB.tmpProducts || []).find(x => x.code === p) || {};
+  const sell = (prod.sides || []).includes('SELL'), q = TR.ibrQuote(DB, c, NOW()), mode = r.cardMode === 'margin' ? 'margin' : 'fixed';
+  cmdDlg({ title: `${esc(prod.name || p)} ${esc(c)} — card rate`, ok: 'Save card rate', body: `<p class=small>Interbank bid ${rate(q.bid)} / ask ${rate(q.ask)}. This card rate is the ${sell ? 'ceiling a customer pays' : 'floor a customer is paid'}; it cannot sit inside the desk rate.</p>
+    <div class=fgrid>${field('Type', `<select id=cr-mode data-change="cr-mode">${options([['fixed', 'Fixed card rate'], ['margin', 'Floating — margin over IBR']], mode)}</select>`)}
+    <div id=cr-fixed${mode === 'margin' ? ' hidden' : ''}>${field('Card rate', `<input type=text id=cr-card inputmode=decimal value="${r.card ? rate(r.card) : ''}">`)}</div>
+    <div id=cr-float${mode === 'fixed' ? ' hidden' : ''}>${field(`Margin over IBR ${sell ? 'ask' : 'bid'} (paise)`, `<input type=number id=cr-m step=0.25 min=0 value="${r.cardMargin ?? 150}">`, { hint: '150 paise = ₹ 1.50; the card moves with the interbank rate' })}</div></div>` },
+    'rates.card', () => { const m = $('#cr-mode').value; return m === 'fixed' ? { product: p, currency: c, mode: m, card: Number($('#cr-card').value) } : { product: p, currency: c, mode: m, cardMargin: Number($('#cr-m').value) }; });
+});
+act('cr-mode', el => { $('#cr-fixed').hidden = el.value !== 'fixed'; $('#cr-float').hidden = el.value === 'fixed'; });
+
+/* ---------- T-30 rate requests ------------------------------------------------------------
+   A trade customer asks for a rate; the dealer quotes it (adjusting the
+   customer's margin) or rejects it. A quote the customer confirms is booked. */
+const rfqSt = r => TR.rfqStatus(r, NOW());
+const rfqSme = r => (DB.smes || []).find(s => s.id === r.smeId);
+screen({ id: 'T-30', title: 'Rate requests',
+  sub: () => `Trade customers asking for a rate &nbsp;·&nbsp; quote it at a margin of your choice, or reject it with a reason &nbsp;·&nbsp; a confirmed quote is booked as an open position`,
+  acts: () => gobtn('Rate desk', 'T-24', null, 'sec') + gobtn('Trade desk', 'T-28', null, 'sec'),
+  render(q) {
+    const now = NOW(), all = DB.rfqs || [];
+    const groups = { Pending: all.filter(r => rfqSt(r) === 'Pending').sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt))),
+      Quoted: all.filter(r => rfqSt(r) === 'Quoted'), Closed: all.filter(r => !['Pending', 'Quoted'].includes(rfqSt(r))) };
+    const tab = groups[q.tab] ? q.tab : 'Pending', rows = groups[tab];
+    const price = r => { try { return TR.priceRate(DB, rfqSme(r), r.currency, r.dir, now); } catch (e) { return null; } };
+    const dirTxt = r => r.dir === 'out' ? 'Outward — bank sells' : 'Inward — bank buys';
+    const cols = [
+      { h: 'Request', v: r => esc(r.id), cls: 'ref' },
+      { h: 'Customer', v: r => esc(r.customerName) + `<span class=sm>${esc(r.requestedBy || '')}</span>` },
+      { h: 'Direction', v: r => esc(dirTxt(r)), csv: r => r.dir },
+      { h: 'Amount', num: true, v: r => fcy(r.amount, r.currency) },
+      { h: 'Desk rate', num: true, v: r => { const p = tab === 'Pending' ? price(r) : null; return rate(p ? p.desk : r.deskRate); } },
+      { h: 'Margin', num: true, v: r => { const p = tab === 'Pending' ? price(r) : null; return (p ? p.margin : r.margin) != null ? `${p ? p.margin : r.margin} p` : '—'; } },
+      { h: 'All-in', num: true, v: r => { const p = tab === 'Pending' ? price(r) : null; const v = p ? p.rate : r.rate; return v ? `<b>${rate(v)}</b>${(p ? p.capped : r.capped) ? '<span class=sm>at card rate</span>' : ''}` : '—'; } },
+      tab === 'Pending' ? { h: 'Waiting', v: r => `<span class=dim>${ago(r.requestedAt)}</span>`, csv: r => r.requestedAt }
+        : tab === 'Quoted' ? { h: 'Valid', v: r => clock(r.validUntil), csv: r => r.validUntil }
+        : { h: 'Outcome', v: r => st(rfqSt(r)) + (r.positionId ? `<span class=sm>${posRef({ id: r.positionId })}</span>` : r.reason ? `<span class=sm>${esc(r.reason)}${r.note ? ' — ' + esc(r.note) : ''}</span>` : ''), csv: r => rfqSt(r) },
+      { h: '', cls: 'acts', csv: false, v: r => tab === 'Closed' || !can('treasury.deal') ? '' : lnk(tab === 'Quoted' ? 'Requote' : 'Quote', 'rq-quote', { id: r.id }) + ' ' + lnk('Reject', 'rq-reject', { id: r.id }, 'danger') },
+    ];
+    return `${strip([{ v: groups.Pending.length, l: 'Waiting for a quote', kind: groups.Pending.length ? 'alert' : '' }, { v: groups.Quoted.length, l: 'Quoted — with the customer' },
+      { v: all.filter(r => r.status === 'Confirmed' && V.istDate(r.closedAt || '') === todayIST()).length, l: 'Confirmed today' }])}
+    ${statusTabs('tab', Object.entries(groups).map(([k, v]) => [k, v.length]), tab)}
+    ${table('t30', cols, rows, { name: 'Rate requests', noun: 'request', empty: tab === 'Pending' ? 'No rate requests waiting. Trade portal bookings arrive here for a quote.' : 'Nothing here.' })}`;
+  } });
+act('rq-quote', el => {
+  const r = (DB.rfqs || []).find(x => x.id === el.dataset.id); if (!r) return;
+  const s = rfqSme(r), p0 = TR.priceRate(DB, s, r.currency, r.dir, NOW()), m0 = r.margin != null ? r.margin : p0.margin;
+  cmdDlg({ title: `Quote ${esc(r.id)} — ${esc(r.customerName)}`, ok: 'Send quote', body: `<p class=small>${r.dir === 'out' ? 'Outward — the bank sells' : 'Inward — the bank buys'} ${fcy(r.amount, r.currency)}. The customer saw ${rate(r.indicative)} when it asked. The quote is valid for ${(DB.settings || {}).rfqValidMin || 15} minutes.</p>
+    <div class=fgrid>${field('Desk rate', readRO(rate(p0.desk)))}${field('Customer margin (paise)', `<input type=number id=rq-m step=0.25 min=0 max=500 value="${m0}" data-input="rq-prev" data-id="${esc(r.id)}">`, { req: true, hint: `Approved margin ${p0.margin} p` })}
+    ${field('All-in rate to the customer', `<input type=text class=computed id=rq-all readonly value="${rate(p0.rate)}">`)}</div><div id=rq-cap class="small v-warn"${p0.capped ? '' : ' hidden'}>Capped at the card rate ${rate(p0.card)} — a margin above this has no effect.</div>` },
+    'rfq.quote', () => ({ id: r.id, margin: Number($('#rq-m').value), quoteVer: r.quoteVer || 0 }));
+});
+act('rq-prev', el => {
+  const r = (DB.rfqs || []).find(x => x.id === el.dataset.id); if (!r) return;
+  try { const p = TR.priceRate(DB, rfqSme(r), r.currency, r.dir, NOW(), Number(el.value) || 0); $('#rq-all').value = rate(p.rate); $('#rq-cap').hidden = !p.capped; $('#rq-cap').textContent = `Capped at the card rate ${rate(p.card)} — a margin above this has no effect.`; }
+  catch (e) { $('#rq-all').value = '—'; }
+});
+act('rq-reject', el => cmdDlg({ title: `Reject ${esc(el.dataset.id)}`, ok: 'Reject', okClass: 'danger', body: `<p class=small>The customer sees the reason and can request again.</p>
+  <div class=fgrid>${field('Reason', `<select id=rq-r>${options(['Rate moved', 'Over the customer limit', 'Outside dealing hours', 'Other'])}</select>`)}${field('Note', `<input type=text id=rq-n maxlength=200 placeholder="Required for Other">`)}</div>` },
+  'rfq.reject', () => ({ id: el.dataset.id, reason: $('#rq-r').value, note: $('#rq-n').value })));
 act('rd-product', () => cmdDlg({ title: 'Add a product line', ok: 'Add', body: `<div class=fgrid>${field('Name', `<input type=text id=pa-name data-required>`, { req: true })}${field('Code', `<input type=text id=pa-code maxlength=4 placeholder="3 letters">`)}
   ${field('Sides', `<select id=pa-sides>${options([['SELL', 'Sell only'], ['BUY', 'Buy only'], ['BOTH', 'Sell and buy']])}</select>`)}${field('Rate basis', `<input type=text id=pa-basis value="Base rate + spread">`)}</div>` },
   'product.add', () => ({ name: $('#pa-name').value, code: $('#pa-code').value, sides: $('#pa-sides').value, basis: $('#pa-basis').value })));
@@ -732,7 +816,7 @@ screen({ id: 'T-27', title: 'Quote-to-bill drift',
 
 /* ---------- T-28 trade desk: where the trade portal meets treasury ------------------------------ */
 screen({ id: 'T-28', title: 'Trade desk',
-  sub: () => `Trade portal bookings and FX deals for trade customers &nbsp;·&nbsp; a booking is a position the moment it is made; UTR and FIRC conclude it &nbsp;·&nbsp; deals issued here are applied by AD2 in the trade portal`,
+  sub: () => `Trade portal bookings and FX deals for trade customers &nbsp;·&nbsp; a booking is a position the moment it is made; UTR and FIRC conclude it &nbsp;·&nbsp; deals issued here are offered to the customer (rate read only), tagged to a request when you choose one`,
   acts: () => can('treasury.deal') ? btn('Issue FX deal', 'td-issue') : '',
   render(q) {
     const now = NOW(), day = todayIST();
@@ -747,7 +831,7 @@ screen({ id: 'T-28', title: 'Trade desk',
       { v: tp.filter(p => p.status === 'Held').length, l: 'Held on limits', kind: tp.some(p => p.status === 'Held') ? 'alert' : '' }])}
     ${table('t28-deals', [{ h: 'Deal', v: d => esc(d.id), cls: 'ref' }, { h: 'Customer', v: d => esc(smeName(d.smeId)) }, { h: 'Deal', v: d => `${side(d.side)} ${fcy(d.amount, d.currency)}`, csv: d => `${d.side} ${d.amount} ${d.currency}` },
       { h: 'Rate', num: true, v: d => rate(d.rate) + `<span class=sm>base ${rate(d.refRate)}</span>`, csv: d => d.rate }, { h: 'Valid until', v: d => d.status === 'Issued' ? clock(d.validUntil) : `<span class=dim>${istDT(d.validUntil)}</span>`, csv: d => d.validUntil },
-      { h: 'Status', v: d => st(d.status) + (d.usedOn ? `<span class=sm>applied to ${esc(d.usedOn)}</span>` : ''), csv: d => d.status }, { h: 'Position', v: d => posRef({ id: d.positionId }), csv: d => d.positionId },
+      { h: 'Status', v: d => st(d.status) + (d.usedOn ? `<span class=sm>applied to ${esc(d.usedOn)}</span>` : d.recordId ? `<span class=sm>for ${esc(d.recordId)}</span>` : ''), csv: d => d.status }, { h: 'Position', v: d => posRef({ id: d.positionId }), csv: d => d.positionId },
       { h: 'Issued', v: d => `<span class=dim>${istDT(d.issuedAt)}</span><span class=sm>${esc(d.issuedBy || '')}${d.note ? ' — ' + esc(d.note) : ''}</span>`, cls: 'wrap', csv: d => d.issuedAt },
       { h: '', cls: 'acts', csv: false, v: d => d.status === 'Issued' && can('treasury.deal') ? lnk('Withdraw', 'td-withdraw', { id: d.id }, 'danger') : '' }], deals.slice(0, 20), { title: 'FX deal references', name: 'FX deals', noun: 'deal' })}
     ${statusTabs('tab', tabs.map(t => [t, tp.filter(p => t === 'All' || stt(p) === t).length]), tab)}
@@ -764,8 +848,19 @@ act('td-issue', () => {
     <div class=fgrid>${field('Trade customer', `<select id=di-sme data-required><option value="">Choose…</option>${options(smes.map(s => [s.id, `${s.tradingName} (${s.id})`]))}</select>`, { req: true })}
     ${field('Direction', `<select id=di-dir>${options([['out', 'Outward payment — company sells'], ['in', 'Inward conversion — company buys']])}</select>`)}
     ${field('Currency', `<select id=di-cur data-change="di-cur">${options(CURS(), 'USD')}</select>`)}${field('Amount', `<input type=text id=di-amt data-required inputmode=decimal>`, { req: true })}
-    ${field('Agreed rate', `<input type=text id=di-rate data-required value="${rate(usd + 0.3)}">`, { req: true, hint: `Base <span id=di-base>${rate(usd)}</span> · within 3%` })}${field('Valid for (hours)', `<input type=text id=di-h value="24">`)}</div>${field('Note', `<input type=text id=di-note placeholder="e.g. agreed by phone with the customer’s CFO">`)}` },
-  'deal.issue', () => ({ smeId: $('#di-sme').value, dir: $('#di-dir').value, currency: $('#di-cur').value, amount: Number($('#di-amt').value.replace(/,/g, '')), rate: Number($('#di-rate').value), validHours: Number($('#di-h').value), note: $('#di-note').value }));
+    ${field('Agreed rate', `<input type=text id=di-rate data-required value="${rate(usd + 0.3)}">`, { req: true, hint: `Base <span id=di-base>${rate(usd)}</span> · within 3%, never past the card rate` })}${field('Valid for (hours)', `<input type=text id=di-h value="24">`)}
+    ${field('For request (optional)', `<select id=di-rec><option value="">Any request of this customer</option></select>`, { cls: 'span2', hint: 'Tag the deal to one of the customer’s open requests: it is offered first there.' })}</div>${field('Note', `<input type=text id=di-note placeholder="e.g. agreed by phone with the customer’s CFO">`)}` },
+  'deal.issue', () => ({ smeId: $('#di-sme').value, dir: $('#di-dir').value, currency: $('#di-cur').value, amount: Number($('#di-amt').value.replace(/,/g, '')), rate: Number($('#di-rate').value), validHours: Number($('#di-h').value), note: $('#di-note').value, recordId: $('#di-rec').value || undefined }));
+  ['di-sme', 'di-dir', 'di-cur'].forEach(id => { const e = $('#' + id); if (e) e.addEventListener('change', diRecords); });
 });
+/* the chosen customer's open requests in this currency and direction, to tag the deal to */
+function diRecords() {
+  const sel = $('#di-rec'); if (!sel) return;
+  const smeId = $('#di-sme').value, dir = $('#di-dir').value, cur = $('#di-cur').value;
+  const recs = dir === 'out' ? (DB.outward || []).filter(o => o.smeId === smeId && o.currency === cur && ['Draft', 'Submitted', 'Verified'].includes(o.status)).map(o => [o.id, `${o.id} · ${o.status} · ${fcy(o.amount, o.currency)} to ${o.beneficiary || '—'}`])
+    : (DB.disposals || []).filter(d => d.smeId === smeId && ['Draft', 'Submitted', 'Verified'].includes(d.status) && (DB.inward || []).some(i => i.id === d.inwardId && i.currency === cur)).map(d => [d.id, `${d.id} · ${d.status} · ${fcy(d.amount, cur)}`]);
+  sel.innerHTML = `<option value="">Any request of this customer</option>${options(recs)}`;
+  if (recs.length) { const r = (dir === 'out' ? DB.outward : DB.disposals).find(x => x.id === recs[0][0]); const a = $('#di-amt'); if (a && !a.value && r) a.value = r.amount; }
+}
 act('di-cur', el => { const b = cur$(el.value).refRate; $('#di-base').textContent = rate(b); $('#di-rate').value = rate(b + ($('#di-dir').value === 'out' ? 0.3 : -0.3)); });
 act('td-withdraw', el => cmdDlg({ title: `Withdraw ${esc(el.dataset.id)}`, ok: 'Withdraw', okClass: 'danger', body: reasonBody('The position is cancelled; AD2 can no longer apply the reference.') }, 'deal.withdraw', () => ({ id: el.dataset.id, reason: $('#dlg-reason').value })));

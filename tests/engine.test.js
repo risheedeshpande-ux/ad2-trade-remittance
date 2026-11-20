@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Engine = require('../public/engine.js');
 const { SEED } = require('../public/data.js');
+/* prices pinned for exact assertions: no feed movement, no interbank spread, no desk margin */
+Object.assign(SEED.settings, { marketSim: false, ibrSpreadPct: 0, deskMarginPaise: 0, rfqThresholdUsd: 1e9 });  /* direct booking; the RFQ test lowers it */
 
 const NOW = '2026-09-24T10:00:00.000Z';
 const ctx = (over = {}) => ({ now: NOW, hashPassword: pw => 'plain$' + pw, ...over });

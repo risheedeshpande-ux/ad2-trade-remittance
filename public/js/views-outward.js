@@ -86,7 +86,8 @@ function availableCurrencies(smeRec) {
 /* The INR a draft comes to, at its booked rate or today's live rate. */
 function outwardQuote(d, me) {
   const amt = Number(d.amount) || 0;
-  const rate = d.rate.mode === 'none' ? liveRate(me, d.currency, 'out', acting() && isAD2() ? d.marginOverride : null) : d.rate.customerRate;
+  const rq = d.rate.mode === 'rfq' ? (DB.rfqs || []).find(x => x.id === d.rate.rfqId) : null;
+  const rate = d.rate.mode === 'none' || (rq && !rq.rate) ? liveRate(me, d.currency, 'out', acting() && isAD2() ? d.marginOverride : null) : rq ? rq.rate : d.rate.customerRate;
   const charges = me ? Engine.chargesFor(me, amt, rate, d.currency) : [];
   const inrAmt = d.currency ? amt * rate : 0;
   return { amt, rate, charges, inrAmt, debit: inrAmt + charges.reduce((t, c) => t + c.amount, 0) };
@@ -239,14 +240,14 @@ function viewOutwardNew() {
             <div class="line"><span>You pay</span><b>${d.currency && q.amt ? money(q.amt, d.currency) : '—'}</b></div>
             ${seesMargin() && d.currency ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${Number(currency(d.currency).refRate).toFixed(4)}</b></div>
               <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${d.rate.mode !== 'none' ? d.rate.margin : (acting() && d.marginOverride != null && d.marginOverride !== '' ? d.marginOverride : marginFor(me, d.currency))} paise</b></div>` : ''}
-            <div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'deal' ? 'Deal rate' : 'Booked rate'}</span><b>${d.currency ? '₹ ' + Number(q.rate).toFixed(4) : '—'}</b></div>
+            <div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'rfq' ? 'Indicative rate' : d.rate.mode === 'deal' ? 'Deal rate' : 'Booked rate'}</span><b>${d.currency ? '₹ ' + Number(q.rate).toFixed(4) : '—'}</b></div>
             <div class="line"><span>INR equivalent</span><b>${inr(q.inrAmt)}</b></div>
             ${q.charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
             <div class="line total"><span>Estimated debit</span><b>${inr(q.debit)}</b></div>
             ${d.allocations.length ? `<div class="line"><span>Settles</span><b>${esc(d.allocations.map(a => a.billId).join(', '))}</b></div>` : ''}
           </div>
           <p style="font-size:var(--fs-xs);color:var(--muted);margin:12px 0 0">
-            ${d.rate.mode === 'none' ? 'Live rate — book it before submitting.' : d.rate.mode === 'booked' ? 'Booked rate, locked for 48 hours.' : 'Negotiated deal rate.'}</p>
+            ${d.rate.mode === 'none' ? (rfqNeeded(me, d.currency, d.amount) ? 'Indicative — request the rate from the dealer before submitting.' : 'Live rate — book it before submitting.') : d.rate.mode === 'rfq' ? 'Indicative until you confirm the dealer’s quote.' : d.rate.mode === 'booked' ? 'Booked rate, locked for 48 hours.' : 'Negotiated deal rate.'}</p>
           <div class="note note-info" style="margin-top:14px"><span style="font-size:var(--fs-xs)">
             After you submit: an AD2 maker verifies the documents, a checker or operations authorises, and operations releases the payment over SWIFT.</span></div>
           <div style="display:grid;gap:8px;margin-top:18px">
@@ -269,6 +270,7 @@ function outwardMissing(d) {
   if (!d.executionDate) m.push('Requested execution date');
   if (!d.debitAccountId) m.push('Remitter account');
   if (d.rate.mode === 'none') m.push('Book the rate');
+  if (d.rate.mode === 'rfq') m.push('Confirm the dealer’s quote');
   if (!d.declarations || !d.declarations.fema || !d.declarations.ofac) m.push('FEMA and sanctions declarations');
   const prod = product(d.remittanceType);
   if (prod && d.purposeCode) {

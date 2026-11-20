@@ -1736,7 +1736,8 @@
         need(/^([01]\d|2[0-3]):[0-5]\d$/.test(String(p.cutoff)), 'The treasury cut-off must be a time like 16:00.');
         db.settings.cutoff = String(p.cutoff); changes.push(`cut-off ${db.settings.cutoff} IST`);
       }
-      [['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged']]
+      [['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged'],
+       ['rfqThresholdUsd', 0, 1e9, 'RFQ threshold (USD)'], ['rfqValidMin', 1, 240, 'quote validity (minutes)'], ['rfqAutoQuoteSec', 0, 3600, 'auto-quote delay (seconds, 0 = off)'], ['ibrSpreadPct', 0, 1, 'interbank spread (%)']]
         .forEach(([k, lo, hi, label]) => {
           if (p[k] === undefined) return;
           const v = Number(p[k]);
@@ -1951,7 +1952,7 @@
   const ymd = iso => iso.slice(0, 10);
   const labStamp = (now, verb) => ({ by: 'Test data lab', key: 'LAB/DATA', at: now, verb: verb || 'generated' });
   const LAB = {
-    sme: { domainId: 'LAB', loginId: 'SME', role: 'SME User', name: 'Test data lab', actingFor: null },
+    sme: { domainId: 'LAB', loginId: 'SME', role: 'SME User', name: 'Test data lab', actingFor: null, lab: true },
     maker: { domainId: 'LAB', loginId: 'MAKER', role: 'AD2 Maker', name: 'Test data lab', smeId: null, actingFor: null },
     checker: { domainId: 'LAB', loginId: 'CHECKER', role: 'AD2 Checker', name: 'Test data lab', smeId: null, actingFor: null },
   };
@@ -2126,7 +2127,7 @@
           need(bene, `${s.tradingName} has no beneficiary to pay.`);
           const cur = bill ? bill.currency : (bene.currency || s.config.currencies[0]);
           const amt = bill ? billAvailable(db, bill) : labAmount(db, cur, 12000);
-          const rate = customerRate(db, cur, marginFor(db, s, cur));
+          const rate = T.priceRate(db, s, cur, 'out', ctx.now).rate;
           const r = run('outward.submit', sme, { draft: {
             beneficiaryId: bene.id, beneficiary: bene.name, beneficiaryCountry: bene.country, beneficiaryBank: bene.bank,
             beneficiaryBankCountry: bene.bankCountry, beneficiaryAccount: bene.accountNumber, swift: bene.swift,
@@ -2227,7 +2228,8 @@
     out.logins = db.logins.filter(l => l.demo && l.active !== false || (a && (isAD2(a) || master || l.smeId === a.smeId))).map(publicLogin(db));
     /* Reference rates are AD2's: a customer (or anyone signed out) sees only
        its own ready-made rate, never the rate its margin is added to. */
-    const hideRef = () => { out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, marketBase, ...rest } = c; return rest; }); };
+    const hideRef = () => { out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, marketBase, ...rest } = c; return rest; });
+      if (out.settings) { delete out.settings.ibrSpreadPct; delete out.settings.deskMarginPaise; } };
     if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); T.scope(out, db, null, 'public'); X.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
     /* Treasury Management Portal users (treasury, branch, agent, bulk,
        finance) see the book as their role and branch scope allow. */
@@ -2277,10 +2279,8 @@
         delete s.config.remarks;
         const live = smeOf(db, s.id);
         s.config.customerRates = {};
-        (s.config.currencies || []).forEach(c => {
-          const m = marginFor(db, live, c);
-          s.config.customerRates[c] = { out: customerRate(db, c, m), in: customerRate(db, c, -m) };
-        });
+        const now = new Date().toISOString(), price = (c, dir) => { try { return T.priceRate(db, live, c, dir, now).rate; } catch (e) { return 0; } };
+        (s.config.currencies || []).forEach(c => { s.config.customerRates[c] = { out: price(c, 'out'), in: price(c, 'in') }; });
         delete s.config.margins; delete s.config.marginBasis;
       }
       return s;
@@ -2311,7 +2311,7 @@
     checklist, purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
     actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C), refreshDemoDeals: T.refreshDemoDeals,
     /* read-only treasury views, shared by every screen so they agree */
-    treasury: { positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
+    treasury: { rfqStatus: T.rfqStatus, priceRate: T.priceRate, ibrQuote: T.ibrQuote, deskRate: T.deskRate, cardOf: T.cardOf, positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
       remaining: T.remaining, isTrade: T.isTrade, netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate,
       pnl: T.pnl, exceptions: T.exceptions, pastCutoff: T.pastCutoff, istDate: T.istDate },
     /* read-only Treasury Management Portal views */

@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v13';
+const SEED_VERSION = 'ad2-trade-v14';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -993,7 +993,7 @@ const SEED = {
       body:'Dear Harikrishna Patel,\n\nAD2 needs more information on application SME-1004:\n\n"IEC is mandatory for regular importers. Please provide your Importer Exporter Code."\n\n' +
            'Documents requested:\n  - IEC certificate\n  - Import licence for dye intermediates\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services' } ],
   tmpProducts:TMP_PRODUCTS, org:ORG, counterparties:COUNTERPARTIES, cardPrefixes:CARD_PREFIXES, correspondents:CORRESPONDENTS,
-  settings:{ autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
+  settings:{ ibrSpreadPct:0.04, deskMarginPaise:10, rfqThresholdUsd:0, rfqValidMin:15, rfqAutoQuoteSec:0, autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
              steppedThresholdInr:4000000, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
   seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, email:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };

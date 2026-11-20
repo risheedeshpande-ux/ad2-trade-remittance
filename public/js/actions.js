@@ -226,6 +226,12 @@ function startAssist(smeId, dest) {
    booking for the same draft replaces the previous one. */
 async function rateBook(draft, cur, smeRec, dir, amount) {
   if (!(Number(amount) > 0)) { toast('Enter the amount first — the rate is booked for that amount.', 'err'); return false; }
+  if (rfqNeeded(smeRec, cur, amount)) {
+    const r = await run('rate.request', { dir, currency: cur, amount: Number(amount), draftRef: draft.id || null }, { quiet:true, after: res => {
+      draft.rate = { ...RATE_NONE(), mode:'rfq', rfqId:res.id, bookedAmount:Number(amount) };
+    } });
+    return r ? 'rfq' : false;
+  }
   const payload = { dir, currency: cur, amount: Number(amount) };
   if (draft.rate.mode === 'booked' && draft.rate.positionId) payload.replaces = draft.rate.positionId;
   if (acting() && isAD2() && draft.marginOverride != null && draft.marginOverride !== '') payload.margin = Math.round(Number(draft.marginOverride));
@@ -237,14 +243,30 @@ async function rateBook(draft, cur, smeRec, dir, amount) {
   if (r && r.held) { toast(r.message); return false; }
   return !!r;
 }
+/* The customer takes the dealer's quote: it is booked at exactly that rate. */
+async function rfqConfirm(draft, cur, amount) {
+  const q = (DB.rfqs || []).find(x => x.id === draft.rate.rfqId);
+  if (!q) { toast('That quote is no longer available. Request the rate again.', 'err'); return; }
+  await run('rfq.confirm', { id: q.id, quoteVer: q.quoteVer, amount: Number(amount), currency: cur }, { quiet:true, after: res => {
+    draft.rate = { mode:'booked', positionId:res.positionId, customerRate:res.customerRate, bookedAmount:Number(amount),
+      bookedAt:res.bookedAt, expiresAt:res.expiresAt, dealRef:null };
+    toast(res.message, 'ok');
+  } });
+}
 /* Drop a draft's rate, releasing its booking on the server. */
 function releaseRate(draft) {
   if (!draft) return;
+  if (draft.rate && draft.rate.mode === 'rfq' && draft.rate.rfqId) send('rfq.withdraw', { id: draft.rate.rfqId }).catch(() => {});
   if (draft.rate && draft.rate.mode === 'booked' && draft.rate.positionId) send('rate.release', { positionId: draft.rate.positionId }).catch(() => {});
   draft.rate = RATE_NONE();
 }
 /* A booking is for an amount: change the amount and it has to be booked again. */
 function rebookIfChanged(draft, amount) {
+  if (draft.rate.mode === 'rfq' && Math.abs((draft.rate.bookedAmount || 0) - (Number(amount) || 0)) > 0.001) {
+    releaseRate(draft);
+    toast('The amount changed, so the rate request was withdrawn. Request the rate again for the new amount.');
+    return;
+  }
   if (draft.rate.mode === 'booked' && Math.abs((draft.rate.bookedAmount || 0) - (Number(amount) || 0)) > 0.001) {
     releaseRate(draft);
     toast('The amount changed, so the booked rate was released. Book it again for the new amount.');
@@ -254,8 +276,8 @@ function rebookIfChanged(draft, amount) {
    unexpired deals for the same customer, currency and direction are offered)
    or one it dealt by phone, entered with its rate. The INR equivalent follows
    as the rate is typed; the server checks everything again. */
-const openDeals = (smeId, cur, dir) => (DB.deals || []).filter(d => d.smeId === smeId && d.currency === cur && d.side === (dir === 'out' ? 'SELL' : 'BUY')
-  && d.status === 'Issued' && d.validUntil > nowISO());
+const openDeals = (smeId, cur, dir, recId) => (DB.deals || []).filter(d => d.smeId === smeId && d.currency === cur && d.side === (dir === 'out' ? 'SELL' : 'BUY')
+  && d.status === 'Issued' && d.validUntil > nowISO()).sort((a, b) => (!!recId && b.recordId === recId) - (!!recId && a.recordId === recId));
 const dealInr = (amt, rate) => Number(amt) > 0 && Number(rate) > 0 ? inr(amt * rate) : '—';
 function dealFields(amt, cur, deals, ref, rate) {
   const own = !isAD2();   /* the customer quotes the reference; the rate is the deal's */
@@ -264,8 +286,10 @@ function dealFields(amt, cur, deals, ref, rate) {
       : `<div class="note note-warn" style="margin-bottom:12px"><span>${own ? `No FX deal from the treasury desk is open for you in ${esc(cur)}. Ask the desk to issue one, or book the live rate.`
         : `No deal is open on the platform for this customer in ${esc(cur)}. Enter the reference and rate the desk gave you by phone.`}</span></div>`}
     <div class="grid g2 fields">
-      <div class="f"><label for="dref">Deal reference</label><input id="dref" type="text" list="dref-list" data-act="deal-in" value="${esc(ref || '')}" placeholder="e.g. FXD-2026-77521">
-        <datalist id="dref-list">${deals.map(d => `<option value="${esc(d.id)}">`).join('')}</datalist></div>
+      <div class="f"><label for="dref">Deal reference</label>${own ? `<select id="dref" data-act="deal-in"><option value="">Choose a deal…</option>${deals.map(d =>
+          `<option value="${esc(d.id)}"${d.id === ref ? ' selected' : ''}>${esc(d.id)} — ${money(d.amount, d.currency)}${d.recordId ? ' · for ' + esc(d.recordId) : ''}</option>`).join('')}</select>`
+        : `<input id="dref" type="text" list="dref-list" data-act="deal-in" value="${esc(ref || '')}" placeholder="e.g. FXD-2026-77521">
+        <datalist id="dref-list">${deals.map(d => `<option value="${esc(d.id)}">`).join('')}</datalist>`}</div>
       <div class="f"><label for="drate">Deal rate (₹ per 1 ${esc(cur)})</label><input id="drate" type="number" step="0.0001" min="0" data-act="deal-in" data-amt="${Number(amt) || 0}" value="${rate ? Number(rate).toFixed(4) : ''}"${own ? ' readonly' : ''}>
         <div class="hint">${own ? 'Set by the treasury desk on the deal — it cannot be changed here.' : 'Held within 3% of the reference rate.'}</div></div>
     </div>
@@ -282,7 +306,7 @@ function readDeal(cur, deals) {
   return { dealRef, customerRate, d };
 }
 function dealModal(draft, cur, smeRec, dir, amt) {
-  const deals = openDeals(smeRec.id, cur, dir), mine = draft.rate.mode === 'deal';
+  const deals = openDeals(smeRec.id, cur, dir, draft.id), mine = draft.rate.mode === 'deal';
   modal({ title: mine ? 'Edit the FX deal' : 'Apply an FX deal reference', okLabel:'Apply deal', body:`
     <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 14px">A deal is used once, for up to its amount; any unused part goes back to treasury.</p>
     ${dealFields(amt, cur, deals, mine ? draft.rate.dealRef : deals[0]?.id, mine ? draft.rate.customerRate : deals[0]?.rate)}`,
@@ -298,7 +322,7 @@ function dealModal(draft, cur, smeRec, dir, amt) {
 }
 /* AD2 changes the deal on a submitted request (before authorisation). */
 function updateDealModal(rec, cmd, dir) {
-  const deals = openDeals(rec.smeId, rec.currency, dir);
+  const deals = openDeals(rec.smeId, rec.currency, dir, rec.id);
   const own = !isAD2();
   commandModal({ title:(own ? 'Apply an FX deal reference to ' : 'Update the FX deal on ') + rec.id, okLabel: own ? 'Apply deal' : 'Save deal', cmd, body:`
     <p style="font-size:var(--fs-sm);margin:0 0 14px">Now: ${rec.rate.mode === 'deal' ? 'deal <b>' + esc(rec.rate.dealRef) + '</b>' : 'booked rate'} at ₹ ${(rec.rate.customerRate || 0).toFixed(4)}.
@@ -612,10 +636,12 @@ document.addEventListener('click', async e => {
   }
   if (act === 'or-book-rate') {
     if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; }
-    if (await rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount))
-      toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours — ${OR_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
+    const r = await rateBook(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount);
+    if (r === 'rfq') toast('Rate requested from the treasury dealer. The quote will appear here.', 'ok');
+    else if (r) toast(`Rate booked for ${money(OR_DRAFT.amount, OR_DRAFT.currency)} and locked for 48 hours — ${OR_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
+  if (act === 'or-rfq-confirm') { await rfqConfirm(OR_DRAFT, OR_DRAFT.currency, OR_DRAFT.amount); return; }
   if (act === 'or-deal-ref') { if (!OR_DRAFT.currency) { toast('Select a currency first.', 'err'); return; } dealModal(OR_DRAFT, OR_DRAFT.currency, sme(OR_DRAFT.smeId), 'out', OR_DRAFT.amount); return; }
   if (act === 'or-deal-update') { updateDealModal(outwardRec(t.dataset.id), isAD2() ? 'outward.updateDeal' : 'outward.applyDeal', 'out'); return; }
   if (act === 'or-rate-clear') { releaseRate(OR_DRAFT); render(); return; }
@@ -731,10 +757,12 @@ document.addEventListener('click', async e => {
   }
   if (act === 'di-book-rate') {
     const i = inwardRec(DI_DRAFT.inwardId), amt = diAmount(DI_DRAFT, i);
-    if (await rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in', amt))
-      toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours — ${DI_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
+    const r = await rateBook(DI_DRAFT, i.currency, sme(i.smeId), 'in', amt);
+    if (r === 'rfq') toast('Rate requested from the treasury dealer. The quote will appear here.', 'ok');
+    else if (r) toast(`Rate booked for ${money(amt, i.currency)} and locked for 48 hours — ${DI_DRAFT.rate.positionId} is on the treasury book.`, 'ok');
     return;
   }
+  if (act === 'di-rfq-confirm') { const i = inwardRec(DI_DRAFT.inwardId); await rfqConfirm(DI_DRAFT, i.currency, diAmount(DI_DRAFT, i)); return; }
   if (act === 'di-deal-ref')  { const i = inwardRec(DI_DRAFT.inwardId); dealModal(DI_DRAFT, i.currency, sme(i.smeId), 'in', diAmount(DI_DRAFT, i)); return; }
   if (act === 'di-deal-update') { updateDealModal(disposalRec(t.dataset.id), isAD2() ? 'disposal.updateDeal' : 'disposal.applyDeal', 'in'); return; }
   if (act === 'di-rate-clear'){ releaseRate(DI_DRAFT); render(); return; }
@@ -748,6 +776,7 @@ document.addEventListener('click', async e => {
     if (d.option === 'knockoff' && applied > amt + 0.001) errs.push('Bills applied add up to more than the amount to dispose.');
     if (!d.creditAccountId) errs.push('Select an account to credit.');
     if ((!acc || acc.currency === 'INR') && d.rate.mode === 'none') errs.push('Book a rate or enter an FX deal reference.');
+    if ((!acc || acc.currency === 'INR') && d.rate.mode === 'rfq') errs.push('Confirm the dealer’s quote before submitting.');
     Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option:d.option }).filter(x => x.required && !d.docs[x.id]).forEach(x => errs.push('Upload: ' + x.name));
     if (!d.declarations.fema || !d.declarations.ofac) errs.push('Accept the FEMA and sanctions declarations.');
     if (errs.length) { modal({ title:'Cannot submit yet', body:`<ul style="margin:0 0 0 18px;font-size:var(--fs-md);line-height:1.8">${errs.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` }); return; }
@@ -1149,7 +1178,8 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
     return;
   }
   if (act === 'set-band-save') { run('settings.update', { marginBand: val('#set-band') }); return; }
-  if (act === 'set-treasury-save') { run('settings.update', { cutoff: val('#set-cutoff'), maxOpenBookings: val('#set-maxbk'), rateBand: val('#set-rband'), agedDays: val('#set-aged') }); return; }
+  if (act === 'set-treasury-save') { run('settings.update', { cutoff: val('#set-cutoff'), maxOpenBookings: val('#set-maxbk'), agedDays: val('#set-aged'),
+    rfqThresholdUsd: val('#set-rfqthr'), rfqValidMin: val('#set-rfqvalid'), rfqAutoQuoteSec: val('#set-rfqauto') }); return; }
   if (act === 'user-add') {
     const ad2Roles = DB.roles.filter(r => r.portal === 'AD2').sort((a, b) => a.order - b.order);
     const domains = DB.smes.filter(x => x.status === 'Approved');

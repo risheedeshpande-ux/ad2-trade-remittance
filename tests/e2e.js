@@ -27,7 +27,7 @@ async function startServer() {
 
 (async () => {
   const srv = await startServer();
-  const exe = fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined;
+  const exe = fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : fs.existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined;
   const browser = await chromium.launch({ executablePath: exe });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
@@ -61,6 +61,9 @@ async function startServer() {
     if (process.env.BASE) {
       await click('[data-act="reset-demo"]').catch(() => {});
     }
+    /* the guided journey books directly; rate requests have their own QA journey */
+    await page.evaluate(async () => { await signIn('AD2', 'ADMIN', 'demo'); await send('settings.update', { rfqThresholdUsd: 1000000000 }); setSession(null); render(); });
+    await page.waitForSelector('.login-panel');
     await click('.sim-bar [data-act="guide-open"]');
 
     await step('1 register', async () => {

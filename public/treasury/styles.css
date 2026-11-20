@@ -656,3 +656,4 @@ a.btn:focus-visible{
 .actions li a{color:var(--brand);text-decoration:none;font-weight:bold;white-space:nowrap}
 .actions li a:hover{text-decoration:underline}
 .actions li a:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:2px}
+.nav a .navn{display:inline-block;min-width:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--attention);color:#fff;font-size:11px;line-height:18px;text-align:center}

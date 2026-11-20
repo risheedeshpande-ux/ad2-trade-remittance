@@ -104,14 +104,15 @@
     function quoteRate(db, product, cur, side, now) {
       const p = productOf(db, product), row = deskRow(db, product, cur), c = currencyOf(db, cur);
       need(p && p.status !== 'Inactive', `${productName(db, product)} is not an active product line.`);
-      need(row && row.status === 'Published' && row.card > 0,
+      const cardNow = T.cardOf(db, row, now);
+      need(row && row.status === 'Published' && cardNow > 0,
         `${cur} has no published card rate for ${p.name}. Treasury publishes it on the rate desk before anyone can quote it.`);
       need((p.sides || []).includes(side), `${p.name} does not ${side === 'SELL' ? 'sell' : 'buy'} foreign currency.`);
-      const base = c.refRate, card = row.card, mid = ibr(db, cur, now) || base;
+      const base = c.refRate, card = cardNow, mid = ibr(db, cur, now) || base;
       const markup = r4(base * (p.markupPct || 0.3) / 100);
       let rate;
       if (side === 'SELL') rate = r4(Math.min(card, Math.max(base, mid + markup)));
-      else { const floor = r4(base - (row.card - base)); rate = r4(Math.max(Math.min(floor, base), Math.min(base, mid - markup))); }
+      else { const floor = r4(base - (card - base)); rate = r4(Math.max(Math.min(floor, base), Math.min(base, mid - markup))); }
       return { base, card, ibr: r4(mid), markup, rate };
     }
     /* Called by treasury.js before any trade booking: nothing is priced in a
@@ -230,76 +231,58 @@
        the book catches up without waiting for someone to act. */
     C['tmp.touch'] = { run() { return { message: 'Up to date.' }; } };
 
-    /* ---------- rate desk commands ------------------------------------------------ */
-    /* Base rates come from the provider (the IBR feed); importing does not
-       publish — card rates are set and published separately. */
+    /* ---------- rate desk commands ------------------------------------------------
+       The interbank rate comes from the provider and is never typed. The
+       dealer sets a margin over it (outward and inward remittance) and the
+       card rates; each publishes the moment it is saved. */
     C['rates.import'] = {
       cap: 'tmp.rates',
       run(db, a, p, ctx) {
-        const n = [];
-        (db.currencies || []).forEach(c => {
-          const mid = ibr(db, c.code, ctx.now);
-          if (!mid) return;
-          c.importedBase = r4(mid * (1 - 0.0012)); c.importedAt = ctx.now; n.push(c.code);
-        });
-        touchIntegration(db, 'IBR', ctx.now, n.length + ' currencies');
-        audit(db, a, ctx.now, 'RATE-DESK', `Base rates re-imported from the provider — ${n.length} currencies (not yet published)`);
-        return { message: `Base rates re-imported — ${n.length} currencies updated. Nothing is published until a checker approves.` };
+        touchIntegration(db, 'IBR', ctx.now, (db.currencies || []).length + ' currencies');
+        return { message: 'Interbank rates refreshed from the provider.' };
       },
     };
-    /* Propose card rates (and the base they sit on) for publication. */
-    C['rates.propose'] = {
+    /* The dealer's margin over the interbank rate for one product line. */
+    C['rates.margin'] = {
       cap: 'tmp.rates',
       run(db, a, p, ctx) {
-        const rows = (Array.isArray(p.rows) ? p.rows : []).slice(0, 40);
-        need(rows.length, 'Choose at least one rate to publish.');
-        const band = Number(settings(db).rateBand ?? 2);
-        const out = [], diff = [];
-        rows.forEach(r => {
-          const prod = productOf(db, r.product); need(prod, 'Unknown product line.');
-          const c = currencyOf(db, r.currency); need(c, 'Unknown currency.');
-          const row = deskRow(db, prod.code, c.code);
-          const base = r.base != null && r.base !== '' ? r4(r.base) : r4(c.importedBase || c.refRate);
-          const card = r4(r.card);
-          need(base > 0 && card > 0, `${c.code}: enter the base and card rates.`);
-          const mid = ibr(db, c.code, ctx.now) || c.refRate;
-          need(Math.abs(base - mid) / mid * 100 <= band, `${c.code} base ${base} is more than ${band}% from the IBR ${r4(mid)}. Check the figure.`);
-          if ((prod.sides || []).includes('SELL') && !(prod.sides || []).includes('BUY')) need(card >= base, `${prod.name} ${c.code}: the card rate is the ceiling a branch may sell at, so it cannot be below the base rate.`);
-          if ((prod.sides || []).includes('BUY') && !(prod.sides || []).includes('SELL')) need(card <= base, `${prod.name} ${c.code}: the buying card rate is the floor, so it cannot be above the base rate.`);
-          need(Math.abs(card - base) / base * 100 <= band * 2, `${c.code} card rate ${card} is too far from the base ${base}.`);
-          out.push({ product: prod.code, currency: c.code, base, card });
-          diff.push([`${prod.name} ${c.code} — card`, row && row.status === 'Published' ? row.card.toFixed(4) : 'Not published', card.toFixed(4)]);
-          if (Math.abs(base - c.refRate) > 0.00005) diff.push([`${c.code} — base`, c.refRate.toFixed(4), base.toFixed(4)]);
-        });
-        (db.approvals || []).filter(x => x.type === 'Card rate' && x.status === 'Pending' && x.makerKey === actorKey(a)).forEach(x => { x.status = 'Superseded'; });
-        const reason = txt(p.reason, 'Reason', { max: 200, required: false });
-        const item = submitApproval(db, a, ctx.now, { type: 'Card rate', ref: 'RATE-DESK',
-          title: out.length === 1 ? `${productName(db, out[0].product)} ${out[0].currency} card rate` : `${out.length} card rates`,
-          payload: { rows: out }, diff, note: reason || (p.intraday ? 'Intraday revision' : 'Publication') });
-        out.forEach(o => { const row = deskRow(db, o.product, o.currency); if (row) row.pendingId = item.id; });
-        return { id: item.id, message: `Sent to a treasury checker (${item.id}). The current rates stay live until it is approved.` };
+        const prod = productOf(db, p.product); need(prod && ['REM', 'INW'].includes(prod.code), 'Margins are set for outward and inward remittance.');
+        const c = currencyOf(db, p.currency); need(c, 'Unknown currency.');
+        const m = T.validMargin(p.margin, 'The margin', 500);
+        let row = deskRow(db, prod.code, c.code);
+        if (!row) { row = { product: prod.code, currency: c.code, card: 0, version: 0, cardMode: 'fixed' }; arr(db, 'rateDesk').push(row); }
+        const was = row.status === 'Published' ? row.margin : null;
+        Object.assign(row, { margin: m, status: 'Published', publishedAt: ctx.now, publishedBy: actorLabel(a), version: (row.version || 0) + 1 });
+        const rate = T.deskRate(db, prod.code, c.code, ctx.now);
+        audit(db, a, ctx.now, 'RATE-DESK', `${prod.name} ${c.code} margin ${was == null ? 'set to' : was + ' → '} ${m} paise — publishes at ${rate.toFixed(4)}`, true);
+        return { rate, message: `${prod.name} ${c.code} published at ${rate.toFixed(4)} (${m} paise over the interbank ${prod.code === 'REM' ? 'ask' : 'bid'}).` };
       },
     };
-    APPLY['Card rate'] = (db, a, r, now) => {
-      const named = new Set(r.payload.rows.map(o => o.product + ':' + o.currency));
-      r.payload.rows.forEach(o => {
-        const c = currencyOf(db, o.currency);
-        if (c && Math.abs(o.base - c.refRate) > 0.00005) {
-          /* a new base carries every other published card rate with it: the
-             spread is what the desk maintains, the base moves under it */
-          const delta = r4(o.base - c.refRate);
-          (db.rateDesk || []).filter(x => x.currency === c.code && x.status === 'Published' && !named.has(x.product + ':' + x.currency))
-            .forEach(x => { x.card = r4(x.card + delta); x.publishedAt = now; x.version = (x.version || 0) + 1; });
-          c.refRate = o.base; c.publishedAt = now;
-        }
-        let row = deskRow(db, o.product, o.currency);
-        if (!row) { row = { product: o.product, currency: o.currency, version: 0 }; arr(db, 'rateDesk').push(row); }
-        Object.assign(row, { card: o.card, spread: r4(Math.abs(o.card - o.base)), status: 'Published', publishedAt: now,
-          publishedBy: r.maker, approvedBy: actorLabel(a), version: (row.version || 0) + 1, pendingId: null });
-      });
-      return 'Rates published. Quotes already issued run to their validity window; trade bookings already made keep their rate.';
+    /* A card rate: fixed, or floating with the interbank rate at a margin. It is
+       the outer limit for customers, so it may not sit inside the desk rate. */
+    C['rates.card'] = {
+      cap: 'tmp.rates',
+      run(db, a, p, ctx) {
+        const prod = productOf(db, p.product); need(prod, 'Unknown product line.');
+        const c = currencyOf(db, p.currency); need(c, 'Unknown currency.');
+        const mode = oneOf(p.mode, ['fixed', 'margin'], 'Card rate type');
+        let row = deskRow(db, prod.code, c.code);
+        if (!row) { row = { product: prod.code, currency: c.code, card: 0, version: 0 }; arr(db, 'rateDesk').push(row); }
+        const sell = (prod.sides || []).includes('SELL');
+        const trial = { ...row, cardMode: mode };
+        if (mode === 'fixed') { trial.card = r4(p.card); need(trial.card > 0, 'Enter the card rate.'); }
+        else trial.cardMargin = T.validMargin(p.cardMargin, 'The card margin', 2000);
+        const card = T.cardOf(db, trial, ctx.now), q = T.ibrQuote(db, c.code, ctx.now);
+        const desk = ['REM', 'INW'].includes(prod.code) && row.status === 'Published' ? T.deskRate(db, prod.code, c.code, ctx.now) : (sell ? q.ask : q.bid);
+        need(sell ? card >= desk : card <= desk, `${prod.name} ${c.code}: the card rate ${card.toFixed(4)} is ${sell ? 'below' : 'above'} the ${['REM', 'INW'].includes(prod.code) ? 'desk' : 'interbank'} rate ${desk.toFixed(4)}. ` +
+          `It is the ${sell ? 'ceiling a customer pays at' : 'floor a customer is paid at'}.`);
+        Object.assign(row, { cardMode: mode, card: mode === 'fixed' ? trial.card : card, cardMargin: mode === 'margin' ? trial.cardMargin : row.cardMargin || null,
+          cardAt: ctx.now, cardBy: actorLabel(a), version: (row.version || 0) + 1 });
+        if (!['REM', 'INW'].includes(prod.code)) Object.assign(row, { status: 'Published', publishedAt: ctx.now, publishedBy: actorLabel(a) });
+        audit(db, a, ctx.now, 'RATE-DESK', `${prod.name} ${c.code} card rate ${mode === 'fixed' ? 'fixed at ' + card.toFixed(4) : 'floating at ' + trial.cardMargin + ' paise over the interbank rate (' + card.toFixed(4) + ' now)'}`);
+        return { card, message: `${prod.name} ${c.code} card rate ${mode === 'fixed' ? 'set to' : 'floating, now'} ${card.toFixed(4)}.` };
+      },
     };
-    REJECT['Card rate'] = (db, a, r) => r.payload.rows.forEach(o => { const row = deskRow(db, o.product, o.currency); if (row && row.pendingId === r.id) row.pendingId = null; });
     C['product.add'] = {
       cap: 'tmp.admin',
       run(db, a, p, ctx) {
@@ -782,7 +765,7 @@
         const cb = (db.cardBalances || []).find(x => x.network === 'Visa' && x.currency === p.currency) || (db.cardBalances || []).find(x => x.currency === p.currency);
         if (cb) { cb.balance = round2(cb.balance + p.linkedAmount); cb.branches = cb.branches || {}; const br = cb.branches[p.branchId] = cb.branches[p.branchId] || { cards: 0, balance: 0 }; br.cards += 1; br.balance = round2(br.balance + p.linkedAmount); }
         arr(db, 'cardActivity').unshift({ id: 'INV-' + pad(seq(db, 'inv'), 5), kind: 'Sale', prefix: '4', issuer: 'Visa', currency: p.currency,
-          amount: p.linkedAmount, rate: p.customerRate, dsr: (deskRow(db, 'FXC', p.currency) || {}).card || p.customerRate, at: now, funding: 'INR',
+          amount: p.linkedAmount, rate: p.customerRate, dsr: T.cardOf(db, deskRow(db, 'FXC', p.currency), now) || p.customerRate, at: now, funding: 'INR',
           branchId: p.branchId, positionId: p.id, mapped: 0 });
       } else if (p.product === 'REM') moveNostro(db, p.currency, sgn * p.linkedAmount, now, 'branch remittance ' + p.id);
     };
@@ -860,7 +843,7 @@
         if (i.id === 'BANKAGG') (db.bankAccounts || []).filter(b => b.source === 'Bank aggregator' && !b.feedDown).forEach(b => { b.asOf = ctx.now; });
         if (i.id === 'EURONET' || i.id === 'PINELABS') (db.cardBalances || []).filter(b => b.source === (i.id === 'EURONET' ? 'Euronet' : 'Pine Labs')).forEach(b => { b.asOf = ctx.now; });
         if (i.id === 'FXP-API') { (db.inventory || []).forEach(x => { x.asOf = ctx.now; }); (db.cash || []).forEach(x => { x.asOf = ctx.now; }); }
-        if (i.id === 'IBR') { (db.currencies || []).forEach(c => { c.importedBase = r4(ibr(db, c.code, ctx.now) * (1 - 0.0012)); c.importedAt = ctx.now; }); what = 'IBR snapshot'; }
+        if (i.id === 'IBR') what = 'interbank rates';
         if (i.id === 'FXP-SFTP') {
           const due = (db.fxpInbox || []).filter(t => t.arrivesAt <= ctx.now);
           due.forEach(t => { const { arrivesAt, ...rest } = t; arr(db, 'fxpTxns').unshift({ ...rest, receivedAt: ctx.now, links: [] }); });
@@ -1377,7 +1360,7 @@
         if (u <= 0.005) return;
         const r = out[p.currency] = out[p.currency] || { currency: p.currency, sell: 0, buy: 0, sellRate: 0, buyRate: 0, dsr: 0 };
         if (p.side === 'SELL') { r.sell += u; r.sellRate += u * p.customerRate; } else { r.buy += u; r.buyRate += u * p.customerRate; }
-        r.dsr += u * ((deskRow(db, p.product, p.currency) || {}).card || p.customerRate);
+        r.dsr += u * (T.cardOf(db, deskRow(db, p.product, p.currency), now) || p.customerRate);
       });
       return Object.values(out).map(r => {
         const net = round2(r.sell - r.buy), gross = r.sell + r.buy;
@@ -1499,7 +1482,8 @@
       if (kind === 'full') { all(); return; }
       ['tmpProducts', 'org', 'counterparties', 'cardPrefixes', 'correspondents'].forEach(k => { out[k] = clone(db[k] || []); });
       Object.entries(NONE).forEach(([k, v]) => { out[k] = clone(v); });
-      out.rateDesk = (db.rateDesk || []).map(r => ({ product: r.product, currency: r.currency, card: r.card, status: r.status, publishedAt: r.publishedAt }));
+      const at = new Date().toISOString();
+      out.rateDesk = (db.rateDesk || []).map(r => ({ product: r.product, currency: r.currency, card: T.cardOf(db, r, at), status: r.status, publishedAt: r.publishedAt }));
       if (kind === 'public' || kind === 'trade') return;
       const sc = scopeBranches(db, a);
       const mine = x => !sc || sc.has(x.branchId);
@@ -1574,11 +1558,12 @@
       const pubAt = ago(Math.min(20, (nowMs - Date.parse(istAt(istDate(now), '09:14'))) / 3600000 > 0 ? (nowMs - Date.parse(istAt(istDate(now), '09:14'))) / 3600000 : 20));
       (db.tmpProducts || []).forEach(p => (db.currencies || []).forEach(c => {
         const off = (p.code === 'FXC' && ['JPY', 'CHF'].includes(c.code)) || (p.code === 'CSH' && ['JPY', 'AUD'].includes(c.code)) || (p.code === 'FXC' && c.code === 'SGD');
-        const spread = r4(c.refRate * p.spreadPct / 100);
+        /* remittance cards sit wide of the desk so the cap bites only on outliers */
+        const spread = r4(c.refRate * (['REM', 'INW'].includes(p.code) ? 2 : p.spreadPct) / 100);
         const card = p.sides.includes('SELL') ? r4(c.refRate + spread) : r4(c.refRate - spread);
-        db.rateDesk.push({ product: p.code, currency: c.code, card: off ? 0 : card, spread: off ? 0 : spread, status: off ? 'Not published' : 'Published',
-          publishedAt: off ? null : pubAt, publishedBy: off ? null : DEALER, approvedBy: off ? null : CHECK, version: off ? 0 : 1, suggested: card });
-        c.importedBase = r4(c.refRate); c.importedAt = ago(Math.max(0.5, (nowMs - Date.parse(istAt(istDate(now), '09:02'))) / 3600000));
+        const desk = ['REM', 'INW'].includes(p.code) ? { margin: Number((db.settings || {}).deskMarginPaise ?? 10) } : {};
+        db.rateDesk.push({ product: p.code, currency: c.code, card: off ? 0 : card, cardMode: 'fixed', ...desk, status: off ? 'Not published' : 'Published',
+          publishedAt: off ? null : pubAt, publishedBy: off ? null : DEALER, version: off ? 0 : 1 });
       }));
 
       /* organisation, integrations, liquidity */
@@ -1812,12 +1797,6 @@
       at(submitApproval(db, sys, now, { type: 'Bulk booking detail', ref: breq.id, title: `${breq.id} — ${fmt(breq.amount, breq.currency)} for ${nodeName(db, breq.branchId)}`, amount: breq.amount, currency: breq.currency,
         payload: { id: breq.id, detail: bdet }, diff: [['Status', 'With Treasury', 'Booked'], ['Bank reference', '—', bdet.bankRef], ['Rate', '—', bdet.rate.toFixed(4)], ['Value date', '—', bdet.valueDate],
           ['INR principal', '—', fmt(round2(breq.amount * bdet.rate))]] }), 0.9);
-      /* a card rate revision waiting for the checker (GBP remittance) */
-      const gbp = currencyOf(db, 'GBP'), gRow = deskRow(db, 'REM', 'GBP');
-      const gCard = r4(gRow.card + 0.12);
-      const rr = at(submitApproval(db, sys, now, { type: 'Card rate', ref: 'RATE-DESK', title: 'Outward remittance GBP card rate', payload: { rows: [{ product: 'REM', currency: 'GBP', base: gbp.refRate, card: gCard }] },
-        diff: [['Outward remittance GBP — card', gRow.card.toFixed(4), gCard.toFixed(4)]], note: 'Sterling firmer after the BoE decision — intraday revision' }), 0.6);
-      gRow.pendingId = rr.id;
       /* the agent's deal for Havelock breaches its limit and is held */
       p62.status = 'Held'; p62.heldReason = 'limit ' + inr(10000000) + ', outstanding above the limit';
       const hv = db.limits.find(l => l.id === 'CORP-1211');

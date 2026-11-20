@@ -10,6 +10,21 @@
    customer sees only its own rate. AD2 also sees the reference rate and the
    margin, may price inside the band in an assisted journey, and may apply a
    deal reference negotiated with the treasury desk.                        */
+/* Customers ask the treasury dealer for a rate (above the threshold — 0 means
+   always); branch staff acting for them book directly. */
+function rfqNeeded(smeRec, cur, amount) {
+  if (isAD2()) return false;
+  const thr = Number((DB.settings || {}).rfqThresholdUsd || 0);
+  if (thr <= 0) return true;
+  const r = ((smeRec || {}).config || {}).customerRates || {};
+  return !(r[cur] && r.USD) || (Number(amount) || 0) * r[cur].out / r.USD.out >= thr;
+}
+function leftText(until) {
+  const s = Math.max(0, Math.round((new Date(until) - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+setInterval(() => { document.querySelectorAll('[data-left]').forEach(el => { el.textContent = leftText(el.dataset.left); }); }, 1000);
+
 function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
   const fx = Number(amount) || 0;
   const assisted = acting() && isAD2();
@@ -26,6 +41,38 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
       ${dir === 'out' ? 'plus' : 'less'} margin ${r.margin != null ? r.margin : m} paise — AD2 only, never shown to the customer</div>` : '';
   const dealBtn = label => (isAD2() ? can('fx.dealRef') : true) ? `<button class="btn btn-ghost" type="button" data-act="${prefix}-deal-ref">${label}</button>` : '';
 
+  /* a rate requested from the treasury dealer: waiting, quoted, rejected or expired */
+  if (draft.rate.mode === 'rfq') {
+    const r = (DB.rfqs || []).find(x => x.id === draft.rate.rfqId);
+    const s = r ? Engine.treasury.rfqStatus(r, nowISO()) : 'Withdrawn';
+    if (s === 'Pending') return `<div class="ratebox rfq-wait">
+      <div class="row"><div><div class="k">Awaiting rate confirmation from the dealer</div>
+        <div class="live">${money(r.amount, cur)} · indicative ₹ ${Number(r.indicative).toFixed(4)}</div>
+        <div class="tick">Requested ${dmyt(r.requestedAt)} (${esc(r.id)}). The quote appears here and in your notifications; you then confirm it to lock it.</div></div>
+        <div class="spacer"></div>
+        <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Cancel request</button></div></div>`;
+    if (s === 'Quoted') return `<div class="ratebox rfq-quoted">
+      <div class="row"><div><div class="k">Rate quoted — confirm it to book</div>
+        <div class="live">1 ${esc(cur)} = ₹ ${Number(r.rate).toFixed(4)}</div>
+        <div class="tick">You saw ₹ ${Number(r.indicative).toFixed(4)} when you asked · the dealer quoted ₹ ${Number(r.rate).toFixed(4)}.
+          Valid until ${dmyt(r.validUntil)} — <b data-left="${esc(r.validUntil)}">${leftText(r.validUntil)}</b> left.</div></div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" type="button" data-act="${prefix}-rfq-confirm">Confirm rate</button>
+        <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Decline</button></div>
+      ${lines(r.rate, r.amount)}</div>`;
+    if (s === 'Rejected') return `<div class="ratebox rfq-rejected">
+      <div class="row"><div><div class="k">Rate rejected</div>
+        <div class="live">${esc(r.reason || 'Not quoted')}</div>
+        <div class="tick">${r.note ? esc(r.note) + ' · ' : ''}The dealer did not quote ${money(r.amount, cur)} (${esc(r.id)}). You can ask again.</div></div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">Resubmit</button></div></div>`;
+    if (s === 'Expired') return `<div class="ratebox rfq-expired">
+      <div class="row"><div><div class="k">Quote expired</div>
+        <div class="live">₹ ${Number(r.rate).toFixed(4)} was valid until ${dmyt(r.validUntil)}</div>
+        <div class="tick">Request the rate again for a fresh quote.</div></div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">Request again</button></div></div>`;
+  }
   if (draft.rate.mode === 'booked') {
     const amt = draft.rate.bookedAmount || fx;
     const pos = (DB.positions || []).find(p => p.id === draft.rate.positionId);
@@ -68,15 +115,16 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
   const marginIn = assisted ? `<div class="f" style="margin-top:12px;max-width:280px"><label for="${prefix}-margin">Margin (paise) — branch pricing</label>
       <input id="${prefix}-margin" type="number" data-act="${prefix}-margin" value="${m}" min="${Math.max(0, approved - band)}" max="${approved + 100}">
       <div class="hint">Approved ${approved}p. You may go down to ${Math.max(0, approved - band)}p (band ${band}p). Recorded in the audit trail.</div></div>` : '';
+  const rfq = rfqNeeded(smeRec, cur, fx);
   return `<div class="ratebox">
-    <div class="row"><div><div class="k">Live rate · simulated feed</div>
+    <div class="row"><div><div class="k">${rfq ? 'Indicative rate' : 'Live rate · simulated feed'}</div>
       <div class="live">1 ${esc(cur)} = ₹ ${live.toFixed(4)}</div>
       ${seesMargin() ? ad2Note({ margin: m, refRate: currency(cur)?.refRate }) : `<div class="tick">Your rate for ${dir === 'out' ? 'buying' : 'selling'} ${esc(cur)}, including AD2’s pricing.</div>`}</div>
       <div class="spacer"></div>
-      <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>
+      <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${rfq ? (fx ? 'Request rate for ' + money(fx, cur) : 'Request rate') : fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>
       ${dealBtn('FX deal reference')}</div>
     ${lines(live, fx)}
-    <p class="tick" style="margin:10px 0 0">${fx ? 'Booking locks this rate for 48 hours and puts it on the treasury book straight away.' : 'Enter the amount to see what it comes to in INR.'}</p>
+    <p class="tick" style="margin:10px 0 0">${!fx ? 'Enter the amount to see what it comes to in INR.' : rfq ? 'The treasury dealer quotes the rate; confirming the quote locks it for 48 hours.' : 'Booking locks this rate for 48 hours and puts it on the treasury book straight away.'}</p>
     ${marginIn}</div>`;
 }
 

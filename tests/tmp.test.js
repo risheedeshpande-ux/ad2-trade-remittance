@@ -6,6 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Engine = require('../public/engine.js');
 const { SEED } = require('../public/data.js');
+/* prices pinned for exact assertions: no feed movement, no interbank spread, no desk margin */
+Object.assign(SEED.settings, { marketSim: false, ibrSpreadPct: 0, deskMarginPaise: 0, rfqThresholdUsd: 1e9 });  /* direct booking; the RFQ test lowers it */
 const T = Engine.treasury, V = Engine.tmp;
 
 const NOW = '2026-09-24T06:00:00.000Z';                 /* 11:30 IST, before the 16:00 cut-off */
@@ -151,18 +153,19 @@ test('keep past cut-off, request cancel (agent), cancel with a reason', () => {
 
 test('approvals inbox: maker-checker, own entry refused, reason required, resubmit as a new version', () => {
   const db = fresh();
-  const id = run(db, DEALER, 'rates.propose', { rows: [{ product: 'CSH', currency: 'USD', base: 88.42, card: 89.6 }], reason: 'Intraday' }).id;
+  run(db, ADMIN, 'master.marginVersion', { product: 'CSH', markupPct: 0.5, transferPct: 0.1 });
+  const id = db.approvals.find(x => x.type === 'Margin version' && x.status === 'Pending').id;
   const item = db.approvals.find(x => x.id === id);
   assert.ok(item.diff.length && item.diff[0].before && item.diff[0].after, 'the checker sees before and after');
   refuses(() => run(db, TVIEW, 'approval.approve', { id }), /cannot/);
   refuses(() => run(db, TCHECK, 'approval.reject', { id }), /reason/i);
-  run(db, TCHECK, 'approval.reject', { id, reason: 'Card too wide for cash' });
+  run(db, TCHECK, 'approval.reject', { id, reason: 'Spread too wide for cash' });
   refuses(() => run(db, DEALER2, 'approval.resubmit', { id, note: 'x' }), /maker/);
-  const v2 = run(db, DEALER, 'approval.resubmit', { id, note: 'Narrowed' }).id;
+  const v2 = run(db, ADMIN, 'approval.resubmit', { id, note: 'Narrowed' }).id;
   assert.equal(db.approvals.find(x => x.id === v2).version, 2);
   assert.equal(item.status, 'Superseded');
   run(db, TCHECK2, 'approval.approve', { id: v2 });
-  assert.equal(db.rateDesk.find(r => r.product === 'CSH' && r.currency === 'USD').card, 89.6);
+  assert.equal(db.tmpProducts.find(p => p.code === 'CSH').markupPct, 0.5);
   /* a checker who is also the maker is refused */
   const own = run(db, ADMIN, 'master.currencyLimit', { currency: 'USD', limit: 500000 });
   assert.ok(own.message);
@@ -375,7 +378,8 @@ test('what each TMP role sees', () => {
   const view = s(TVIEW);
   assert.equal(view.scope, 'tmp-full');
   refuses(() => run(db, TVIEW, 'cover.create', { currency: 'USD', side: 'BUY', amount: 1, rate: 88, counterparty: 'HDFC Bank' }), /cannot/);
-  refuses(() => run(db, TVIEW, 'rates.propose', { rows: [{ product: 'REM', currency: 'USD', base: 88.4, card: 89 }] }), /cannot/);
+  refuses(() => run(db, TVIEW, 'rates.margin', { product: 'REM', currency: 'USD', margin: 1 }), /cannot/);
+  refuses(() => run(db, TVIEW, 'rates.card', { product: 'REM', currency: 'USD', mode: 'fixed', card: 90 }), /cannot/);
   const m = s(MASTER);
   assert.equal(m.scope, 'master');
   assert.ok(m.rateDesk.length && m.approvals.length && m.positions.length);
