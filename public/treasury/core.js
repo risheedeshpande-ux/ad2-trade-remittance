@@ -289,7 +289,7 @@ const SECTIONS = {
   branch: [['Overview', ['B-01']], ['Take a rate', ['B-02', 'B-03']], ['Positions', ['B-04', 'B-05']], ['Cut-off', ['B-06', 'B-09']],
            ['Balances', ['B-07']], ['Reports', ['B-08']], ['Offline', ['B-10']]],
   agent: [['Take a rate', ['B-02a', 'B-03']], ['My deals', ['B-04']]],
-  treasury: [['Overview', ['T-01', 'T-01V']], ['Rates', ['T-24', 'T-27']], ['Positions', ['T-02', 'T-03', 'T-20']], ['Trade desk', ['T-28']],
+  treasury: [['Overview', ['T-01', 'T-01V']], ['Rates', ['T-24', 'T-29', 'T-27']], ['Positions', ['T-02', 'T-30', 'T-03', 'T-20']], ['Trade desk', ['T-28']],
              ['Covers', ['T-04', 'T-05', 'T-12', 'T-13']], ['Amendments', ['T-26']], ['Exceptions', ['T-06']],
              ['Liquidity', ['T-07', 'T-19', 'T-08', 'T-09', 'T-10']], ['Credit', ['T-11', 'T-25']], ['Settlements', ['T-14', 'T-15', 'T-16']],
              ['Bulk', ['T-17']], ['Approvals', ['T-21']], ['Reports', ['T-22', 'T-23']], ['Data & audit', ['T-18']]],
@@ -301,7 +301,7 @@ const NAV = {
   branch: [['Overview', 'B-01'], ['Take FX rate', 'B-02'], ['My positions', 'B-04'], ['Knock-off', 'B-05'], ['Cut-off queue', 'B-06'],
            ['Reminders', 'B-09'], ['Balances', 'B-07'], ['Reports', 'B-08'], ['Offline capture', 'B-10']],
   agent: [['Take FX rate', 'B-02a'], ['My deals', 'B-04']],
-  treasury: [['Overview', 'T-01'], ['Rate desk', 'T-24'], ['Positions', 'T-02'], ['Trade desk', 'T-28'], ['Cover deals', 'T-04'], ['Allocations', 'T-05'],
+  treasury: [['Overview', 'T-01'], ['Rate desk', 'T-24'], ['Card rates', 'T-29'], ['Positions', 'T-02'], ['Rate requests', 'T-30'], ['Trade desk', 'T-28'], ['Cover deals', 'T-04'], ['Allocations', 'T-05'],
              ['Amendments', 'T-26'], ['Exceptions', 'T-06'], ['Liquidity', 'T-07'], ['Cards & funding', 'T-10'], ['Credit lines', 'T-11'],
              ['Settlements', 'T-14'], ['Bulk bookings', 'T-17'], ['Reports', 'T-22'], ['Approvals', 'T-21'], ['Data & audit', 'T-18']],
   finance: [['Reconciliation', 'OPS-02'], ['Card sales', 'T-14'], ['Pending settlement', 'T-15'], ['Card balances', 'T-10'], ['Reports', 'OPS-03']],
@@ -349,7 +349,7 @@ function setQ(patch) {
 const pill = (t, k) => `<span class="pill${k ? ' ' + k : ''}">${esc(t)}</span>`;
 const KIND = {
   Complete: 'ok', Concluded: 'ok', Covered: 'ok', Published: 'ok', Approved: 'ok', Healthy: 'ok', Fresh: 'ok', Booked: 'ok', Active: 'ok', Adjusted: 'ok',
-  Settled: 'ok', Linked: 'ok', Closed: 'off', Normal: 'ok', Yes: 'ok',
+  Settled: 'ok', Linked: 'ok', Closed: 'off', Normal: 'ok', Yes: 'ok', Confirmed: 'ok', Quoted: 'warn', Floating: '', Fixed: '',
   Partial: 'warn', 'Awaiting txn': 'bad', 'Awaiting settlement': 'warn', Held: 'warn', Pending: 'warn', 'With checker': 'warn', 'Action needed': 'bad', Ageing: 'warn',
   Delayed: 'warn', 'Not published': 'bad', Open: '', Escalated: 'bad', Acknowledged: 'warn', 'Needs detail': 'warn', 'With Treasury': 'warn',
   'Awaiting checker': 'warn', Investigate: 'bad', Stale: 'bad', Failed: 'bad', 'Cancellation requested': 'warn', 'Open residual': 'bad',
@@ -585,7 +585,8 @@ function navHtml(ws, sid) {
   const items = (NAV[ws] || []).map(([label, id]) => [label, navId(id)]);
   const sec = ((SECTIONS[ws] || []).find(([, ids]) => ids.includes(sid)) || [null, []])[1];
   const on = items.some(([, id]) => id === sid) ? sid : (items.find(([, id]) => sec.includes(id)) || [])[1];
-  const links = items.map(([label, id]) => `<a href="#/${id}"${id === on ? ' class=on aria-current=page' : ''}>${esc(label)}</a>`).join('');
+  const count = id => id === 'T-30' ? (DB.rfqs || []).filter(r => r.status === 'Pending').length : 0;
+  const links = items.map(([label, id]) => `<a href="#/${id}"${id === on ? ' class=on aria-current=page' : ''}>${esc(label)}${count(id) ? ` <span class=navn>${count(id)}</span>` : ''}</a>`).join('');
   const sw = w.length > 1 ? `<div class=grp>Workspace</div>${w.map(x => `<a href="#/${x === 'treasury' && roleDef().readOnly ? 'T-01V' : HOME[x]}"${x === ws ? ' class=on' : ''}>${esc(WS_LABEL[x])}</a>`).join('')}` : '';
   const tradeLink = isMaster() || ['AD2 Administrator'].includes(S.role) ? `<a href="../app.html">Trade portal ↗</a>` : '';
   return `<nav class=nav aria-label=Primary>
@@ -641,9 +642,9 @@ function sectionTabsHtml(loc, sid) {
 const NEXT = {
   'B-01': ['B-02', 'B-05', 'B-06'], 'B-02': ['B-04', 'B-05'], 'B-03': ['B-04', 'B-01'], 'B-04': ['B-05', 'B-06'], 'B-05': ['B-04', 'B-09'],
   'B-06': ['B-05', 'B-09'], 'B-09': ['B-06', 'B-05'], 'B-10': ['B-04', 'B-01'],
-  'T-01': ['T-24', 'T-02', 'T-21'], 'T-24': ['T-02', 'T-04', 'T-27'], 'T-02': ['T-03', 'T-04', 'T-05'], 'T-03': ['T-20', 'T-05'], 'T-04': ['T-05', 'T-12'],
+  'T-01': ['T-24', 'T-30', 'T-02'], 'T-24': ['T-29', 'T-30', 'T-02'], 'T-02': ['T-03', 'T-04', 'T-05'], 'T-03': ['T-20', 'T-05'], 'T-04': ['T-05', 'T-12'],
   'T-05': ['T-06', 'T-02'], 'T-06': ['T-05', 'T-02'], 'T-11': ['T-25', 'T-10'], 'T-12': ['T-13', 'T-04'], 'T-13': ['T-21', 'T-12'], 'T-14': ['T-15', 'T-16'],
-  'T-15': ['T-20', 'T-16'], 'T-16': ['T-20', 'T-27'], 'T-21': ['T-13', 'T-26'], 'T-26': ['T-05', 'T-18'], 'T-27': ['T-24', 'T-16'], 'T-28': ['T-02', 'T-25', 'T-24'],
+  'T-15': ['T-20', 'T-16'], 'T-16': ['T-20', 'T-27'], 'T-21': ['T-13', 'T-26'], 'T-26': ['T-05', 'T-18'], 'T-27': ['T-24', 'T-16'], 'T-28': ['T-30', 'T-02', 'T-24'], 'T-29': ['T-24', 'T-30'], 'T-30': ['T-28', 'T-02', 'T-24'],
   'OPS-01': ['OPS-03'], 'OPS-02': ['OPS-03'], 'ADM-01': ['ADM-02', 'ADM-05'], 'ADM-05': ['ADM-03', 'ADM-01'],
 };
 function relatedHtml(sid) {

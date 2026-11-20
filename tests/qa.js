@@ -33,7 +33,7 @@ async function startServer() {
 
 (async () => {
   const srv = await startServer();
-  const exe = fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined;
+  const exe = fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : fs.existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined;
   const browser = await chromium.launch({ executablePath: exe });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await ctx.newPage();
@@ -226,6 +226,8 @@ async function startServer() {
     await page.waitForSelector('.login-panel');
     if (process.env.BASE) { await click('.sim-bar [data-act="reset-demo"]'); await modalOk(); await page.waitForSelector('.login-panel'); }
     await shot('login', true);
+    /* the existing journeys book directly; the rate-request journey turns requests back on */
+    await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 1000000000 });
 
     /* ================= roles and access ================= */
     await scenario('Roles', 'Each role has its own menu of the work it does, and every screen renders', 'All', async () => {
@@ -684,7 +686,7 @@ async function startServer() {
     });
 
     /* ================= treasury: the Treasury Management Portal, and trade ⇄ treasury ================= */
-    await scenario('Treasury', 'Trade → treasury: a customer’s booking is a position on the treasury book at its branch at once; a rate published after it does not change it', 'SME → Dealer → Treasury checker → SME', async () => {
+    await scenario('Treasury', 'Trade → treasury: a customer’s booking is a position on the treasury book at its branch at once; a desk margin changed after it does not change it', 'SME → Dealer → SME', async () => {
       await signAs('MERIDIANTEX', 'SMEUSER');
       const b = await api('rate.book', { dir: 'out', currency: 'EUR', amount: 12000 });
       check(b.ok && /^POS-/.test(b.r.positionId) && b.r.refRate === undefined, 'booking returns a position and never the reference rate');
@@ -699,42 +701,67 @@ async function startServer() {
       check(/Trade portal|Not submitted/.test(await text('.drawer')), 'the position drawer shows both tracks: not yet submitted, uncovered');
       await click('.drawer .x');
       await go('#/T-24');
-      const base = await state(() => DB.currencies.find(c => c.code === 'EUR').refRate);
-      await click('button[data-act="rd-propose"][data-p="REM"][data-c="EUR"]'); await page.waitForSelector('dialog[open]');
-      await page.fill('dialog[open] [data-k=base]', (base + 0.4).toFixed(4)); await page.fill('dialog[open] [data-k=card]', (base + 1.3).toFixed(4));
-      await page.fill('#rp-reason', 'QA revision'); await dlgOk(); await toastSays(/checker/);
-      const apr = await state(() => DB.approvals.find(a => a.type === 'Card rate' && a.status === 'Pending' && a.note === 'QA revision').id);
-      await go('#/T-21');
-      check(await tmpCount('[data-act="apr-ok"]') === 0, 'the dealer holds no approval control at all');
-      await signAs('AD2', 'TCHECKER'); await go('#/T-21?id=' + apr);
-      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
-      check(Math.abs(await state(() => DB.currencies.find(c => c.code === 'EUR').refRate) - (base + 0.4)) < 0.0001, 'the checker publishes the new base: the trade reference for EUR');
+      check(await tmpCount('th:has-text("IBR bid")') === 1 && await tmpCount('th:has-text("IBR ask")') === 1 && await tmpCount('th:has-text("Imported base")') === 0, 'the rate desk shows the two-way interbank rate, and no imported or published base');
+      await click('button[data-act="rd-margin"][data-p="REM"][data-c="EUR"]'); await page.waitForSelector('dialog[open]');
+      await page.fill('#rd-m', '50.25'); await page.locator('#rd-m').dispatchEvent('input'); await dlgOk(); await toastSays(/published at/);
+      check(await state(() => DB.rateDesk.find(r => r.product === 'REM' && r.currency === 'EUR').margin) === 50.25, 'the margin publishes at once — no checker');
+      check(!(await state(() => (DB.approvals || []).some(a => a.type === 'Card rate'))), 'nothing waits in the approvals inbox');
       await signAs('MERIDIANTEX', 'SMEUSER');
       const pos = await state(id => DB.positions.find(p => p.id === id), b.r.positionId);
       check(pos.customerRate === b.r.customerRate, 'the booked rate did not move when treasury published a new rate');
       const again = await api('rate.book', { dir: 'out', currency: 'EUR', amount: 1000 });
-      check(again.r.customerRate > b.r.customerRate, 'a new booking uses the newly published rate');
+      check(again.r.customerRate > b.r.customerRate, 'a new booking uses the higher desk rate');
       await go('#/sme/dashboard'); await page.evaluate(() => render()); await wait(200);
       await click(`[data-act="bk-release"][data-id="${again.r.positionId}"]`); await modalOk();
       check(await state(id => DB.positions.find(p => p.id === id)?.status, again.r.positionId) === 'Cancelled', 'the customer releases a booking it no longer needs');
     });
-    await scenario('Treasury', 'The rate desk gates quoting: a card rate that is not published cannot be quoted until a checker publishes it', 'Branch → Dealer → Treasury checker 2 → Branch', async () => {
+    await scenario('Treasury', 'Card rates gate quoting: a card rate that is not set cannot be quoted until the dealer sets it', 'Branch → Dealer → Branch', async () => {
       await signAs('AD2', 'BRANCH');
       const r = await api('quote.get', { product: 'FXC', currency: 'JPY', side: 'SELL', amount: 100000 });
       check(!r.ok && /no published card rate/i.test(r.msg), 'a branch cannot quote a forex card in JPY while its card rate is unpublished');
       await go('#/B-02'); await select('#bq-product', 'FXC');
       check(/not published/.test(await text('#bq-currency option[value="JPY"]')), 'the quote form marks JPY as not published');
-      await signAs('AD2', 'DEALER'); await go('#/T-24');
-      check(await tmpCount('.banner.bad:has-text("not published")') === 1, 'the rate desk lists the unpublished card rates');
-      await click('.pageacts [data-act="rd-propose"]'); await page.waitForSelector('dialog[open]');
-      check(await tmpCount('dialog[open] [data-k=card]') >= 3, 'proposing starts from every unpublished rate, with a suggested card rate');
-      await page.fill('#rp-reason', 'Publish missing cards'); await dlgOk(); await toastSays(/checker/);
-      const apr = await state(() => DB.approvals.find(a => a.type === 'Card rate' && a.status === 'Pending' && a.note === 'Publish missing cards').id);
-      await signAs('AD2', 'TCHECKER2'); await go('#/T-21?id=' + apr);
-      await click(`tr:has(a:has-text("${apr}")) [data-act="apr-ok"]`); await dlgOk(); await toastSays(/approved/);
+      await signAs('AD2', 'DEALER'); await go('#/T-29');
+      check(await tmpCount('tr:has-text("JPY") .v-bad:has-text("Not published")') >= 1, 'the card rate page shows the unset card rates');
+      await click('button[data-act="cr-edit"][data-p="FXC"][data-c="JPY"]'); await page.waitForSelector('dialog[open]');
+      check(await tmpCount('dialog[open] #cr-mode') === 1, 'a card rate is fixed or floats with the interbank rate');
+      await select('#cr-mode', 'margin'); await page.fill('#cr-m', '2'); await dlgOk(); await toastSays(/card rate floating/);
+      check(await state(() => DB.rateDesk.find(r => r.product === 'FXC' && r.currency === 'JPY').cardMode) === 'margin', 'saved as floating, published at once');
       await signAs('AD2', 'BRANCH');
       const r2 = await api('quote.get', { product: 'FXC', currency: 'JPY', side: 'SELL', amount: 100000 });
       check(r2.ok && r2.r.quote.rate > 0, 'once published, the branch quotes JPY forex cards');
+    });
+    await scenario('Treasury', 'Rate request: the customer asks, the dealer quotes, the customer confirms; a rejection turns red with Resubmit', 'Admin → SME → Dealer → SME', async () => {
+      await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 0 });
+      await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
+      await select('#or-currency', 'EUR'); await setVal('#or-amount', 20000);
+      check(/Request rate/.test(await text('[data-act="or-book-rate"]')), 'the customer requests the rate instead of locking it');
+      await click('[data-act="or-book-rate"]'); await toastSays(/Rate requested/);
+      check(/Awaiting rate confirmation/i.test(await text('.ratebox')), 'the rate box waits for the dealer');
+      const rq = await state(() => OR_DRAFT.rate.rfqId);
+      await signAs('AD2', 'DEALER'); await go('#/T-30');
+      check(await tmpCount(`tr:has-text("${rq}")`) === 1 && await tmpCount('.nav .navn') === 1, 'the dealer sees it on Rate requests, with a count in the menu');
+      await click(`tr:has-text("${rq}") [data-act="rq-quote"]`); await page.waitForSelector('dialog[open]');
+      await page.fill('#rq-m', '45'); await page.locator('#rq-m').dispatchEvent('input'); await dlgOk(); await toastSays(/Quoted/);
+      const quoted = await state(id => DB.rfqs.find(r => r.id === id).rate, rq);
+      await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
+      /* signing in again starts a new draft: carry the request on it, as a returning customer would */
+      await page.evaluate(id => { Object.assign(OR_DRAFT, { currency: 'EUR', amount: '20000' }); OR_DRAFT.rate = { ...OR_DRAFT.rate, mode: 'rfq', rfqId: id, bookedAmount: 20000 }; render(); }, rq);
+      check(/Rate quoted/i.test(await text('.ratebox')) && await tmpCount('[data-act="or-rfq-confirm"]') === 1, 'the customer sees the quote, valid for a limited time, with Confirm rate');
+      await click('[data-act="or-rfq-confirm"]'); await toastSays(/Rate confirmed/);
+      const posId = await state(() => OR_DRAFT.rate.positionId);
+      check(await state(id => DB.positions.find(p => p.id === id).customerRate, posId) === quoted, 'booked at exactly the quoted rate, on the treasury book');
+      await page.evaluate(() => { OR_DRAFT = null; }); await go('#/sme/dashboard'); await go('#/sme/outward/new');
+      await select('#or-currency', 'USD'); await setVal('#or-amount', 5000);
+      await click('[data-act="or-book-rate"]'); await toastSays(/Rate requested/);
+      const rq2 = await state(() => OR_DRAFT.rate.rfqId);
+      await signAs('AD2', 'DEALER'); await go('#/T-30');
+      await click(`tr:has-text("${rq2}") [data-act="rq-reject"]`); await page.waitForSelector('dialog[open]'); await dlgOk(); await toastSays(/rejected/);
+      await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
+      await page.evaluate(id => { Object.assign(OR_DRAFT, { currency: 'USD', amount: '5000' }); OR_DRAFT.rate = { ...OR_DRAFT.rate, mode: 'rfq', rfqId: id, bookedAmount: 5000 }; render(); }, rq2);
+      check(await tmpCount('.ratebox.rfq-rejected') === 1 && /Resubmit/.test(await text('.ratebox')), 'a rejection turns the rate box red, with Resubmit');
+      await shot('rfq-rejected', true);
+      await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 1000000000 });
     });
     await scenario('Treasury', 'Branch counter: quote, stepped review, book; the FX Plus bill links back on punch; knock off the rest; concluded and stock moves', 'Branch (Delhi CP)', async () => {
       await signAs('AD2', 'BRANCH2'); await go('#/B-02');

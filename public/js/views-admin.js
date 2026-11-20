@@ -157,8 +157,14 @@ function adminSettings() {
       <div class="f"><label for="set-cutoff">Daily cut-off (IST)</label><input id="set-cutoff" type="time" value="${esc(st.cutoff || '16:00')}" ${ed}>
         <div class="hint">After it, uncovered currencies are flagged. Nothing is cancelled.</div></div>
       <div class="f"><label for="set-maxbk">Open rate bookings per customer</label><input id="set-maxbk" type="number" min="1" max="20" value="${st.maxOpenBookings ?? 5}" ${ed}></div>
-      <div class="f"><label for="set-rband">Rate revision band (%)</label><input id="set-rband" type="number" step="0.5" min="0.5" max="5" value="${st.rateBand ?? 2}" ${ed}></div>
       <div class="f"><label for="set-aged">Aged after (days)</label><input id="set-aged" type="number" min="1" max="30" value="${st.agedDays ?? 3}" ${ed}></div>
+    </div>
+    <div class="grid g4 fields" style="margin-top:14px;align-items:end">
+      <div class="f"><label for="set-rfqthr">Rate requests from (USD)</label><input id="set-rfqthr" type="number" min="0" step="1000" value="${st.rfqThresholdUsd ?? 0}" ${ed}>
+        <div class="hint">Customer bookings at or above this go to the dealer as a rate request. 0 = every booking.</div></div>
+      <div class="f"><label for="set-rfqvalid">Quote valid for (minutes)</label><input id="set-rfqvalid" type="number" min="1" max="240" value="${st.rfqValidMin ?? 15}" ${ed}></div>
+      <div class="f"><label for="set-rfqauto">Auto-quote after (seconds)</label><input id="set-rfqauto" type="number" min="0" max="3600" value="${st.rfqAutoQuoteSec ?? 0}" ${ed}>
+        <div class="hint">For demos with nobody at the desk: quote at the customer's margin. 0 = off.</div></div>
     </div>
     ${ed ? '' : `<div style="margin-top:12px"><button class="btn btn-ghost" type="button" data-act="set-treasury-save">Save treasury settings</button></div>`}
     </div></div>`;

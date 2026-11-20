@@ -207,7 +207,8 @@ function viewDispose(inwardId) {
   const inrCredit = !acc || acc.currency === 'INR';
   const billPool = DB.bills.filter(b => b.smeId === i.smeId && b.type === 'Export' && b.outstanding > 0 && b.review === 'Accepted');
   const allocated = d.option === 'knockoff' ? d.allocations.reduce((s, a) => s + a.amount, 0) : 0;
-  const rate = d.rate.mode === 'none' ? liveRate(me, i.currency, 'in', acting() && isAD2() ? d.marginOverride : null) : d.rate.customerRate;
+  const rq = d.rate.mode === 'rfq' ? (DB.rfqs || []).find(x => x.id === d.rate.rfqId) : null;
+  const rate = d.rate.mode === 'none' || (rq && !rq.rate) ? liveRate(me, i.currency, 'in', acting() && isAD2() ? d.marginOverride : null) : rq ? rq.rate : d.rate.customerRate;
   const list = Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option: d.option });
   const purposes = (DB.inwardPurposes || []).filter(x => !x.disabled);
 
@@ -269,7 +270,7 @@ function viewDispose(inwardId) {
           <div class="line"><span>This instruction</span><b>${money(amt, i.currency)}</b></div>
           <div class="line"><span>Applied to bills</span><b>${money(allocated, i.currency)}</b></div>
           <div class="line"><span>Pending knock-off (advance)</span><b>${money(amt - allocated, i.currency)}</b></div>
-          ${inrCredit ? `<div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : 'Booked rate'}</span><b>₹ ${Number(rate).toFixed(4)}</b></div>
+          ${inrCredit ? `<div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'rfq' ? 'Indicative rate' : 'Booked rate'}</span><b>₹ ${Number(rate).toFixed(4)}</b></div>
             <div class="line total"><span>INR to your account</span><b>${inr(amt * rate)}</b></div>`
             : `<div class="line total"><span>Credit to EEFC</span><b>${money(amt, i.currency)}</b></div>`}
           <div class="line"><span>Left on the receipt</span><b>${money(i.available - amt, i.currency)}</b></div>
