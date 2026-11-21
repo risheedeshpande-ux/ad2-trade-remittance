@@ -598,6 +598,7 @@ const NI = {
   aDocs:     { href:'#/ad2/admin/docs',       label:'Document policy',    chip:'DP', tone:'--chip-bl' },
   aComp:     { href:'#/ad2/admin/compliance', label:'Compliance rules',   chip:'CR', tone:'--chip-er' },
   aMasters:  { href:'#/ad2/admin/masters',    label:'Currencies & checklists', chip:'CM', tone:'--chip-ir' },
+  aRates:    { href:'#/ad2/admin/rates',      label:'Rate options',       chip:'RO', tone:'--chip-db' },
   aSettings: { href:'#/ad2/admin/settings',   label:'Platform settings',  chip:'ST', tone:'--chip-ad' },
   aUsers:    { href:'#/ad2/admin/users',      label:'Users',              chip:'US', tone:'--chip-pr' },
   aRoles:    { href:'#/ad2/admin/roles',      label:'Roles & permissions', chip:'RL', tone:'--chip-di' },
@@ -619,7 +620,7 @@ const NAV_BY_ROLE = {
   'AD2 Operations':   [['Home', 'dash', 'queue'], ['Settle', 'inwReceipts', 'outRelease', 'inwProcess'],
                        ['Authorise', 'outAuth', 'inwAuth', 'billsAccept', 'reconConfirm'],
                        ['Records', 'out', 'inw', 'bills', 'recon', 'dir'], ['Insight', 'reports'], ['Tools', 'lab']],
-  'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
+  'AD2 Administrator':[['Home', 'dash'], ['Configuration', 'aPurpose', 'aDocs', 'aComp', 'aMasters', 'aRates', 'aSettings'], ['Access', 'aUsers', 'aRoles'],
                        ['Oversight', 'aAudit', 'dir', 'out', 'inw', 'bills', 'reports'], ['Treasury', 'trPortal'], ['Tools', 'lab']],
   'Master Tester':    [['Testing', 'console'], ['Treasury', 'trPortal']],
 };

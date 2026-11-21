@@ -10,14 +10,26 @@
    customer sees only its own rate. AD2 also sees the reference rate and the
    margin, may price inside the band in an assisted journey, and may apply a
    deal reference negotiated with the treasury desk.                        */
-/* Customers ask the treasury dealer for a rate (above the threshold — 0 means
-   always); branch staff acting for them book directly. */
+/* How the customer prices (its rate preset's mode), as the server sends it.
+   Branch staff acting for a customer book directly whatever the mode. */
+const rateTermsOf = smeRec => (((smeRec || {}).config || {}).rateTerms) || { mode: 'live', modeName: 'Live lock', howTo: 'Lock the live rate.', lockValidityHours: 48 };
+/* Customers ask the treasury dealer for a rate when their mode says so: a
+   negotiated customer always, a live-lock customer from its size gate up. */
 function rfqNeeded(smeRec, cur, amount) {
   if (isAD2()) return false;
-  const thr = Number((DB.settings || {}).rfqThresholdUsd || 0);
-  if (thr <= 0) return true;
+  const t = rateTermsOf(smeRec);
+  if (t.mode === 'negotiated') return !!t.allowRfq;
+  if (t.mode !== 'live' || !(t.rfqFromUsd > 0)) return false;
   const r = ((smeRec || {}).config || {}).customerRates || {};
-  return !(r[cur] && r.USD) || (Number(amount) || 0) * r[cur].out / r.USD.out >= thr;
+  return !(r[cur] && r.USD) || (Number(amount) || 0) * r[cur].out / r.USD.out >= t.rfqFromUsd;
+}
+/* a customer that submits without a rate; AD2 prices it at verification */
+const bankPriced = smeRec => !isAD2() && rateTermsOf(smeRec).mode === 'bank';
+/* the "How your rates work" line every customer sees (no margin, no desk rate) */
+function rateTermsLine(smeRec) {
+  if (isAD2()) return '';
+  const t = rateTermsOf(smeRec);
+  return `<div class="tick"><b>How your rates work:</b> ${esc(t.modeName)} — ${esc(t.howTo)}</div>`;
 }
 function leftText(until) {
   const s = Math.max(0, Math.round((new Date(until) - Date.now()) / 1000));
@@ -104,6 +116,27 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
         <button class="btn btn-plain btn-sm" type="button" data-act="${prefix}-rate-clear">Clear</button></div>
       ${lines(draft.rate.customerRate, fx)}</div>`;
 
+  /* how the customer prices: bank-priced customers submit without a rate;
+     negotiated customers apply an assigned deal or request a rate */
+  const terms = rateTermsOf(smeRec);
+  if (!isAD2() && terms.mode === 'bank') return `<div class="ratebox">
+    <div class="row"><div><div class="k">Your bank applies the rate</div>
+      <div class="live">${fx ? money(fx, cur) : esc(cur)}</div>
+      ${rateTermsLine(smeRec)}</div></div>
+    <div class="rate-calc">
+      <div><span>${what}</span><b>${fx ? money(fx, cur) : '—'}</b></div>
+      <div><span>Rate</span><b>Applied by AD2 when it verifies the request</b></div>
+      <div class="tot"><span>${dir === 'out' ? 'INR equivalent' : 'INR to be credited'}</span><b>Calculated when AD2 applies the rate</b></div>
+    </div></div>`;
+  const offered = !isAD2() && terms.mode === 'negotiated'
+    ? (DB.deals || []).filter(d => d.status === 'Issued' && d.currency === cur && d.side === (dir === 'out' ? 'SELL' : 'BUY') && !d.phone && (!d.validUntil || d.validUntil > nowISO()))
+    : null;
+  if (offered && !terms.allowRfq && !offered.length) return `<div class="ratebox">
+    <div class="row"><div><div class="k">Your bank will assign a rate</div>
+      <div class="live">No ${esc(cur)} deal assigned yet</div>
+      ${rateTermsLine(smeRec)}
+      <div class="tick">The treasury desk issues a deal for this payment; it appears here to apply. You can save the request as a draft meanwhile.</div></div></div></div>`;
+
   /* treasury's rate desk opens booking: no published rate, nothing to book */
   const desk = (DB.rateDesk || []).find(r => r.product === (dir === 'out' ? 'REM' : 'INW') && r.currency === cur);
   if (desk && desk.status !== 'Published') return `<div class="ratebox">
@@ -116,15 +149,20 @@ function rateBoxHTML(draft, cur, smeRec, dir, prefix, amount) {
       <input id="${prefix}-margin" type="number" data-act="${prefix}-margin" value="${m}" min="${Math.max(0, approved - band)}" max="${approved + 100}">
       <div class="hint">Approved ${approved}p. You may go down to ${Math.max(0, approved - band)}p (band ${band}p). Recorded in the audit trail.</div></div>` : '';
   const rfq = rfqNeeded(smeRec, cur, fx);
+  /* a negotiated customer never locks the live rate itself */
+  const canAct = isAD2() || terms.mode === 'live' || rfq;
+  const hours = isAD2() ? 48 : terms.lockValidityHours || 48;
+  const showDeal = isAD2() || terms.mode === 'live' || (terms.mode === 'negotiated' && terms.allowDeals && offered && offered.length);
   return `<div class="ratebox">
-    <div class="row"><div><div class="k">${rfq ? 'Indicative rate' : 'Live rate · simulated feed'}</div>
+    <div class="row"><div><div class="k">${rfq || terms.mode === 'negotiated' && !isAD2() ? 'Indicative rate' : 'Live rate · simulated feed'}</div>
       <div class="live">1 ${esc(cur)} = ₹ ${live.toFixed(4)}</div>
-      ${seesMargin() ? ad2Note({ margin: m, refRate: currency(cur)?.refRate }) : `<div class="tick">Your rate for ${dir === 'out' ? 'buying' : 'selling'} ${esc(cur)}, including AD2’s pricing.</div>`}</div>
+      ${seesMargin() ? ad2Note({ margin: m, refRate: currency(cur)?.refRate }) : `<div class="tick">Your rate for ${dir === 'out' ? 'buying' : 'selling'} ${esc(cur)}, including AD2’s pricing.</div>`}
+      ${rateTermsLine(smeRec)}</div>
       <div class="spacer"></div>
-      <button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${rfq ? (fx ? 'Request rate for ' + money(fx, cur) : 'Request rate') : fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>
-      ${dealBtn('FX deal reference')}</div>
+      ${canAct ? `<button class="btn btn-primary" type="button" data-act="${prefix}-book-rate">${rfq ? (fx ? 'Request rate for ' + money(fx, cur) : 'Request rate') : fx ? 'Book rate for ' + money(fx, cur) : 'Book rate'}</button>` : ''}
+      ${showDeal ? dealBtn(terms.mode === 'negotiated' && !isAD2() ? 'Apply assigned deal' : 'FX deal reference') : ''}</div>
     ${lines(live, fx)}
-    <p class="tick" style="margin:10px 0 0">${!fx ? 'Enter the amount to see what it comes to in INR.' : rfq ? 'The treasury dealer quotes the rate; confirming the quote locks it for 48 hours.' : 'Booking locks this rate for 48 hours and puts it on the treasury book straight away.'}</p>
+    <p class="tick" style="margin:10px 0 0">${!fx ? 'Enter the amount to see what it comes to in INR.' : rfq ? `The treasury dealer quotes the rate; confirming the quote locks it for ${hours} hours.` : canAct ? `Booking locks this rate for ${hours} hours and puts it on the treasury book straight away.` : 'Apply the deal your bank assigned you.'}</p>
     ${marginIn}</div>`;
 }
 

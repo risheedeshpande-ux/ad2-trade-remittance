@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v14';
+const SEED_VERSION = 'ad2-trade-v15';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -496,7 +496,7 @@ const SMES = [
                  { name:'Neha Kulkarni', designation:'Finance Manager', email:'neha.meridiantextiles@mailinator.com', mobile:'+91 98204 11588', authority:'Jointly', limit:250000 }],
     source:'Digital', createdBy:'SME Applicant', status:'Approved',
     submittedAt:'2026-07-02T09:20:00', approvedAt:'2026-07-09T15:42:00',
-    config:{
+    config:{ ratePreset:'RP-1',
       permission:'Both', currencies:['USD','EUR','GBP'],
       margins:{ USD:50, EUR:60, GBP:68 }, marginBasis:'paise',
       charges:[
@@ -521,7 +521,7 @@ const SMES = [
                  { name:'Pooja Shah', designation:'Partner', email:'pooja.arcadiacomponents@mailinator.com', mobile:'+91 99745 20391', authority:'Jointly', limit:200000 }],
     source:'Offline', createdBy:'AD2 Maker (R. Iyer)', status:'Approved',
     submittedAt:'2026-08-01T11:05:00', approvedAt:'2026-08-06T10:12:00',
-    config:{
+    config:{ ratePreset:'RP-3',
       permission:'Import', currencies:['USD','SGD'],
       margins:{ USD:55, SGD:61 }, marginBasis:'paise',
       charges:[
@@ -546,7 +546,7 @@ const SMES = [
     signatories:[{ name:'Suresh Palaniappan', designation:'Proprietor', email:'suresh.nilgirispice@mailinator.com', mobile:'+91 94430 71129', authority:'Singly', limit:null }],
     source:'Digital', createdBy:'SME Applicant', status:'Approved',
     submittedAt:'2026-08-14T16:40:00', approvedAt:'2026-08-20T12:30:00',
-    config:{
+    config:{ ratePreset:'RP-2',
       permission:'Export', currencies:['USD','AED'],
       margins:{ USD:45, AED:38 }, marginBasis:'paise',
       charges:[
@@ -993,7 +993,13 @@ const SEED = {
       body:'Dear Harikrishna Patel,\n\nAD2 needs more information on application SME-1004:\n\n"IEC is mandatory for regular importers. Please provide your Importer Exporter Code."\n\n' +
            'Documents requested:\n  - IEC certificate\n  - Import licence for dye intermediates\n\nSign in with the link below to answer and upload any documents.\n\nAD2 Trade Services' } ],
   tmpProducts:TMP_PRODUCTS, org:ORG, counterparties:COUNTERPARTIES, cardPrefixes:CARD_PREFIXES, correspondents:CORRESPONDENTS,
-  settings:{ ibrSpreadPct:0.04, deskMarginPaise:10, rfqThresholdUsd:0, rfqValidMin:15, rfqAutoQuoteSec:0, autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
+  /* How each customer prices (rate modes). Three slots, edited by the AD2
+     Administrator; the AD2 maker picks one per SME at onboarding. */
+  ratePresets:[
+    { id:'RP-1', name:'Self-serve', mode:'live', isDefault:true, options:{ lockValidityHours:48, adMayUpdate:true, rfqFromUsd:0 } },
+    { id:'RP-2', name:'Bank-priced', mode:'bank', isDefault:false, options:{ lockValidityHours:48 } },
+    { id:'RP-3', name:'Negotiated', mode:'negotiated', isDefault:false, options:{ lockValidityHours:48, allowDeals:true, allowRfq:true, quoteValidMin:15 } } ],
+  settings:{ ibrSpreadPct:0.04, deskMarginPaise:10, rfqAutoQuoteSec:0, autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
              steppedThresholdInr:4000000, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
   seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, email:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };

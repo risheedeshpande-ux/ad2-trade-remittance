@@ -369,9 +369,36 @@ const readNote = rec => {
 };
 
 /* Checklist modal used by makers when verifying. */
+/* A bank-priced request (submitted without a rate) is priced by the maker
+   here: the customer's live all-in rate, or an FX deal (issued, or dealt by
+   phone with its rate). The checker cannot authorise until this is done. */
+function applyRateHTML(rec) {
+  if (!rec || !rec.rate || rec.rate.mode !== 'pending') return '';
+  const me = sme(rec.smeId), dir = rec.inwardId ? 'in' : 'out';
+  const live = liveRate(me, rec.currency, dir, null);
+  return `<div class="card" style="margin:14px 0 4px;border-color:var(--accent)"><div class="card-body">
+    <h3 style="font-size:var(--fs-sm);margin:0 0 6px">Apply the rate <span class="req">*</span></h3>
+    <p class="tick" style="margin:0 0 10px">${esc(me?.tradingName || '')} is bank-priced: it submitted without a rate. Applying it books the position and fills in the INR amounts the customer sees.</p>
+    <label class="chk"><input type="radio" name="vrate" value="live" checked><span>Customer’s live all-in rate<small>₹ ${Number(live).toFixed(4)} now · locked for ${Number((rec.rateOptions || {}).lockValidityHours || 48)} hours</small></span></label>
+    <label class="chk"><input type="radio" name="vrate" value="deal"><span>FX deal reference<small>An issued deal, or one dealt by phone (enter its rate)</small></span></label>
+    <div class="grid g2" style="gap:10px;margin-top:8px">
+      <div class="f"><label for="vrate-ref">Deal reference</label><input id="vrate-ref" placeholder="e.g. FXD-77521"></div>
+      <div class="f"><label for="vrate-rate">Rate (phone deals only)</label><input id="vrate-rate" type="number" step="0.0001" placeholder="₹ per ${esc(rec.currency)}"></div>
+    </div></div></div>`;
+}
+function readApplyRate(rec) {
+  if (!rec || !rec.rate || rec.rate.mode !== 'pending') return null;
+  const how = ($('input[name="vrate"]:checked') || {}).value || 'live';
+  if (how === 'live') return { mode: 'live' };
+  const ref = ($('#vrate-ref') || {}).value || '';
+  if (!ref.trim()) throw 'Enter the FX deal reference, or apply the live rate.';
+  const r = ($('#vrate-rate') || {}).value;
+  return { mode: 'deal', dealRef: ref.trim(), ...(r ? { customerRate: Number(r) } : {}) };
+}
+
 function verifyModal(title, items, cmd, id, intro, rec) {
-  modal({ title, okLabel:'Verify and send to checker', wide:true, body:`
-    ${intro || ''}${riskLine(rec)}
+  modal({ title, okLabel: rec && rec.rate && rec.rate.mode === 'pending' ? 'Apply rate, verify and send to checker' : 'Verify and send to checker', wide:true, body:`
+    ${intro || ''}${riskLine(rec)}${applyRateHTML(rec)}
     <div class="checks" style="gap:12px;margin-top:10px">${items.map(([k, l, sub]) => `
       <label class="chk"><input type="checkbox" data-vchk="${k}"><span>${esc(l)}<small>${esc(sub)}</small></span></label>`).join('')}</div>
     <button class="btn btn-link" type="button" data-act="vchk-all" style="margin-top:8px">Tick all</button>
@@ -379,8 +406,8 @@ function verifyModal(title, items, cmd, id, intro, rec) {
     onOk: () => {
       const checks = {}; $$('[data-vchk]').forEach(x => { checks[x.dataset.vchk] = x.checked; });
       if (Object.values(checks).some(v => !v)) { toast('Complete every check before verifying.', 'err'); return; }
-      let note; try { note = readNote(rec); } catch (m) { toast(m, 'err'); return; }
-      run(cmd, { id, checks, note }, { after: () => closeModal() });
+      let note, rate; try { note = readNote(rec); rate = readApplyRate(rec); } catch (m) { toast(m, 'err'); return; }
+      run(cmd, { id, checks, note, ...(rate ? { rate } : {}) }, { after: () => closeModal() });
     } });
 }
 
@@ -662,10 +689,15 @@ document.addEventListener('click', async e => {
       ['Pay', `<b>${money(q.amt, d.currency)}</b> to ${esc(d.beneficiary)}<br><small>${esc(d.beneficiaryBank)} · ${esc(d.swift)} · ${esc(d.beneficiaryAccount)}</small>`],
       ['Product / purpose', esc(productLabel(d.remittanceType)) + (d.lcNumber ? ' · LC ' + esc(d.lcNumber) : '') + '<br><small>' + esc(purposeLabel(d.purposeCode)) + '</small>'],
       ['Bills settled', d.allocations.length ? d.allocations.map(a => `${esc(a.billId)} — ${money(a.amount, d.currency)}`).join('<br>') : 'None'],
-      ['Rate', `₹ ${Number(q.rate).toFixed(4)} ${d.rate.mode === 'deal' ? '· deal ' + esc(d.rate.dealRef) : '· booked for ' + money(d.rate.bookedAmount || q.amt, d.currency)}`],
-      ['INR equivalent', inr(q.inrAmt)],
-      ...q.charges.map(c => [c.name, inr(c.amount)]),
-      ['Total debit', `<b>${inr(q.debit)}</b> from ${acc ? esc(acc.bank + ' ' + acc.accountNumber) : ''}`],
+      ...(bankPriced(me) ? [
+        ['Rate', 'Applied by AD2 when it verifies the request'],
+        ...q.charges.map(c => [c.name, c.amount == null ? `${c.pct}% — calculated with the rate` : inr(c.amount)]),
+        ['Debit account', acc ? esc(acc.bank + ' ' + acc.accountNumber) + ' — the INR amount and total debit are set when AD2 applies the rate' : '']
+      ] : [
+        ['Rate', `₹ ${Number(q.rate).toFixed(4)} ${d.rate.mode === 'deal' ? '· deal ' + esc(d.rate.dealRef) : '· booked for ' + money(d.rate.bookedAmount || q.amt, d.currency)}`],
+        ['INR equivalent', inr(q.inrAmt)],
+        ...q.charges.map(c => [c.name, inr(c.amount)]),
+        ['Total debit', `<b>${inr(q.debit)}</b> from ${acc ? esc(acc.bank + ' ' + acc.accountNumber) : ''}`]]),
       ['Execution date', dmy(d.executionDate)],
       ['Documents', Object.values(d.docs).map(f => esc(f.filename)).join(', ') || '—'],
       acting() ? ['Raised by', `${esc(S.name || S.role)} (${esc(S.role)}) on behalf of ${esc(me?.tradingName || '')}`] : null],
@@ -775,7 +807,7 @@ document.addEventListener('click', async e => {
     if (d.option === 'knockoff' && !d.allocations.length) errs.push('Apply the amount to at least one export bill, or choose “Credit as advance”.');
     if (d.option === 'knockoff' && applied > amt + 0.001) errs.push('Bills applied add up to more than the amount to dispose.');
     if (!d.creditAccountId) errs.push('Select an account to credit.');
-    if ((!acc || acc.currency === 'INR') && d.rate.mode === 'none') errs.push('Book a rate or enter an FX deal reference.');
+    if ((!acc || acc.currency === 'INR') && d.rate.mode === 'none' && !bankPriced(sme(i.smeId))) errs.push('Book a rate or enter an FX deal reference.');
     if ((!acc || acc.currency === 'INR') && d.rate.mode === 'rfq') errs.push('Confirm the dealer’s quote before submitting.');
     Engine.checklist(DB, 'TRADE', d.purposeCode, 0, { option:d.option }).filter(x => x.required && !d.docs[x.id]).forEach(x => errs.push('Upload: ' + x.name));
     if (!d.declarations.fema || !d.declarations.ofac) errs.push('Accept the FEMA and sanctions declarations.');
@@ -1179,7 +1211,21 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   }
   if (act === 'set-band-save') { run('settings.update', { marginBand: val('#set-band') }); return; }
   if (act === 'set-treasury-save') { run('settings.update', { cutoff: val('#set-cutoff'), maxOpenBookings: val('#set-maxbk'), agedDays: val('#set-aged'),
-    rfqThresholdUsd: val('#set-rfqthr'), rfqValidMin: val('#set-rfqvalid'), rfqAutoQuoteSec: val('#set-rfqauto') }); return; }
+    rfqAutoQuoteSec: val('#set-rfqauto') }); return; }
+  if (act === 'preset-save') {
+    const id = t.dataset.id, p = DB.ratePresets.find(x => x.id === id), mode = val(`#pr-${id}-mode`) || p.mode;
+    /* a changed mode starts from that mode's defaults; the options shown belong to the old one */
+    const options = mode !== p.mode ? undefined : Object.fromEntries(Object.keys(Engine.treasury.PRESET_OPTIONS[mode]).map(k => {
+      const el = $(`#pr-${id}-${k}`); return [k, el ? (el.type === 'checkbox' ? el.checked : el.value) : undefined]; }));
+    run('presets.update', { id, name: val(`#pr-${id}-name`), mode, ...(options ? { options } : {}) });
+    return;
+  }
+  if (act === 'preset-move') {
+    const from = val('#pm-from'), to = val('#pm-to');
+    if (from === to) { toast('Choose two different presets.', 'err'); return; }
+    run('sme.setPreset', { fromPreset: from, presetId: to }); return;
+  }
+  if (act === 'preset-default') { run('presets.update', { id: t.dataset.id, isDefault: true }); return; }
   if (act === 'user-add') {
     const ad2Roles = DB.roles.filter(r => r.portal === 'AD2').sort((a, b) => a.order - b.order);
     const domains = DB.smes.filter(x => x.status === 'Approved');
@@ -1415,6 +1461,8 @@ document.addEventListener('change', e => {
   }
   if (t.dataset.act === 'rv-perm')    { REVIEW.permission = t.value; return; }
   if (t.dataset.act === 'rv-eff')     { REVIEW.effectiveDate = t.value; return; }
+  if (t.dataset.act === 'rv-preset')  { REVIEW.ratePreset = t.value; render(); return; }
+  if (t.dataset.act === 'dir-preset') { run('sme.setPreset', { smeId: t.dataset.id, presetId: t.value }); return; }
   if (t.dataset.act === 'rv-remarks') { REVIEW.remarks = t.value; return; }
 
   if (t.dataset.act === 'ko-side')     { KO.side = t.value; KO.allocations = []; render(); return; }

@@ -88,6 +88,12 @@ function outwardQuote(d, me) {
   const amt = Number(d.amount) || 0;
   const rq = d.rate.mode === 'rfq' ? (DB.rfqs || []).find(x => x.id === d.rate.rfqId) : null;
   const rate = d.rate.mode === 'none' || (rq && !rq.rate) ? liveRate(me, d.currency, 'out', acting() && isAD2() ? d.marginOverride : null) : rq ? rq.rate : d.rate.customerRate;
+  /* bank-priced: fixed charges only; the rest is set when AD2 applies the rate */
+  if (bankPriced(me)) {
+    const charges = ((me.config || {}).charges || []).map(c => c.basis === 'Fixed'
+      ? { name: c.name, amount: c.byCurrency && c.byCurrency[d.currency] != null ? c.byCurrency[d.currency] : c.value } : { name: c.name, amount: null, pct: c.value });
+    return { amt, rate: null, charges, inrAmt: 0, debit: null, pending: true };
+  }
   const charges = me ? Engine.chargesFor(me, amt, rate, d.currency) : [];
   const inrAmt = d.currency ? amt * rate : 0;
   return { amt, rate, charges, inrAmt, debit: inrAmt + charges.reduce((t, c) => t + c.amount, 0) };
@@ -218,7 +224,7 @@ function viewOutwardNew() {
 
         ${billCard}
 
-        <div class="card"><div class="card-head"><h2>5 · Book the rate</h2></div><div class="card-body">
+        <div class="card"><div class="card-head"><h2>5 · ${bankPriced(me) ? "Rate" : "Book the rate"}</h2></div><div class="card-body">
           ${!d.currency ? `<div class="note note-info"><span>Choose the currency and amount to see the live rate and what it comes to in INR.</span></div>`
             : rateBoxHTML(d, d.currency, me, 'out', 'or', d.amount)}</div></div>
 
@@ -240,14 +246,17 @@ function viewOutwardNew() {
             <div class="line"><span>You pay</span><b>${d.currency && q.amt ? money(q.amt, d.currency) : '—'}</b></div>
             ${seesMargin() && d.currency ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${Number(currency(d.currency).refRate).toFixed(4)}</b></div>
               <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${d.rate.mode !== 'none' ? d.rate.margin : (acting() && d.marginOverride != null && d.marginOverride !== '' ? d.marginOverride : marginFor(me, d.currency))} paise</b></div>` : ''}
+            ${q.pending ? `<div class="line"><span>Rate</span><b>Applied by AD2</b></div>
+            ${q.charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${c.amount == null ? esc(c.pct + '% with the rate') : inr(c.amount)}</b></div>`).join('')}
+            <div class="line total"><span>INR and total debit</span><b>When AD2 applies the rate</b></div>` : `
             <div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'rfq' ? 'Indicative rate' : d.rate.mode === 'deal' ? 'Deal rate' : 'Booked rate'}</span><b>${d.currency ? '₹ ' + Number(q.rate).toFixed(4) : '—'}</b></div>
             <div class="line"><span>INR equivalent</span><b>${inr(q.inrAmt)}</b></div>
             ${q.charges.map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
-            <div class="line total"><span>Estimated debit</span><b>${inr(q.debit)}</b></div>
+            <div class="line total"><span>Estimated debit</span><b>${inr(q.debit)}</b></div>`}
             ${d.allocations.length ? `<div class="line"><span>Settles</span><b>${esc(d.allocations.map(a => a.billId).join(', '))}</b></div>` : ''}
           </div>
           <p style="font-size:var(--fs-xs);color:var(--muted);margin:12px 0 0">
-            ${d.rate.mode === 'none' ? (rfqNeeded(me, d.currency, d.amount) ? 'Indicative — request the rate from the dealer before submitting.' : 'Live rate — book it before submitting.') : d.rate.mode === 'rfq' ? 'Indicative until you confirm the dealer’s quote.' : d.rate.mode === 'booked' ? 'Booked rate, locked for 48 hours.' : 'Negotiated deal rate.'}</p>
+            ${q.pending ? 'Your bank applies the rate when it verifies the request; you then see the INR amount and total debit.' : d.rate.mode === 'none' ? (rfqNeeded(me, d.currency, d.amount) ? 'Indicative — request the rate from the dealer before submitting.' : 'Live rate — book it before submitting.') : d.rate.mode === 'rfq' ? 'Indicative until you confirm the dealer’s quote.' : d.rate.mode === 'booked' ? `Booked rate, locked for ${rateTermsOf(me).lockValidityHours || 48} hours.` : 'Negotiated deal rate.'}</p>
           <div class="note note-info" style="margin-top:14px"><span style="font-size:var(--fs-xs)">
             After you submit: an AD2 maker verifies the documents, a checker or operations authorises, and operations releases the payment over SWIFT.</span></div>
           <div style="display:grid;gap:8px;margin-top:18px">
@@ -269,7 +278,7 @@ function outwardMissing(d) {
   if (!(Number(d.amount) > 0)) m.push('Amount');
   if (!d.executionDate) m.push('Requested execution date');
   if (!d.debitAccountId) m.push('Remitter account');
-  if (d.rate.mode === 'none') m.push('Book the rate');
+  if (d.rate.mode === 'none' && !bankPriced(sme(d.smeId))) m.push('Book the rate');
   if (d.rate.mode === 'rfq') m.push('Confirm the dealer’s quote');
   if (!d.declarations || !d.declarations.fema || !d.declarations.ofac) m.push('FEMA and sanctions declarations');
   const prod = product(d.remittanceType);
@@ -390,19 +399,23 @@ function viewOutwardDetail(id) {
 
       <div class="grid" style="gap:20px;align-items:start">
         <div class="card"><div class="card-head"><h2>Rate and pricing</h2></div><div class="card-body">
-          <div class="note ${o.rate.mode === 'none' ? 'note-warn' : 'note-ok'}" style="margin-bottom:14px"><span>
-            ${o.rate.mode === 'booked' ? `Booked rate, locked 48 hours from ${dmyt(o.rate.bookedAt)}.`
+          <div class="note ${['none', 'pending'].includes(o.rate.mode) ? 'note-warn' : 'note-ok'}" style="margin-bottom:14px"><span>
+            ${o.rate.mode === 'booked' ? `Booked rate, locked from ${dmyt(o.rate.bookedAt)}.`
               : o.rate.mode === 'deal' ? `Negotiated deal <b>${esc(o.rate.dealRef)}</b>.`
+              : o.rate.mode === 'pending' ? (seesMargin() ? 'Bank-priced: the maker applies the rate when verifying.' : 'Your bank applies the rate when it verifies this request.')
               : 'No rate yet (draft).'}</span></div>
           <div class="calc">
             <div class="line"><span>Amount</span><b>${money(o.amount, o.currency)}</b></div>
             ${positionLine(o)}
             ${seesMargin() ? `<div class="line"><span>Reference rate <small>(AD2 only)</small></span><b>₹ ${(o.rate.refRate || 0).toFixed(4)}</b></div>
             <div class="line"><span>Margin <small>(AD2 only)</small></span><b>${o.rate.margin || 0} paise</b></div>` : ''}
+            ${o.rate.mode === 'pending' ? `<div class="line"><span>${seesMargin() ? 'Customer rate' : 'Your rate'}</span><b>Applied by AD2</b></div>
+            ${(o.charges || []).map(c => `<div class="line"><span>${esc(c.name)}</span><b>${c.amount == null ? esc(c.pct + '% with the rate') : inr(c.amount)}</b></div>`).join('')}
+            <div class="line total"><span>INR and debit</span><b>When the rate is applied</b></div>` : `
             <div class="line"><span>${seesMargin() ? 'Customer rate' : 'Your rate'}</span><b>₹ ${(o.rate.customerRate || 0).toFixed(4)}</b></div>
             <div class="line"><span>INR equivalent</span><b>${inr(inrAmt)}</b></div>
             ${(o.charges || []).map(c => `<div class="line"><span>${esc(c.name)}</span><b>${inr(c.amount)}</b></div>`).join('')}
-            <div class="line total"><span>${o.status === 'Completed' ? 'Debited' : 'Debit amount'}</span><b>${inr(debit)}</b></div>
+            <div class="line total"><span>${o.status === 'Completed' ? 'Debited' : 'Debit amount'}</span><b>${inr(debit)}</b></div>`}
           </div></div></div>
         ${riskPanel(o)}
         ${ad2 ? notesCard('outward', o) : ''}
