@@ -436,6 +436,9 @@ function viewApplicationReview(id) {
             </table></div>` : empty('No charges', 'Charges are optional. With none, the customer pays only the FX rate. Add one if you charge a fee.')}
           </div></div>
         <div class="card"><div class="card-head"><h2>Decision</h2></div><div class="card-body">
+          <div class="f" style="margin-bottom:14px"><label for="rv-preset">Rate preset — how the customer prices</label>
+            <select id="rv-preset" data-act="rv-preset" ${dis}>${(DB.ratePresets || []).map(p => `<option value="${p.id}" ${p.id === (r.ratePreset || (DB.ratePresets.find(x => x.isDefault) || {}).id) ? 'selected' : ''}>${esc(p.name)} — ${esc(Engine.treasury.RATE_MODES[p.mode])}${p.isDefault ? ' (default)' : ''}</option>`).join('')}</select>
+            <div class="hint">${esc(MODE_HELP[((DB.ratePresets || []).find(p => p.id === r.ratePreset) || (DB.ratePresets || []).find(p => p.isDefault) || {}).mode] || '')}</div></div>
           <div class="f"><label for="rv-eff">Effective date<span class="req">*</span></label>
             <input id="rv-eff" type="date" data-act="rv-eff" value="${esc(r.effectiveDate)}" ${dis}></div>
           <div class="f" style="margin-top:14px"><label for="rv-rem">Internal remarks</label>
@@ -451,18 +454,28 @@ function viewApplicationReview(id) {
 function viewDirectory() {
   const list = DB.smes.filter(s => s.status === 'Approved');
   const openApp = navAllows('#/ad2/applications');
+  const presets = DB.ratePresets || [], setP = can('onboard.review');
+  const presetOf = s => presets.find(p => p.id === (s.config || {}).ratePreset) || presets.find(p => p.isDefault) || {};
   return shell(crumb('SME Directory'), `
     <div class="page-head"><div><h1>SME Directory</h1>
       <p>Approved SMEs with their live permissions and pricing. <b>Transact on behalf</b> opens that SME's portal as an assisted journey.</p></div></div>
+    ${setP && presets.length ? `<div class="card" style="margin-bottom:18px"><div class="card-body"><div class="row" style="gap:10px;align-items:end;flex-wrap:wrap">
+      <div class="f"><label for="pm-from">Move every SME on</label><select id="pm-from">${presets.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="f"><label for="pm-to">to</label><select id="pm-to">${presets.map((p, i) => `<option value="${p.id}" ${i === 1 ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+      <button class="btn btn-plain" type="button" data-act="preset-move">Move</button>
+      <span class="tick">New requests use the new preset; submitted requests, open locks, quotes and deals keep their terms.</span></div></div></div>` : ''}
     <div class="card"><div class="card-body tight"><div class="tablewrap"><table class="dt">
       <thead><tr><th>SME</th><th>Constitution</th><th>IEC</th><th>Permission</th><th>Currencies</th>
-        <th class="num">USD margin</th><th>Effective</th><th></th></tr></thead>
+        <th class="num">USD margin</th><th>Rate preset</th><th>Effective</th><th></th></tr></thead>
       <tbody>${list.map(s => `
         <tr><td class="id" ${openApp ? `data-act="go" data-href="#/ad2/applications/${s.id}"` : ''}>${esc(s.tradingName || s.legalName)}
             <br><span style="color:var(--muted);font-size:var(--fs-xs)">${esc(s.id)} · ${esc(s.domainId)}</span></td>
           <td>${esc(s.constitution)}</td><td>${esc(s.iec || '—')}</td>
           <td>${esc(s.config.permission)}</td><td>${s.config.currencies.join(' · ')}</td>
-          <td class="num">${s.config.margins.USD ?? '—'}</td><td>${dmy(s.config.effectiveDate)}</td>
+          <td class="num">${s.config.margins.USD ?? '—'}</td>
+          <td>${setP ? `<select data-act="dir-preset" data-id="${s.id}" aria-label="Rate preset for ${esc(s.tradingName)}">${presets.map(p => `<option value="${p.id}" ${p.id === presetOf(s).id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`
+            : `${esc(presetOf(s).name || '—')}`}<br><small style="color:var(--muted)">${esc(Engine.treasury.RATE_MODES[presetOf(s).mode] || '')}</small></td>
+          <td>${dmy(s.config.effectiveDate)}</td>
           <td style="white-space:nowrap">
             ${can('assist.transact') ? `<button class="btn btn-ghost btn-sm" type="button" data-act="assist-start" data-id="${s.id}">Transact on behalf</button>` : ''}
             ${openApp ? `<button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/applications/${s.id}">Open</button>` : ''}</td></tr>`).join('')}</tbody>
@@ -526,11 +539,12 @@ function viewProfile() {
         <div class="kv" style="margin-bottom:20px">
           <div><div class="k">Service permission</div><div class="v">${esc(c.permission)}</div></div>
           <div><div class="k">Enabled currencies</div><div class="v">${c.currencies.join(' · ')}</div></div>
+          ${!isAD2() && c.rateTerms ? `<div class="span2"><div class="k">How your rates work</div><div class="v">${esc(c.rateTerms.modeName)} — ${esc(c.rateTerms.howTo)}</div></div>` : ''}
         </div>
         <div class="tablewrap"><table class="dt">
           <thead><tr><th>Currency</th>${seesMargin() ? '<th class="num">Margin (paise) <small>AD2 only</small></th><th class="num">Reference rate</th>' : ''}
             <th class="num">Your rate to pay (outward)</th><th class="num">Your rate to receive (inward)</th></tr></thead>
-          <tbody>${c.currencies.map(code => `<tr><td><b>${esc(code)}</b></td>
+          <tbody>${bankPriced(me) ? `<tr><td colspan="3" style="color:var(--muted)">Your bank applies the rate to each request when it verifies it, so no standing rate is shown.</td></tr>` : c.currencies.map(code => `<tr><td><b>${esc(code)}</b></td>
               ${seesMargin() ? `<td class="num">${marginFor(me, code)}</td><td class="num">₹ ${currency(code).refRate.toFixed(4)}</td>` : ''}
               <td class="num">₹ ${liveRate(me, code, 'out').toFixed(4)}</td><td class="num">₹ ${liveRate(me, code, 'in').toFixed(4)}</td></tr>`).join('')}</tbody></table></div>
         <p style="font-size:var(--fs-xs);color:var(--muted);margin:10px 0 0">Indicative live rates. The rate you book on a transaction is locked for 48 hours.</p>

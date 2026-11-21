@@ -79,7 +79,7 @@ async function commit(w, cmd, payload) {
 
 const json = (status, body, extra) => ({ status, body, headers: extra || {} });
 const errorOut = e => {
-  if (e instanceof Engine.EngineError) return json(e.status, { error: e.message, code: e.code, details: e.details || [] });
+  if (e instanceof Engine.EngineError) return json(e.status, { error: e.message, code: e.code, details: e.details || [], ...(e.info ? { info: e.info } : {}) });
   console.error(e);
   const msg = String(e && e.message || e).slice(0, 200);
   return json(500, { error: 'The server could not complete this (' + msg + '). Try again, or check the store connection (Supabase or Vercel Blob).', code: 'server' });

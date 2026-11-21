@@ -250,7 +250,7 @@ function viewDispose(inwardId) {
             <div class="err">Select an account to credit.</div></div>
         </div></div>
 
-        ${inrCredit ? `<div class="card"><div class="card-head"><h2>4 · Book the rate</h2></div><div class="card-body">${rateBoxHTML(d, i.currency, me, 'in', 'di', amt)}</div></div>`
+        ${inrCredit ? `<div class="card"><div class="card-head"><h2>4 · ${bankPriced(me) ? "Rate" : "Book the rate"}</h2></div><div class="card-body">${rateBoxHTML(d, i.currency, me, 'in', 'di', amt)}</div></div>`
           : `<div class="card"><div class="card-head"><h2>4 · Rate</h2></div><div class="card-body"><div class="note note-ok"><span>No conversion — ${money(amt, i.currency)} is credited to the EEFC account.</span></div></div></div>`}
 
         <div class="card"><div class="card-head"><h2>5 · Documents</h2>
@@ -270,7 +270,9 @@ function viewDispose(inwardId) {
           <div class="line"><span>This instruction</span><b>${money(amt, i.currency)}</b></div>
           <div class="line"><span>Applied to bills</span><b>${money(allocated, i.currency)}</b></div>
           <div class="line"><span>Pending knock-off (advance)</span><b>${money(amt - allocated, i.currency)}</b></div>
-          ${inrCredit ? `<div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'rfq' ? 'Indicative rate' : 'Booked rate'}</span><b>₹ ${Number(rate).toFixed(4)}</b></div>
+          ${inrCredit && bankPriced(me) ? `<div class="line"><span>Rate</span><b>Applied by AD2</b></div>
+            <div class="line total"><span>INR to your account</span><b>Calculated when AD2 applies the rate</b></div>`
+            : inrCredit ? `<div class="line"><span>${d.rate.mode === 'none' ? 'Live rate' : d.rate.mode === 'rfq' ? 'Indicative rate' : 'Booked rate'}</span><b>₹ ${Number(rate).toFixed(4)}</b></div>
             <div class="line total"><span>INR to your account</span><b>${inr(amt * rate)}</b></div>`
             : `<div class="line total"><span>Credit to EEFC</span><b>${money(amt, i.currency)}</b></div>`}
           <div class="line"><span>Left on the receipt</span><b>${money(i.available - amt, i.currency)}</b></div>
@@ -326,7 +328,7 @@ function viewDisposalDetail(id) {
     actions.push(`<button class="btn btn-primary" type="button" data-act="ko-from-firc" data-id="${d.id}">Knock off ${money(d.unallocated, d.currency)}</button>`);
   const respond = d.status === 'Clarification Required' && d.query && (asSme() || (ad2 && can('txn.resolveQuery')));
   if (respond && (!RESP || RESP.id !== d.id)) RESP = { id:d.id, text:'', docs:{} };
-  const credited = fcy ? money(d.amount, d.currency) : inr(d.creditInr || d.amount * d.rate.customerRate);
+  const credited = fcy ? money(d.amount, d.currency) : d.rate.mode === 'pending' ? 'INR at the rate AD2 applies' : inr(d.creditInr || d.amount * d.rate.customerRate);
   const kos = DB.allocations.filter(l => l.remKind === 'disposal' && l.remId === d.id);
 
   return shell(crumb('Inward Remittance', d.id), `
@@ -368,7 +370,7 @@ function viewDisposalDetail(id) {
             <div class="line"><span>Applied to bills</span><b>${money(d.allocatedTotal ?? d.allocations.reduce((t, x) => t + x.amount, 0), d.currency)}</b></div>
             <div class="line"><span>Pending knock-off</span><b>${money(d.unallocated || 0, d.currency)}</b></div>
             ${fcy ? '' : `${positionLine(d)}${seesMargin() && d.rate.refRate ? `<div class="line"><span>Reference / margin <small>(AD2 only)</small></span><b>₹ ${Number(d.rate.refRate).toFixed(4)} · ${d.rate.margin}p</b></div>` : ''}
-              <div class="line"><span>Rate</span><b>₹ ${(d.rate.customerRate || 0).toFixed(4)}${d.rate.dealRef ? ' · ' + esc(d.rate.dealRef) : ''}</b></div>`}
+              <div class="line"><span>Rate</span><b>${d.rate.mode === 'pending' ? 'INR credit is calculated when AD2 applies the rate' : '₹ ' + (d.rate.customerRate || 0).toFixed(4) + (d.rate.dealRef ? ' · ' + esc(d.rate.dealRef) : '')}</b></div>`}
             <div class="line total"><span>${d.status === 'Processed' ? 'Credited' : 'To credit'}</span><b>${credited}</b></div>
           </div>
           <div class="kv" style="margin-top:14px"><div class="span2"><div class="k">Credit account</div>

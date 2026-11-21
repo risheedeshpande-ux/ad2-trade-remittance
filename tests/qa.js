@@ -85,6 +85,8 @@ async function startServer() {
   const dlgOk = async () => { await click('dialog[open] [data-dlg-ok]'); await wait(400); };
   const tmpCount = (sel) => page.locator(sel).count();
   const api = (c, p) => page.evaluate(([c, p]) => send(c, p).then(r => ({ ok: true, r })).catch(e => ({ ok: false, status: e.status, msg: e.message })), [c, p]);
+  /* the existing journeys book directly: every SME on the live-lock preset; the rate-mode journeys set their own */
+  const allLive = async () => { for (const from of ['RP-2', 'RP-3']) await api('sme.setPreset', { fromPreset: from, presetId: 'RP-1' }); };
   const state = (fn, arg) => page.evaluate(fn, arg);
   const toastSays = re => page.waitForFunction(r => [...document.querySelectorAll('.toast')].some(t => new RegExp(r, 'i').test(t.textContent)), re.source, { timeout: 10000 });
   const hashId = async () => (await page.evaluate(() => location.hash)).split('?')[0].split('/').pop();
@@ -125,7 +127,7 @@ async function startServer() {
       await click('[data-act="or-deal-ref"]');
       if (await page.locator('select#dref').count()) await page.selectOption('#dref', o.deal); else await page.fill('#dref', o.deal);
       await modalOk();
-    } else await click('[data-act="or-book-rate"]');
+    } else if (!o.noRate) await click('[data-act="or-book-rate"]');
     await samples('or'); await declare('or');
     if (o.shot) await shot(o.shot, true);
     await click('[data-act="or-submit"]');
@@ -227,7 +229,7 @@ async function startServer() {
     if (process.env.BASE) { await click('.sim-bar [data-act="reset-demo"]'); await modalOk(); await page.waitForSelector('.login-panel'); }
     await shot('login', true);
     /* the existing journeys book directly; the rate-request journey turns requests back on */
-    await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 1000000000 });
+    await signAs('AD2', 'MAKER'); await allLive();
 
     /* ================= roles and access ================= */
     await scenario('Roles', 'Each role has its own menu of the work it does, and every screen renders', 'All', async () => {
@@ -732,7 +734,7 @@ async function startServer() {
       check(r2.ok && r2.r.quote.rate > 0, 'once published, the branch quotes JPY forex cards');
     });
     await scenario('Treasury', 'Rate request: the customer asks, the dealer quotes, the customer confirms; a rejection turns red with Resubmit', 'Admin → SME → Dealer → SME', async () => {
-      await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 0 });
+      await signAs('AD2', 'MAKER'); await api('sme.setPreset', { smeId: 'SME-1001', presetId: 'RP-3' });
       await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
       await select('#or-currency', 'EUR'); await setVal('#or-amount', 20000);
       check(/Request rate/.test(await text('[data-act="or-book-rate"]')), 'the customer requests the rate instead of locking it');
@@ -761,7 +763,38 @@ async function startServer() {
       await page.evaluate(id => { Object.assign(OR_DRAFT, { currency: 'USD', amount: '5000' }); OR_DRAFT.rate = { ...OR_DRAFT.rate, mode: 'rfq', rfqId: id, bookedAmount: 5000 }; render(); }, rq2);
       check(await tmpCount('.ratebox.rfq-rejected') === 1 && /Resubmit/.test(await text('.ratebox')), 'a rejection turns the rate box red, with Resubmit');
       await shot('rfq-rejected', true);
-      await signAs('AD2', 'ADMIN'); await api('settings.update', { rfqThresholdUsd: 1000000000 });
+      await signAs('AD2', 'MAKER'); await allLive();
+    });
+    await scenario('Rate modes', 'Bank applies the rate: the customer submits with no rate and sees no INR; the maker applies the live rate; the customer then sees the final debit', 'Maker → SME → Maker → SME', async () => {
+      await signAs('AD2', 'MAKER'); await go('#/ad2/directory');
+      check(await tmpCount('[data-act="dir-preset"]') >= 3, 'the SME directory shows each SME’s rate preset, changeable by the maker');
+      await page.selectOption('[data-act="dir-preset"][data-id="SME-1001"]', 'RP-2'); await toastSays(/moved to Bank-priced/);
+      await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/new');
+      await select('#or-currency', 'USD'); await setVal('#or-amount', 1000);
+      check(/Your bank applies the rate/.test(await text('.ratebox')) && await tmpCount('[data-act="or-book-rate"]') === 0, 'the rate box says the bank applies the rate, with nothing to book');
+      check(/How your rates work/.test(await text('.ratebox')), 'the customer is told how its rates work');
+      check(await state(() => Object.keys(DB.smes[0].config.customerRates || {}).length) === 0, 'no live rate is sent to a bank-priced customer');
+      const id = await newOutward({ bene: 'BEN-003', product: 'AIR', purpose: 'S0101', currency: 'USD', amount: 1000, noRate: true, shot: 'bank-priced' });
+      await go('#/sme/outward/' + id);
+      check(/When the rate is applied/.test(await text('.calc .total')), 'the request shows the FX amount and charges, not the INR or total debit');
+      await signAs('AD2', 'MAKER'); await go('#/ad2/outward/' + id);
+      await click('[data-act="or-verify"]');
+      check(await tmpCount('.modal input[name="vrate"]') === 2, 'the maker is asked to apply the rate: the live rate or an FX deal');
+      await click('[data-act="vchk-all"]'); await modalOk(); await toastSays(/verified/);
+      check(await state(i => outwardRec(i).rate.mode, id) === 'booked' && await state(i => outwardRec(i).debitInr > 0, id), 'applying the rate books it and fills in the debit');
+      await signAs('MERIDIANTEX', 'SMEUSER'); await go('#/sme/outward/' + id);
+      check(/₹/.test(await text('.calc .total')), 'the customer now sees the final debit');
+      await signAs('AD2', 'MAKER'); await allLive();
+    });
+    await scenario('Rate modes', 'The Administrator edits the three presets, each showing the text its customers see', 'Admin', async () => {
+      await signAs('AD2', 'ADMIN'); await go('#/ad2/admin/rates');
+      check(await tmpCount('[data-act="preset-save"]') === 3, 'three presets, each editable');
+      check(/The customer sees:.*Bank applies the rate/.test(await page.locator('.card:has-text("Bank-priced")').first().textContent()), 'each preset previews the customer-facing text');
+      await page.fill('#pr-RP-1-lockValidityHours', '100'); await click('[data-act="preset-save"][data-id="RP-1"]');
+      await toastSays(/between 1 and 72 hours/);
+      await page.fill('#pr-RP-1-lockValidityHours', '24'); await click('[data-act="preset-save"][data-id="RP-1"]'); await toastSays(/saved/);
+      check(await state(() => DB.ratePresets.find(p => p.id === 'RP-1').options.lockValidityHours) === 24, 'the new lock validity is saved');
+      await page.fill('#pr-RP-1-lockValidityHours', '48'); await click('[data-act="preset-save"][data-id="RP-1"]'); await toastSays(/saved/);
     });
     await scenario('Treasury', 'Branch counter: quote, stepped review, book; the FX Plus bill links back on punch; knock off the rest; concluded and stock moves', 'Branch (Delhi CP)', async () => {
       await signAs('AD2', 'BRANCH2'); await go('#/B-02');

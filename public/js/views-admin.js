@@ -10,6 +10,7 @@ const ADMIN_PAGES = {
   docs:       ['Document policy', 'The documents each product asks for, and when each one is required.'],
   compliance: ['Compliance rules', 'How outward requests and disposal instructions are scored when they are submitted.'],
   masters:    ['Currencies and checklists', 'Reference rates, margin multipliers, onboarding documents and charge categories.'],
+  rates:      ['Rate options', 'How customers price: three presets, each a rate mode with its options. The AD2 maker picks one per SME.'],
   settings:   ['Platform settings', 'Switches that change how the workflow behaves for everyone.'],
   users:      ['Users', 'Who can sign in, with which role. Changes take effect on the user’s next action.'],
   roles:      ['Roles and permissions', 'What each role can do. Enforced by the API on every action.'],
@@ -20,7 +21,7 @@ function viewAdmin(tab) {
   tab = ADMIN_PAGES[tab] ? tab : 'purpose';
   const [title, sub] = ADMIN_PAGES[tab];
   const body = { purpose: adminPurpose, docs: adminDocs, compliance: adminCompliance, masters: adminMasters,
-                 settings: adminSettings, users: adminUsers, roles: () => `<div class="card">${rolesPane()}</div>`, audit: adminAudit }[tab]();
+                 rates: adminRates, settings: adminSettings, users: adminUsers, roles: () => `<div class="card">${rolesPane()}</div>`, audit: adminAudit }[tab]();
   const ro = !can('admin.masters') && ['purpose','docs','compliance'].includes(tab);
   return shell(crumb('Administration', title), `
     <div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>
@@ -160,14 +161,61 @@ function adminSettings() {
       <div class="f"><label for="set-aged">Aged after (days)</label><input id="set-aged" type="number" min="1" max="30" value="${st.agedDays ?? 3}" ${ed}></div>
     </div>
     <div class="grid g4 fields" style="margin-top:14px;align-items:end">
-      <div class="f"><label for="set-rfqthr">Rate requests from (USD)</label><input id="set-rfqthr" type="number" min="0" step="1000" value="${st.rfqThresholdUsd ?? 0}" ${ed}>
-        <div class="hint">Customer bookings at or above this go to the dealer as a rate request. 0 = every booking.</div></div>
-      <div class="f"><label for="set-rfqvalid">Quote valid for (minutes)</label><input id="set-rfqvalid" type="number" min="1" max="240" value="${st.rfqValidMin ?? 15}" ${ed}></div>
+      <div class="f"><label>Rate requests and quote validity</label><div class="hint">Set per customer group under <a href="#/ad2/admin/rates">Rate options</a>.</div></div>
       <div class="f"><label for="set-rfqauto">Auto-quote after (seconds)</label><input id="set-rfqauto" type="number" min="0" max="3600" value="${st.rfqAutoQuoteSec ?? 0}" ${ed}>
         <div class="hint">For demos with nobody at the desk: quote at the customer's margin. 0 = off.</div></div>
     </div>
     ${ed ? '' : `<div style="margin-top:12px"><button class="btn btn-ghost" type="button" data-act="set-treasury-save">Save treasury settings</button></div>`}
     </div></div>`;
+}
+
+/* ---------- rate presets ----------------------------------------------------
+   Three slots, edited never deleted. A preset's mode cannot change while SMEs
+   use it; names and options can, and apply to new requests only. */
+const MODE_HELP = {
+  live: 'The customer sees its all-in rate and locks it itself. Optionally, amounts from a USD size go to the dealer instead.',
+  bank: 'The customer submits without a rate and sees the FX amount and charges only. The AD2 maker applies the rate when verifying.',
+  negotiated: 'The customer applies a deal the treasury desk assigned it, or asks the dealer for a quote and confirms it.',
+};
+const OPTION_FIELDS = {
+  lockValidityHours: ['Lock validity', 'hours', 'number', 1, 72],
+  adMayUpdate:       ['AD2 may change the rate on a request', '', 'bool'],
+  rfqFromUsd:        ['Rate requests from', 'USD, 0 = off', 'number', 0, 1e9],
+  allowDeals:        ['Assigned deals', '', 'bool'],
+  allowRfq:          ['Rate requests', '', 'bool'],
+  quoteValidMin:     ['Quote validity', 'minutes', 'number', 1, 60],
+};
+function adminRates() {
+  const edit = can('admin.settings'), T = Engine.treasury;
+  const on = id => DB.smes.filter(s => s.status === 'Approved' && ((s.config || {}).ratePreset || (DB.ratePresets.find(p => p.isDefault) || {}).id) === id);
+  const field = (p, k) => {
+    const [label, unit, type, lo, hi] = OPTION_FIELDS[k], v = (p.options || {})[k], id = `pr-${p.id}-${k}`;
+    return type === 'bool'
+      ? `<label class="chk"><input type="checkbox" id="${id}" ${v ? 'checked' : ''} ${edit ? '' : 'disabled'}><span>${esc(label)}</span></label>`
+      : `<div class="f"><label for="${id}">${esc(label)} <small>(${esc(unit)})</small></label>
+          <input id="${id}" type="number" min="${lo}" max="${hi}" step="${k === 'rfqFromUsd' ? 1000 : 1}" value="${esc(v ?? T.PRESET_OPTIONS[p.mode][k][0])}" ${edit ? '' : 'disabled'}>
+          <div class="hint">${lo}–${hi === 1e9 ? 'any' : hi} ${esc(unit.split(',')[0])}</div></div>`;
+  };
+  return `<div class="note note-info" style="margin-bottom:18px"><span>Every change is in the audit log with its before and after values.
+      Submitted requests, open locks, quotes and deals keep the terms they were made under.</span></div>
+    <div class="grid g3" style="gap:18px;align-items:start">${DB.ratePresets.map(p => {
+      const users = on(p.id);
+      const terms = { mode: p.mode, options: { ...p.options }, presetName: p.name };
+      return `<div class="card"><div class="card-head"><h2>${esc(p.name)}</h2>
+        <div class="acts">${p.isDefault ? '<span class="badge b-teal">Default for new SMEs</span>' : ''}</div></div><div class="card-body">
+        <div class="f"><label for="pr-${p.id}-name">Name</label><input id="pr-${p.id}-name" value="${esc(p.name)}" maxlength="40" ${edit ? '' : 'disabled'}></div>
+        <div class="f"><label for="pr-${p.id}-mode">Rate mode</label>
+          <select id="pr-${p.id}-mode" ${edit && !users.length ? '' : 'disabled'}>${Object.entries(T.RATE_MODES).map(([k, v]) => `<option value="${k}" ${k === p.mode ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+          <div class="hint">${esc(MODE_HELP[p.mode])}${users.length ? ` The mode is fixed while ${plural(users.length, 'SME')} use it.` : ''}</div></div>
+        <div class="grid g2 fields" style="gap:10px">${Object.keys(T.PRESET_OPTIONS[p.mode]).filter(k => OPTION_FIELDS[k][2] !== 'bool').map(k => field(p, k)).join('')}</div>
+        <div class="checks" style="margin-top:8px">${Object.keys(T.PRESET_OPTIONS[p.mode]).filter(k => OPTION_FIELDS[k][2] === 'bool').map(k => field(p, k)).join('')}</div>
+        <div class="note note-ok" style="margin-top:12px"><span><b>The customer sees:</b> “How your rates work: ${esc(T.RATE_MODES[p.mode])} — ${esc(T.howTo(terms))}”
+          ${p.mode === 'bank' ? '<br>Hidden until AD2 applies the rate: the rate, the INR equivalent, percentage charges and the total debit.' : ''}</span></div>
+        <p class="tick" style="margin:10px 0 0">Used by ${users.length ? esc(users.map(s => s.tradingName).join(', ')) : 'no approved SME'}.</p>
+        ${edit ? `<div class="row" style="gap:8px;margin-top:12px">
+          <button class="btn btn-primary btn-sm" type="button" data-act="preset-save" data-id="${p.id}">Save</button>
+          ${p.isDefault ? '' : `<button class="btn btn-plain btn-sm" type="button" data-act="preset-default" data-id="${p.id}">Make default</button>`}</div>` : ''}
+      </div></div>`; }).join('')}</div>`;
 }
 
 function adminUsers() {

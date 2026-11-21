@@ -38,7 +38,7 @@
 
   return function install(E) {
     const H = E.hooks = E.hooks || {};
-    const { C, fail, need, missing, txt, amount, date, oneOf, bool, round2, addHours, find, smeOf, currencyOf, marginFor,
+    const { C, fail, need, missing, refuse, txt, amount, date, oneOf, bool, round2, addHours, find, smeOf, currencyOf, marginFor,
             customerRate, can, requireCap, isAD2, actorKey, actorLabel, distinct, audit, notify, seq, fmt, ownSme,
             requireApproved } = E;
 
@@ -147,7 +147,66 @@
        books it as an ordinary 48-hour position. Branch staff acting for a
        customer, and amounts under the threshold, still book directly. */
     const usdOf = (db, cur, amt) => round2(amt * ((currencyOf(db, cur) || {}).refRate || 0) / ((currencyOf(db, 'USD') || {}).refRate || 1));
-    const rfqApplies = (db, a, cur, amt) => !!a && !isAD2(a) && !a.lab && usdOf(db, cur, amt) >= Number((db.settings || {}).rfqThresholdUsd ?? 0);
+    /* For a limit or a gate, a missing reference rate must refuse, never pass
+       as zero: an amount that cannot be converted is not "under the limit". */
+    function usdOfStrict(db, cur, amt) {
+      const r = Number((currencyOf(db, cur) || {}).refRate), u = Number((currencyOf(db, 'USD') || {}).refRate);
+      if (!(r > 0) || !(u > 0)) refuse('ref_rate_missing', `No reference rate is published for ${!(r > 0) ? cur : 'USD'}, so this amount cannot be converted to USD. Publish the rate on the rate desk, then try again.`,
+        { currency: !(r > 0) ? cur : 'USD' });
+      return round2(amt * r / u);
+    }
+
+    /* ---------- rate modes ------------------------------------------------------
+       Each SME prices one of three ways, set by the preset the AD2 maker picks:
+         live        — the customer locks its live all-in rate itself
+         bank        — the customer submits without a rate; AD2's maker applies it
+         negotiated  — the customer applies a deal the desk assigned it, or asks
+                       the dealer for a quote
+       Branch staff acting for a customer and the test-data lab book directly
+       whatever the mode. A submitted request keeps the mode and options it was
+       submitted under (rec.rateMode, rec.rateOptions). */
+    const RATE_MODES = { live: 'Live lock', bank: 'Bank applies the rate', negotiated: 'Assigned or requested' };
+    const MAX_PRESETS = 3;
+    const PRESET_OPTIONS = {   /* the only options each mode takes: [default, min, max] */
+      live: { lockValidityHours: [LOCK_HOURS, 1, 72], adMayUpdate: [true], rfqFromUsd: [0, 0, 1e9] },
+      bank: { lockValidityHours: [LOCK_HOURS, 1, 72] },
+      negotiated: { lockValidityHours: [LOCK_HOURS, 1, 72], allowDeals: [true], allowRfq: [true], quoteValidMin: [15, 1, 60] },
+    };
+    const defaultsFor = mode => Object.fromEntries(Object.entries(PRESET_OPTIONS[mode]).map(([k, v]) => [k, v[0]]));
+    const presetOf = (db, s) => {
+      const list = db.ratePresets || [];
+      return list.find(p => p.id === ((s && s.config) || {}).ratePreset) || list.find(p => p.isDefault) || list[0] || null;
+    };
+    /* mode + options for an SME; data from before presets existed prices live */
+    function rateTerms(db, s) {
+      const p = presetOf(db, s);
+      const mode = p && RATE_MODES[p.mode] ? p.mode : 'live';
+      return { mode, presetId: p ? p.id : null, presetName: p ? p.name : RATE_MODES.live, options: { ...defaultsFor(mode), ...((p && p.options) || {}) } };
+    }
+    /* the terms a submitted request keeps, whatever its SME's preset becomes */
+    const recTerms = (db, rec) => rec && rec.rateMode
+      ? { mode: rec.rateMode, options: { ...defaultsFor(rec.rateMode), ...(rec.rateOptions || {}) } }
+      : rateTerms(db, rec && smeOf(db, rec.smeId));
+    const lockHoursOf = terms => Number((terms && terms.options && terms.options.lockValidityHours) || LOCK_HOURS);
+    const exempt = a => !a || isAD2(a) || !!a.lab;
+    /* what a customer may do to price an amount, by its SME's mode */
+    function pricing(db, a, s, cur, amt) {
+      const t = rateTerms(db, s);
+      if (exempt(a)) return { ...t, book: true, request: false, deal: true, pending: t.mode === 'bank' };
+      const o = t.options;
+      if (t.mode === 'live') {
+        const gated = Number(o.rfqFromUsd) > 0 && cur && amt != null && usdOfStrict(db, cur, amt) >= Number(o.rfqFromUsd);
+        return { ...t, book: !gated, request: !!gated, deal: true, pending: false, gated: !!gated };
+      }
+      if (t.mode === 'bank') return { ...t, book: false, request: false, deal: false, pending: true };
+      return { ...t, book: false, request: !!o.allowRfq, deal: !!o.allowDeals, pending: false };
+    }
+    const howTo = t => t.mode === 'bank' ? 'Submit the request without a rate; AD2 applies the rate when it verifies it.'
+      : t.mode === 'negotiated' ? [t.options.allowDeals && 'apply a rate your bank assigned you', t.options.allowRfq && 'request a rate from the treasury dealer'].filter(Boolean).join(', or ').replace(/^./, c => c.toUpperCase()) + '.'
+      : t.gated ? `Amounts of USD ${Number(t.options.rfqFromUsd).toLocaleString('en-IN')} or more are quoted by the treasury dealer: request the rate.`
+      : 'Lock the live rate.';
+    const modeForbids = (t, what) => refuse('mode_forbids', `${t.presetName} (${RATE_MODES[t.mode]}): ${what} is not available. ${howTo(t)}`,
+      { mode: t.mode, preset: t.presetId, allowed: howTo(t) });
     function rfqStatus(r, now) {
       if (r && r.status === 'Quoted' && now && String(now) >= String(r.validUntil)) return 'Expired';
       return r ? r.status : '—';
@@ -193,7 +252,9 @@
       const cur = oneOf(v.currency, db.currencies.map(c => c.code), 'Currency');
       const amt = amount(v.amount, 'Amount');
       if (!(a.actingFor && isAD2(a))) need(((s.config || {}).currencies || []).includes(cur), `${cur} is not enabled for ${s.tradingName}.`);
-      if (!v.price) need(!rfqApplies(db, a, cur, amt), 'Rates are quoted by the treasury dealer. Request the rate and confirm the quote.');
+      const terms = pricing(db, a, s, cur, amt);
+      if (!v.price && !terms.book) modeForbids(terms, 'locking the live rate');
+      const hours = v.lockHours || lockHoursOf(terms);
       const pr = v.price || priceFor(db, s, cur, dir, v.margin, a, now);
       /* A new booking for the same draft replaces the old one. */
       if (v.replaces) {
@@ -207,8 +268,9 @@
           'Submit a request against one, or release one, before booking another.');
       }
       const p = newPosition(db, a, s, { currency: cur, side: sideOf(dir), amount: amt, ...pr, source: 'Booked',
-        expiresAt: addHours(now, LOCK_HOURS) }, now);
-      audit(db, a, now, p.id, `Rate booked for ${s.tradingName} — ${fmt(amt, cur)} ${dirWord(p.side)} at ${p.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours`);
+        expiresAt: addHours(now, hours) }, now);
+      p.lockHours = hours;
+      audit(db, a, now, p.id, `Rate booked for ${s.tradingName} — ${fmt(amt, cur)} ${dirWord(p.side)} at ${p.customerRate.toFixed(4)}, locked for ${hours} hours`);
       if (pr.margin !== marginFor(db, s, cur)) audit(db, a, now, p.id, `Margin set to ${pr.margin} paise within the branch band`, true);
       const breach = holdIfOverLimit(db, a, p, now);
       if (breach) {
@@ -225,7 +287,14 @@
     function resolveRate(db, a, s, cur, dir, amt, req, now) {
       req = req || {};
       const side = sideOf(dir);
+      if (req.mode === 'pending' || req.mode === 'none' || req.mode == null) {
+        const t = pricing(db, a, s, cur, amt);
+        /* only a bank-priced customer submits without a rate */
+        if (t.mode !== 'bank' || isAD2(a) && !a.actingFor) fail('Book a rate or enter an FX deal reference.');
+        return { position: null, rate: { mode: 'pending', positionId: null, refRate: null, margin: null, customerRate: null, bookedAt: null, expiresAt: null, dealRef: null } };
+      }
       if (req.mode === 'deal') {
+        if (!isAD2(a)) { const t = pricing(db, a, s, cur, amt); if (!t.deal) modeForbids(t, 'applying an FX deal'); }
         /* the customer may quote a deal the desk issued it; only AD2 enters a phone deal or a rate */
         if (isAD2(a) && !can(db, a, 'fx.dealRef')) fail('FX deal references are applied by AD2 (branch or treasury). Book the live rate instead.');
         const ref = dealRefOf(req.dealRef);
@@ -258,13 +327,12 @@
           const st = positionStatus(p, now);
           const expired = st === 'Expired' || (st === 'Cancelled' && /expired/i.test(p.cancelReason || ''));
           need(st !== 'Held', `Rate booking ${p.id} is held for a treasury checker (customer limit). Submit once it is released.`);
-          need(st === 'Open', expired ? `The booked rate has expired (${LOCK_HOURS}-hour lock). Book the rate again.`
+          need(st === 'Open', expired ? `The booked rate has expired (${p.lockHours || LOCK_HOURS}-hour lock). Book the rate again.`
                                               : `Rate booking ${p.id} is already ${st.toLowerCase()}. Book the rate again.`);
           need(p.source === 'Booked', `${p.id} is a deal position; apply its deal reference instead.`);
           need(p.currency === cur && p.side === side, `Rate booking ${p.id} is for an ${dirWord(p.side)} in ${p.currency}. Book the rate again.`);
           need(Math.abs(p.amount - amt) < 0.005, `Rate booking ${p.id} is for ${fmt(p.amount, cur)}, this request is ${fmt(amt, cur)}. Book the rate again for the new amount.`);
         } else {
-          need(!rfqApplies(db, a, cur, amt), 'Rates are quoted by the treasury dealer. Request the rate and confirm the quote before submitting.');
           p = book(db, a, s, { dir, currency: cur, amount: amt, margin: req.margin }, now, { inline: true });
         }
         return { position: p, rate: { mode: 'booked', positionId: p.id, refRate: p.refRate, margin: p.margin, customerRate: p.customerRate,
@@ -321,6 +389,31 @@
       const rr = resolveRate(db, a, s, rec.currency, dir, rec.amount, { mode: 'deal', dealRef: ref, customerRate: req.customerRate }, now);
       attach(db, a, rr, kind, rec.id, rec.amount, now);
       return rr.rate;
+    }
+
+    /* Bank-priced requests (mode bank): AD2's maker applies the rate when it
+       verifies — the customer's live all-in rate, an issued deal, or a phone
+       deal. Pricing and booking are the ones every other path uses; the lock
+       validity is the one the request was submitted under. */
+    function applyRate(db, a, rec, kind, req, now) {
+      const s = smeOf(db, rec.smeId), dir = kind === 'outward' ? 'out' : 'in';
+      req = req || {};
+      if (req.mode === 'deal') return replaceRate(db, a, s, rec, kind, dir, req, now);
+      need(req.mode === 'live', 'Choose how to apply the rate: the customer’s live rate, or an FX deal reference.');
+      const old = rec.rate && rec.rate.positionId && find(db.positions, rec.rate.positionId);
+      if (old) cancel(db, a, old, `Rate on ${rec.id} replaced by the live rate`, now);
+      const p = book(db, a, s, { dir, currency: rec.currency, amount: rec.amount, lockHours: lockHoursOf(recTerms(db, rec)) }, now, { inline: true });
+      need(p.status !== 'Held', `The live rate for ${rec.id} would take ${s.tradingName} over its treasury limit (${p.heldReason}). Ask the treasury desk to issue a deal instead.`);
+      const rr = { position: p, rate: { mode: 'booked', positionId: p.id, refRate: p.refRate, margin: p.margin, customerRate: p.customerRate,
+        bookedAt: p.bookedAt, expiresAt: p.expiresAt, dealRef: null } };
+      attach(db, a, rr, kind, rec.id, rec.amount, now);
+      return rr.rate;
+    }
+    /* A bank-priced request that goes back (query) loses its applied rate:
+       the position is released and the maker prices it again. */
+    function clearRate(db, a, rec, reason, now) {
+      release(db, a, rec, reason, now);
+      rec.rate = { mode: 'pending', positionId: null, refRate: null, margin: null, customerRate: null, bookedAt: null, expiresAt: null, dealRef: null };
     }
 
     /* The request now exists: the position carries it until settlement. */
@@ -427,6 +520,7 @@
       DEMO_DEALS.forEach(([smeId, cur, dir, amt]) => {
         const s = smeOf(db, smeId), side = sideOf(dir);
         if (!s || s.status !== 'Approved' || !((s.config || {}).currencies || []).includes(cur)) return;
+        if (rateTerms(db, s).mode === 'bank') return;   /* bank-priced customers take no deals */
         if ((db.deals || []).some(d => d.smeId === smeId && d.currency === cur && d.side === side && d.status === 'Issued' && d.validUntil > now)) return;
         const pr = priceRate(db, s, cur, dir, now), ref = pr.ibr.mid, m = pr.margin, rate = pr.rate;
         const p = newPosition(db, SYSTEM, s, { currency: cur, side, amount: amt, customerRate: rate, refRate: ref, margin: m, source: 'Deal', channel: 'Treasury deal',
@@ -482,7 +576,7 @@
     function sweep(db, now) {
       if (!db.positions) return;
       db.positions.forEach(p => {
-        if (positionStatus(p, now) === 'Expired') cancel(db, SYSTEM, p, p.source === 'Deal' ? 'Deal expired — not applied within its validity' : `Lock expired — not used within ${LOCK_HOURS} hours`, now);
+        if (positionStatus(p, now) === 'Expired') cancel(db, SYSTEM, p, p.source === 'Deal' ? 'Deal expired — not applied within its validity' : `Lock expired — not used within ${p.lockHours || LOCK_HOURS} hours`, now);
       });
       if (pastCutoff(db, now)) {
         const flags = db.tmsFlags = db.tmsFlags || {};
@@ -634,7 +728,7 @@
         return { positionId: pos.id, customerRate: pos.customerRate, bookedAt: pos.bookedAt, expiresAt: pos.expiresAt, held,
           ...(isAD2(a) ? { refRate: pos.refRate, margin: pos.margin } : {}),
           message: held ? `Rate booked (${pos.id}) but held: this takes ${s.tradingName} over its treasury limit, so a treasury checker releases it before it can be submitted.`
-            : `Rate booked: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours (${pos.id}).` };
+            : `Rate booked: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${pos.lockHours || LOCK_HOURS} hours (${pos.id}).` };
       },
     };
     /* ---------- rate requests (RFQ) ------------------------------------------- */
@@ -647,6 +741,8 @@
         const cur = oneOf(p.currency, db.currencies.map(c => c.code), 'Currency');
         need(((s.config || {}).currencies || []).includes(cur), `${cur} is not enabled for ${s.tradingName}.`);
         const amt = amount(p.amount, 'Amount');
+        const t = pricing(db, a, s, cur, amt);
+        if (!t.request) modeForbids(t, 'requesting a rate from the dealer');
         const pr = priceRate(db, s, cur, dir, ctx.now);
         const open = (db.positions || []).filter(x => x.smeId === s.id && x.source === 'Booked' && positionStatus(x, ctx.now) === 'Open');
         const max = Number((db.settings || {}).maxOpenBookings ?? 5);
@@ -656,7 +752,9 @@
         (db.rfqs || []).filter(r => r.smeId === s.id && r.draftRef && r.draftRef === draftRef && ['Pending', 'Quoted'].includes(r.status))
           .forEach(r => { r.status = 'Withdrawn'; r.closedAt = ctx.now; r.reason = 'Replaced by a new request'; });
         const r = { id: 'RFQ-' + pad(seq(db, 'rfq'), 4), smeId: s.id, customerName: s.tradingName, dir, side: sideOf(dir), currency: cur, amount: amt,
-          draftRef, status: 'Pending', requestedAt: ctx.now, requestedBy: actorLabel(a), indicative: pr.rate, quoteVer: 0 };
+          draftRef, status: 'Pending', requestedAt: ctx.now, requestedBy: actorLabel(a), indicative: pr.rate, quoteVer: 0,
+          /* the terms in force when asked: a later preset edit does not move them */
+          quoteValidMin: Number(t.options.quoteValidMin || 15), lockHours: lockHoursOf(t) };
         arr(db, 'rfqs').unshift(r);
         audit(db, a, ctx.now, r.id, `Rate requested — ${fmt(amt, cur)} ${dirWord(r.side)}, indicative ${pr.rate.toFixed(4)}`);
         notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `${s.tradingName} asks for a rate: ${fmt(amt, cur)} ${dirWord(r.side)} (${r.id})`, link: '/treasury/#/T-30' });
@@ -667,7 +765,7 @@
       const s = smeOf(db, r.smeId);
       const pr = priceRate(db, s, r.currency, r.dir, now, margin);
       Object.assign(r, { status: 'Quoted', deskRate: pr.desk, margin: pr.margin, rate: pr.rate, capped: pr.capped, card: pr.card, ibrMid: pr.ibr.mid,
-        quotedAt: now, validUntil: addHours(now, Number((db.settings || {}).rfqValidMin ?? 15) / 60), quotedBy: actorLabel(a), quoteVer: (r.quoteVer || 0) + 1 });
+        quotedAt: now, validUntil: addHours(now, Number(r.quoteValidMin || 15) / 60), quotedBy: actorLabel(a), quoteVer: (r.quoteVer || 0) + 1 });
       audit(db, a, now, r.id, `Quoted ${pr.rate.toFixed(4)}${pr.capped ? ' (capped at the card rate)' : ''} — valid until ${r.validUntil}`);
       audit(db, a, now, r.id, `Desk ${pr.desk.toFixed(4)} + customer margin ${pr.margin} paise`, true);
       notify(db, now, { toSmeId: r.smeId, text: `Rate quoted for ${fmt(r.amount, r.currency)}: ₹ ${pr.rate.toFixed(4)} — confirm it before it expires`, link: r.dir === 'out' ? '#/sme/outward/new' : '#/sme/inward' });
@@ -720,12 +818,12 @@
         if (p.amount != null) need(Math.abs(Number(p.amount) - r.amount) < 0.005 && (p.currency || r.currency) === r.currency,
           `The quote is for ${fmt(r.amount, r.currency)}. Request the rate again for the new amount.`);
         const pos = book(db, a, s, { dir: r.dir, currency: r.currency, amount: r.amount, replaces: p.replaces,
-          price: { refRate: r.ibrMid, margin: r.margin, customerRate: r.rate } }, ctx.now);
+          price: { refRate: r.ibrMid, margin: r.margin, customerRate: r.rate }, lockHours: r.lockHours }, ctx.now);
         Object.assign(r, { status: 'Confirmed', positionId: pos.id, closedAt: ctx.now });
         audit(db, a, ctx.now, r.id, `Quote confirmed — booked as ${pos.id}`);
         notify(db, ctx.now, { toRole: 'AD2 Treasury Dealer', text: `${s.tradingName} confirmed ${r.id} at ${r.rate.toFixed(4)} — ${pos.id} is on the book`, link: '/treasury/#/T-30' });
         return { positionId: pos.id, customerRate: pos.customerRate, bookedAt: pos.bookedAt, expiresAt: pos.expiresAt, held: pos.status === 'Held',
-          message: `Rate confirmed: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${LOCK_HOURS} hours (${pos.id}).` };
+          message: `Rate confirmed: ${fmt(pos.amount, pos.currency)} at ${pos.customerRate.toFixed(4)}, locked for ${pos.lockHours || LOCK_HOURS} hours (${pos.id}).` };
       },
     };
 
@@ -1023,7 +1121,8 @@
       db.positions.sort((x, y) => String(y.bookedAt).localeCompare(String(x.bookedAt)));
     }
 
-    return { rfqStatus, usdOf, priceFor, priceRate, ibrQuote, deskRate, cardOf, deskRow, validMargin, book, resolveRate, replaceRate, attach, link, release, sweep, scope, seed, refreshDemoDeals,
+    return { RATE_MODES, MAX_PRESETS, PRESET_OPTIONS, defaultsFor, presetOf, rateTerms, recTerms, pricing, howTo, usdOfStrict, lockHoursOf,
+      rfqStatus, usdOf, priceFor, priceRate, ibrQuote, deskRate, cardOf, deskRow, validMargin, book, resolveRate, replaceRate, applyRate, clearRate, attach, link, release, sweep, scope, seed, refreshDemoDeals,
       newPosition, issueDeal, addLink, cancelResidual, unwind, cancel, remaining, isTrade,
       positionStatus, coverState, linkState, uncovered, live, netByCurrency, suggestions, marketRate, pnl, exceptions, istDate, pastCutoff };
   };

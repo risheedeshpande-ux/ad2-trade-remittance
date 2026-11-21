@@ -763,7 +763,7 @@ screen({ id: 'T-30', title: 'Rate requests',
 act('rq-quote', el => {
   const r = (DB.rfqs || []).find(x => x.id === el.dataset.id); if (!r) return;
   const s = rfqSme(r), p0 = TR.priceRate(DB, s, r.currency, r.dir, NOW()), m0 = r.margin != null ? r.margin : p0.margin;
-  cmdDlg({ title: `Quote ${esc(r.id)} — ${esc(r.customerName)}`, ok: 'Send quote', body: `<p class=small>${r.dir === 'out' ? 'Outward — the bank sells' : 'Inward — the bank buys'} ${fcy(r.amount, r.currency)}. The customer saw ${rate(r.indicative)} when it asked. The quote is valid for ${(DB.settings || {}).rfqValidMin || 15} minutes.</p>
+  cmdDlg({ title: `Quote ${esc(r.id)} — ${esc(r.customerName)}`, ok: 'Send quote', body: `<p class=small>${r.dir === 'out' ? 'Outward — the bank sells' : 'Inward — the bank buys'} ${fcy(r.amount, r.currency)}. The customer saw ${rate(r.indicative)} when it asked. The quote is valid for ${r.quoteValidMin || 15} minutes (the customer’s rate terms when it asked).</p>
     <div class=fgrid>${field('Desk rate', readRO(rate(p0.desk)))}${field('Customer margin (paise)', `<input type=number id=rq-m step=0.25 min=0 max=500 value="${m0}" data-input="rq-prev" data-id="${esc(r.id)}">`, { req: true, hint: `Approved margin ${p0.margin} p` })}
     ${field('All-in rate to the customer', `<input type=text class=computed id=rq-all readonly value="${rate(p0.rate)}">`)}</div><div id=rq-cap class="small v-warn"${p0.capped ? '' : ' hidden'}>Capped at the card rate ${rate(p0.card)} — a margin above this has no effect.</div>` },
     'rfq.quote', () => ({ id: r.id, margin: Number($('#rq-m').value), quoteVer: r.quoteVer || 0 }));

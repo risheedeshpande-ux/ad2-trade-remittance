@@ -18,18 +18,22 @@
 
   /* ---------- errors ------------------------------------------------------ */
   class EngineError extends Error {
-    constructor(message, code = 'invalid', status = 400, details = []) {
+    constructor(message, code = 'invalid', status = 400, details = [], info = null) {
       super(message);
       this.name = 'EngineError';
       this.code = code;
       this.status = status;
       this.details = details;
+      this.info = info;
     }
   }
   const fail = (msg, details) => { throw new EngineError(msg, 'invalid', 400, details || []); };
   const need = (cond, msg, details) => { if (!cond) fail(msg, details); };
   const forbid = msg => { throw new EngineError(msg, 'forbidden', 403); };
   const missing = what => { throw new EngineError(what + ' was not found.', 'not_found', 404); };
+  /* A refusal with a stable code and the values behind it, so a screen, a QA
+     script or an agent can tell "apply the rate first" from "never allowed". */
+  const refuse = (code, msg, info) => { throw new EngineError(msg, code, 400, [], info || null); };
 
   /* ---------- small helpers ---------------------------------------------- */
   const clone = o => JSON.parse(JSON.stringify(o));
@@ -429,7 +433,7 @@
   /* Treasury: the position book (treasury.js), and the Treasury Management
      Portal around it (tmp-engine.js). They share these helpers and the
      hooks the book calls when trade reaches treasury. */
-  const E = { C, EngineError, fail, need, forbid, missing, txt, amount, date, oneOf, bool, round2, addHours, clone,
+  const E = { C, EngineError, fail, need, forbid, missing, refuse, txt, amount, date, oneOf, bool, round2, addHours, clone,
     find, smeOf, currencyOf, marginFor, customerRate, can, requireCap, isAD2, actorKey, actorLabel, stamp, distinct, audit, notify,
     seq, fmt, inr, ownSme, requireApproved, hooks: {} };
   const T = installTreasury(E);
@@ -582,9 +586,14 @@
     const effectiveDate = date(c.effectiveDate, 'Effective date', false);
     if (!effectiveDate) errs.push('effective date');
     if (!s.iec) errs.push('IEC on the application (raise a clarification to collect it)');
-    return { cfg: { permission, currencies, margins, marginBasis: 'paise', charges, effectiveDate,
+    /* how the customer prices: one of the admin's presets, default pre-selected */
+    const presets = db.ratePresets || [];
+    const ratePreset = c.ratePreset ? oneOf(c.ratePreset, presets.map(x => x.id), 'Rate preset') : (T.presetOf(db, null) || {}).id || null;
+    return { cfg: { permission, currencies, margins, marginBasis: 'paise', charges, effectiveDate, ...(ratePreset ? { ratePreset } : {}),
                     remarks: txt(c.remarks, 'Remarks', { max: 500, required: false }) }, errs };
   }
+
+  const presetLabel = (db, id) => { const p = (db.ratePresets || []).find(x => x.id === id); return p ? `${p.name} (${T.RATE_MODES[p.mode]})` : 'default'; };
 
   function commitApproval(db, s, a, now, cfg, via) {
     s.config = cfg;
@@ -617,7 +626,7 @@
       }
       s.status = 'Pending Approval'; s.pendingWith = 'AD2 Compliance';
       audit(db, a, ctx.now, s.id, `Review complete — sent to compliance with ${cfg.permission} permission, ${cfg.currencies.join('/')}`);
-      audit(db, a, ctx.now, s.id, `Pricing prepared — ${cfg.currencies.map(c => `${c} ${cfg.margins[c] != null ? cfg.margins[c] : marginFor(db, { config: cfg }, c)}p`).join(', ')}; ${cfg.charges.length ? cfg.charges.length + ' charge(s)' : 'no charges'}`, true);
+      audit(db, a, ctx.now, s.id, `Pricing prepared — rate preset ${presetLabel(db, cfg.ratePreset)}; ${cfg.currencies.map(c => `${c} ${cfg.margins[c] != null ? cfg.margins[c] : marginFor(db, { config: cfg }, c)}p`).join(', ')}; ${cfg.charges.length ? cfg.charges.length + ' charge(s)' : 'no charges'}`, true);
       notify(db, ctx.now, { toRole: 'AD2 Compliance', text: `Application ${s.id} (${s.legalName}) is ready for approval`, link: '#/ad2/applications/' + s.id });
       return { message: 'Sent to AD2 Compliance for approval.' };
     },
@@ -814,7 +823,11 @@
     const prod = productOf(db, o.remittanceType);
     const rr = T.resolveRate(db, a, s, o.currency, 'out', o.amount, d.rate, now);
     o.rate = rr.rate;
-    const inrAmt = round2(o.amount * o.rate.customerRate);
+    stampTerms(db, s, o);
+    const pending = o.rate.mode === 'pending';
+    /* a bank-priced request has no rate yet: documents are checked against the
+       amount at the reference rate, and re-checked when AD2 applies the rate */
+    const inrAmt = round2(o.amount * (pending ? (currencyOf(db, o.currency) || {}).refRate || 0 : o.rate.customerRate));
     const list = checklist(db, o.remittanceType, o.purposeCode, inrAmt);
     o.docs = docsIn(d.docs, list.map(x => x.id));
     const missingDocs = list.filter(x => x.required && !o.docs[x.id]).map(x => x.name);
@@ -828,9 +841,16 @@
       o.allocations = al;
       o.allocatedTotal = total;
     }
-    o.inrAmount = inrAmt;
-    o.charges = chargesFor(s, o.amount, o.rate.customerRate, o.currency);
-    o.debitInr = round2(inrAmt + o.charges.reduce((t, c) => t + c.amount, 0));
+    if (pending) {
+      o.inrAmount = null; o.debitInr = null;
+      o.charges = pendingCharges(s, o.currency);
+      o.chargesIndicative = true;
+    } else {
+      o.inrAmount = inrAmt;
+      o.charges = chargesFor(s, o.amount, o.rate.customerRate, o.currency);
+      o.debitInr = round2(inrAmt + o.charges.reduce((t, c) => t + c.amount, 0));
+      delete o.chargesIndicative;
+    }
     o.risk = riskScore(db, {
       usd: usdEq(db, o.amount, o.currency), purpose: o.purposeCode, deal: o.rate.mode === 'deal',
       countries: [o.beneficiaryCountry, o.beneficiaryBankCountry], names: [o.beneficiary, o.beneficiaryBank],
@@ -839,7 +859,34 @@
       first: !db.outward.some(x => x.id !== o.id && x.smeId === s.id && x.status === 'Completed'),
       files: Object.values(o.docs).map(f => f.filename),
     });
-    T.attach(db, a, rr, 'outward', o.id, o.amount, now);
+    if (rr.position) T.attach(db, a, rr, 'outward', o.id, o.amount, now);
+  }
+
+  /* The rate mode and options a request is submitted under stay with it
+     (X2/S4): a later preset change applies to new requests only. */
+  function stampTerms(db, s, rec) {
+    const t = T.rateTerms(db, s);
+    rec.rateMode = t.mode; rec.rateOptions = { ...t.options }; rec.ratePreset = t.presetId;
+  }
+  const awaitingRate = rec => rec.rate && rec.rate.mode === 'pending';
+  /* Before a rate exists only fixed charges have an amount; a percentage
+     charge is worked out when AD2 applies the rate (and would otherwise give
+     the reference rate away). */
+  const pendingCharges = (s, cur) => ((s.config && s.config.charges) || []).map(c => c.basis === 'Fixed'
+    ? { name: c.name, amount: round2(c.byCurrency && c.byCurrency[cur] != null ? c.byCurrency[cur] : c.value) }
+    : { name: c.name, amount: null, pct: c.value });
+  /* AD2's maker applies the rate to a bank-priced request (S1). */
+  function applyMakerRate(db, a, rec, kind, req, now, recompute) {
+    rec.rate = T.applyRate(db, a, rec, kind, req, now);
+    delete rec.chargesIndicative;
+    recompute();
+    const how = rec.rate.mode === 'deal' ? `FX deal ${rec.rate.dealRef}` : 'the customer’s live rate';
+    audit(db, a, now, rec.id, `Rate applied by AD2 — ${how} at ${rec.rate.customerRate.toFixed(4)}; treasury position ${rec.rate.positionId}`);
+    notify(db, now, { toSmeId: rec.smeId, text: `AD2 applied the rate on ${rec.id}: ₹ ${rec.rate.customerRate.toFixed(4)}`, link: `#/sme/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
+  }
+  /* The checker cannot authorise a request that has no rate (S1). */
+  function rateReady(db, rec, what) {
+    if (awaitingRate(rec)) refuse('rate_required', `${rec.id} has no rate yet. The AD2 maker applies the rate when verifying the ${what}.`, { id: rec.id });
   }
 
   /* A High risk score needs a written reason at each approval stage. */
@@ -911,8 +958,9 @@
       const prod = productOf(db, o.remittanceType);
       audit(db, a, ctx.now, o.id, `Outward request submitted — ${fmt(o.amount, o.currency)}, ${prod.id} (${prod.label}) under ${o.purposeCode}${o.lcNumber ? ', LC ' + o.lcNumber : ''}`);
       audit(db, a, ctx.now, o.id, `Compliance check — risk ${o.risk.level} (${o.risk.score})${o.risk.flags.length ? ': ' + o.risk.flags.map(f => f.label).join(', ') : ''}`, true);
-      if (o.rate.margin !== marginFor(db, s, o.currency)) audit(db, a, ctx.now, o.id, `Margin set to ${o.rate.margin} paise by ${a.name || a.role} within the branch band`, true);
-      audit(db, a, ctx.now, o.id, o.rate.mode === 'booked'
+      if (o.rate.margin != null && o.rate.margin !== marginFor(db, s, o.currency)) audit(db, a, ctx.now, o.id, `Margin set to ${o.rate.margin} paise by ${a.name || a.role} within the branch band`, true);
+      audit(db, a, ctx.now, o.id, o.rate.mode === 'pending' ? 'Submitted without a rate — AD2 applies the rate when verifying'
+        : o.rate.mode === 'booked'
         ? `Booked rate ${o.rate.customerRate.toFixed(4)} applied — treasury position ${o.rate.positionId}`
         : `FX deal ${o.rate.dealRef} applied at ${o.rate.customerRate.toFixed(4)} — treasury position ${o.rate.positionId}`);
       notify(db, ctx.now, { toRole: 'AD2 Maker', text: `Outward ${o.id} from ${s.tradingName} — ${fmt(o.amount, o.currency)} to verify`, link: '#/ad2/outward/' + o.id });
@@ -932,6 +980,11 @@
       const notDone = req.filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
       distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.dealUpdated], 'request');
+      if (awaitingRate(o)) {
+        if (!p.rate || !p.rate.mode) refuse('rate_required', `${o.id} was submitted without a rate. Apply the customer’s live rate or an FX deal before verifying.`, { id: o.id });
+        requireCap(db, a, 'fx.dealRef');
+        applyMakerRate(db, a, o, 'outward', p.rate, ctx.now, () => outwardRepriced(db, o));
+      }
       o.wf = o.wf || {};
       o.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(o, p, 'verifying') };
       o.status = 'Verified'; o.pendingWith = 'AD2 Checker';
@@ -947,6 +1000,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Verified', 'Only a verified request can be authorised.');
+      rateReady(db, o, 'request');
       distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf && o.wf.verified, o.wf && o.wf.dealUpdated], 'request');
       o.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(o, p, 'authorising') };
       o.status = 'Authorised'; o.pendingWith = 'AD2 Operations';
@@ -963,6 +1017,7 @@
     run(db, a, p, ctx) {
       const o = outwardFor(db, p.id);
       need(o.status === 'Authorised', 'Only an authorised request can be executed.');
+      rateReady(db, o, 'request');
       distinct(a, [{ key: o.createdByKey, verb: 'raised' }, o.wf.verified, o.wf.authorised, o.wf.dealUpdated], 'request');
       const acc = find(db.accounts, o.debitAccountId);
       need(acc, 'The remitter account no longer exists.');
@@ -1004,6 +1059,11 @@
       o.status = 'Clarification Required'; o.pendingWith = 'SME';
       if (o.wf) delete o.wf.verified;
       audit(db, a, ctx.now, o.id, 'Clarification requested: ' + q);
+      if (o.rateMode === 'bank' && !awaitingRate(o)) {
+        T.clearRate(db, a, o, `Query on ${o.id} — the rate is applied again after the answer`, ctx.now);
+        o.inrAmount = null; o.debitInr = null; o.chargesIndicative = true; o.charges = pendingCharges(smeOf(db, o.smeId), o.currency);
+        audit(db, a, ctx.now, o.id, 'Applied rate cleared — AD2 applies the rate again when verifying', true);
+      }
       queryCustomer(db, ctx.now, o.smeId, o.id, '/sme/outward/' + o.id, `AD2 has a query on ${o.id}`, q, o.query.docs);
       return { message: 'Query sent to the SME.' };
     },
@@ -1055,8 +1115,16 @@
      rate takes no later step on it (four-eyes). */
   function updateDeal(db, a, rec, kind, p, now, what, recompute) {
     const ad2 = isAD2(a);
-    if (ad2) requireCap(db, a, 'fx.dealRef');
-    else { need(rec.smeId === ownSme(db, a).id, `${rec.id} is not yours.`); p = { dealRef: p.dealRef }; }
+    const terms = T.recTerms(db, rec);
+    if (ad2) {
+      requireCap(db, a, 'fx.dealRef');
+      if (terms.mode === 'live' && terms.options.adMayUpdate === false)
+        refuse('mode_forbids', `${rec.id} was submitted under a live-lock preset that does not let AD2 change the rate. The customer’s locked rate stands.`, { mode: terms.mode });
+    } else {
+      need(rec.smeId === ownSme(db, a).id, `${rec.id} is not yours.`); p = { dealRef: p.dealRef };
+      if (terms.mode === 'bank' || terms.mode === 'negotiated' && !terms.options.allowDeals)
+        refuse('mode_forbids', terms.mode === 'bank' ? `${rec.id} is priced by AD2: the maker applies the rate when verifying.` : 'Your rate terms do not include assigned deals. Request a rate instead.', { mode: terms.mode });
+    }
     need(['Submitted', 'Verified'].includes(rec.status), `The FX deal can be changed only before authorisation; this ${what} is ${rec.status.toLowerCase()}.`);
     const was = rec.rate || {};
     rec.rate = T.replaceRate(db, a, smeOf(db, rec.smeId), rec, kind, kind === 'outward' ? 'out' : 'in', p, now);
@@ -1069,6 +1137,7 @@
     const back = rec.status === 'Verified';
     if (back) { delete rec.wf.verified; rec.status = 'Submitted'; rec.pendingWith = 'AD2 Maker'; }
     const old = was.mode === 'deal' ? `deal ${was.dealRef}` : was.mode === 'booked' ? 'booked rate' : 'no rate';
+    if (was.mode === 'pending') delete rec.chargesIndicative;
     audit(db, a, now, rec.id, `FX deal updated — ${old} at ${(was.customerRate || 0).toFixed(4)} → deal ${rec.rate.dealRef} at ${rec.rate.customerRate.toFixed(4)}; ` +
       `treasury position ${rec.rate.positionId}${back ? '; back for verification by another maker' : ''}`);
     notify(db, now, { toRole: 'AD2 Maker', text: `FX deal on ${rec.id} changed to ${rec.rate.dealRef}${ad2 ? ' — verify it (another maker)' : ' by the customer — verify it'}`, link: `#/ad2/${kind === 'outward' ? 'outward' : 'disposals'}/${rec.id}` });
@@ -1275,7 +1344,7 @@
       const rec = { id, inwardId: i.id, smeId: s.id, amount: v.amt, currency: i.currency, option: v.option,
         purposeCode: v.purposeCode, remittanceType: 'TRADE', creditAccountId: v.acc.id, creditCurrency: v.acc.currency,
         allocations: v.al, allocatedTotal: v.total, unallocated: round2(v.amt - v.total), rate: v.rate, docs: v.docs,
-        creditInr: inrCredit ? round2(v.amt * v.rate.customerRate) : 0, creditFcy: inrCredit ? 0 : v.amt,
+        creditInr: inrCredit && v.rate.mode !== 'pending' ? round2(v.amt * v.rate.customerRate) : inrCredit ? null : 0, creditFcy: inrCredit ? 0 : v.amt,
         declarations: v.declarations,
         status: 'Submitted', pendingWith: 'AD2 Maker', submittedAt: ctx.now,
         remarks: txt(d.remarks, 'Remarks', { max: 500, required: false }),
@@ -1287,14 +1356,16 @@
         first: !db.disposals.some(x => x.smeId === s.id && x.status === 'Processed'),
         files: Object.values(v.docs).map(f => f.filename),
       });
+      stampTerms(db, s, rec);
       db.disposals.unshift(rec);
-      if (v.rr) T.attach(db, a, v.rr, 'disposal', id, v.amt, ctx.now);
+      if (v.rr && v.rr.position) T.attach(db, a, v.rr, 'disposal', id, v.amt, ctx.now);
       i.available = round2(i.available - v.amt);
       i.status = inwardStatus(db, i);
       const what = v.option === 'knockoff'
         ? `against ${v.al.map(x => x.billId).join(', ')}${rec.unallocated > 0 ? `, ${fmt(rec.unallocated, i.currency)} as advance` : ''}`
         : 'as an advance — bills to be knocked off later';
-      const to = inrCredit ? `credit INR at ${v.rate.customerRate.toFixed(4)}` : `credit ${v.acc.currency} to EEFC`;
+      const to = !inrCredit ? `credit ${v.acc.currency} to EEFC` : v.rate.mode === 'pending' ? 'credit INR — AD2 applies the rate when verifying'
+        : `credit INR at ${v.rate.customerRate.toFixed(4)}`;
       audit(db, a, ctx.now, i.id, `Disposal instruction ${id} submitted for ${fmt(v.amt, i.currency)} of ${fmt(i.amount, i.currency)}`);
       audit(db, a, ctx.now, id, `Disposal instruction submitted — ${fmt(v.amt, i.currency)} under ${v.purposeCode}, ${what}; ${to}`);
       audit(db, a, ctx.now, id, `Compliance check — risk ${rec.risk.level} (${rec.risk.score})${rec.risk.flags.length ? ': ' + rec.risk.flags.map(f => f.label).join(', ') : ''}`, true);
@@ -1315,6 +1386,11 @@
       const notDone = disposalChecks(d).filter(k => !bool(checks[k]));
       need(!notDone.length, 'Complete every verification check before verifying.', notDone);
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf && d.wf.dealUpdated], 'instruction');
+      if (awaitingRate(d)) {
+        if (!p.rate || !p.rate.mode) refuse('rate_required', `${d.id} was submitted without a rate. Apply the customer’s live rate or an FX deal before verifying.`, { id: d.id });
+        requireCap(db, a, 'fx.dealRef');
+        applyMakerRate(db, a, d, 'disposal', p.rate, ctx.now, () => { d.creditInr = round2(d.amount * d.rate.customerRate); });
+      }
       d.wf.verified = { ...stamp(a, ctx.now, 'verified'), note: riskNote(d, p, 'verifying') };
       d.status = 'Verified'; d.pendingWith = 'AD2 Checker';
       audit(db, a, ctx.now, d.id, 'Verified — documents, sanctions screening, ' + ((d.allocations || []).length ? 'bill match ' : '') + 'and credit account checked');
@@ -1329,6 +1405,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Verified', 'Only a verified instruction can be authorised.');
+      rateReady(db, d, 'instruction');
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.dealUpdated], 'instruction');
       d.wf.authorised = { ...stamp(a, ctx.now, 'authorised'), note: riskNote(d, p, 'authorising') };
       d.status = 'Authorised'; d.pendingWith = 'AD2 Operations';
@@ -1344,6 +1421,7 @@
     run(db, a, p, ctx) {
       const d = disposalFor(db, p.id);
       need(d.status === 'Authorised', 'Only an authorised instruction can be processed.');
+      rateReady(db, d, 'instruction');
       distinct(a, [{ key: d.createdByKey, verb: 'raised' }, d.wf.verified, d.wf.authorised, d.wf.dealUpdated], 'instruction');
       const acc = find(db.accounts, d.creditAccountId);
       need(acc, 'The credit account no longer exists.');
@@ -1404,6 +1482,11 @@
       d.status = 'Clarification Required'; d.pendingWith = 'SME';
       delete d.wf.verified;
       audit(db, a, ctx.now, d.id, 'Clarification requested: ' + q);
+      if (d.rateMode === 'bank' && (d.creditCurrency || 'INR') === 'INR' && !awaitingRate(d)) {
+        T.clearRate(db, a, d, `Query on ${d.id} — the rate is applied again after the answer`, ctx.now);
+        d.creditInr = null;
+        audit(db, a, ctx.now, d.id, 'Applied rate cleared — AD2 applies the rate again when verifying', true);
+      }
       queryCustomer(db, ctx.now, d.smeId, d.id, '/sme/disposals/' + d.id, `AD2 has a query on disposal ${d.id}`, q, d.query.docs);
       return { message: 'Query sent to the SME.' };
     },
@@ -1728,6 +1811,75 @@
     },
   };
 
+  /* ---------- rate presets (S35/S37) ---------------------------------------
+     Exactly MAX_PRESETS slots, edited, never deleted. The mode of a preset in
+     use cannot change (move its SMEs first); names and options can, and apply
+     to new requests only — submitted ones keep the terms they were sent with. */
+  function readPresetOptions(mode, raw) {
+    const spec = T.PRESET_OPTIONS[mode], out = {};
+    const unknown = Object.keys(raw || {}).filter(k => !spec[k]);
+    if (unknown.length) refuse('invalid_option', `${T.RATE_MODES[mode]} presets take no ${unknown.join(', ')}. Options for this mode: ${Object.keys(spec).join(', ')}.`, { mode, unknown });
+    Object.entries(spec).forEach(([k, [def, lo, hi]]) => {
+      const v = (raw || {})[k];
+      if (typeof def === 'boolean') { out[k] = v === undefined ? def : bool(v); return; }
+      const n = v === undefined || v === '' ? def : Number(v);
+      if (!isFinite(n) || n < lo || n > hi) refuse('out_of_range', `${OPTION_LABELS[k] || k} must be between ${lo} and ${hi}${OPTION_UNITS[k] ? ' ' + OPTION_UNITS[k] : ''}.`, { field: k, min: lo, max: hi });
+      out[k] = n;
+    });
+    if (mode === 'negotiated' && !out.allowDeals && !out.allowRfq) refuse('invalid_option', 'A negotiated preset must allow assigned deals, rate requests, or both.', { mode });
+    return out;
+  }
+  const OPTION_LABELS = { lockValidityHours: 'Lock validity', rfqFromUsd: 'Rate requests from', quoteValidMin: 'Quote validity' };
+  const OPTION_UNITS = { lockValidityHours: 'hours', rfqFromUsd: 'USD', quoteValidMin: 'minutes' };
+  const smesOn = (db, id) => db.smes.filter(x => x.config && (x.config.ratePreset || (T.presetOf(db, null) || {}).id) === id && ['Approved', 'Submitted', 'Under Review', 'Pending Approval'].includes(x.status));
+  const showPreset = p => `${p.name} — ${T.RATE_MODES[p.mode]} ${JSON.stringify(p.options)}${p.isDefault ? ', default' : ''}`;
+
+  C['presets.update'] = {
+    cap: 'admin.settings',
+    run(db, a, p, ctx) {
+      const pr = (db.ratePresets || []).find(x => x.id === p.id) || missing('Rate preset');
+      const before = showPreset(pr);
+      const mode = p.mode === undefined ? pr.mode : oneOf(p.mode, Object.keys(T.RATE_MODES), 'Mode');
+      if (mode !== pr.mode) {
+        const using = smesOn(db, pr.id);
+        if (using.length) refuse('preset_in_use', `${pr.name} is used by ${using.length} SME${using.length === 1 ? '' : 's'} (${using.map(x => x.tradingName || x.legalName).join(', ')}). Move them to another preset before changing its mode.`,
+          { preset: pr.id, smes: using.map(x => x.id) });
+      }
+      const name = p.name === undefined ? pr.name : txt(p.name, 'Preset name', { max: 40 });
+      need(!(db.ratePresets || []).some(x => x.id !== pr.id && x.name.toLowerCase() === name.toLowerCase()), `Another preset is already called ${name}.`);
+      const options = readPresetOptions(mode, p.options === undefined && mode === pr.mode ? pr.options : p.options);
+      Object.assign(pr, { name, mode, options });
+      if (bool(p.isDefault)) db.ratePresets.forEach(x => { x.isDefault = x.id === pr.id; });
+      const after = showPreset(pr);
+      if (after === before) return { message: 'No change.' };
+      audit(db, a, ctx.now, pr.id, `Rate preset changed — before: ${before}; after: ${after}`);
+      return { message: `${pr.name} saved. New requests use it; submitted requests keep their terms.` };
+    },
+  };
+
+  /* The AD2 maker moves an SME — or every SME on a preset — to another
+     preset. Open locks, quotes and deals keep their own terms (S14). */
+  C['sme.setPreset'] = {
+    cap: 'onboard.review',
+    run(db, a, p, ctx) {
+      const to = (db.ratePresets || []).find(x => x.id === p.presetId) || missing('Rate preset');
+      const list = p.fromPreset ? smesOn(db, p.fromPreset).filter(x => x.status === 'Approved') : [smeOf(db, p.smeId) || missing('SME')];
+      need(list.length, 'No approved SME is on that preset.');
+      const open = s => (db.positions || []).filter(x => x.smeId === s.id && ['Open', 'Held'].includes(T.positionStatus(x, ctx.now))).length
+        + (db.rfqs || []).filter(r => r.smeId === s.id && ['Pending', 'Quoted'].includes(T.rfqStatus(r, ctx.now))).length;
+      let moved = 0, openTerms = 0;
+      list.forEach(s => {
+        const cfg = s.status === 'Approved' ? s.config : (s.pendingConfig = s.pendingConfig || {});
+        const was = cfg.ratePreset || (T.presetOf(db, null) || {}).id;
+        if (was === to.id) return;
+        cfg.ratePreset = to.id; moved++; openTerms += open(s);
+        audit(db, a, ctx.now, s.id, `Rate preset changed — before: ${presetLabel(db, was)}; after: ${presetLabel(db, to.id)}`);
+      });
+      const tail = openTerms ? ` ${openTerms} open lock${openTerms === 1 ? '' : 's'}, quote${openTerms === 1 ? '' : 's'} or deal${openTerms === 1 ? '' : 's'} keep their own terms until used or expired.` : '';
+      return { moved, openTerms, message: moved ? `${moved} SME${moved === 1 ? '' : 's'} moved to ${to.name}. New requests use it; submitted requests keep their terms.${tail}` : `Already on ${to.name}.` };
+    },
+  };
+
   C['settings.update'] = {
     cap: 'admin.settings',
     run(db, a, p, ctx) {
@@ -1737,7 +1889,7 @@
         db.settings.cutoff = String(p.cutoff); changes.push(`cut-off ${db.settings.cutoff} IST`);
       }
       [['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged'],
-       ['rfqThresholdUsd', 0, 1e9, 'RFQ threshold (USD)'], ['rfqValidMin', 1, 240, 'quote validity (minutes)'], ['rfqAutoQuoteSec', 0, 3600, 'auto-quote delay (seconds, 0 = off)'], ['ibrSpreadPct', 0, 1, 'interbank spread (%)']]
+       ['rfqAutoQuoteSec', 0, 3600, 'auto-quote delay (seconds, 0 = off)'], ['ibrSpreadPct', 0, 1, 'interbank spread (%)']]
         .forEach(([k, lo, hi, label]) => {
           if (p[k] === undefined) return;
           const v = Number(p[k]);
@@ -2214,7 +2366,7 @@
     demo: !!l.demo, active: l.active !== false, test: !!l.test, addedAt: l.addedAt || null,
     tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
-    'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings'];
+    'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings', 'ratePresets'];
   const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications', 'emails'];
 
   function scopeState(db, who) {
@@ -2230,7 +2382,7 @@
        its own ready-made rate, never the rate its margin is added to. */
     const hideRef = () => { out.currencies = out.currencies.map(c => { const { refRate, marginMultiplier, marketBase, ...rest } = c; return rest; });
       if (out.settings) { delete out.settings.ibrSpreadPct; delete out.settings.deskMarginPaise; } };
-    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); T.scope(out, db, null, 'public'); X.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
+    if (!a) { BUSINESS_KEYS.forEach(k => { out[k] = []; }); hideRef(); delete out.ratePresets; T.scope(out, db, null, 'public'); X.scope(out, db, null, 'public'); out.scope = 'public'; return out; }
     /* Treasury Management Portal users (treasury, branch, agent, bulk,
        finance) see the book as their role and branch scope allow. */
     const kind = X.scopeKind(db, a);
@@ -2269,6 +2421,7 @@
     const hideMargin = r => { if (r.rate) { delete r.rate.margin; delete r.rate.refRate; } return r; };
     const strip = r => { delete r.notes; delete r.risk; if (r.wf) Object.values(r.wf).forEach(w => { if (w) delete w.note; }); return hideMargin(r); };
     hideRef();
+    delete out.ratePresets;
     T.scope(out, db, a, 'sme');
     /* whether a currency can be booked today, never the card rate itself */
     X.scope(out, db, a, 'trade');
@@ -2278,10 +2431,20 @@
       if (s.config) {
         delete s.config.remarks;
         const live = smeOf(db, s.id);
+        /* how this customer prices (X1): the mode and the options it acts on,
+           never a margin or a desk rate */
+        const t = T.rateTerms(db, live), o = t.options;
+        s.config.rateTerms = { mode: t.mode, modeName: T.RATE_MODES[t.mode], presetName: t.presetName, howTo: T.howTo(t),
+          lockValidityHours: o.lockValidityHours, ...(t.mode === 'live' ? { rfqFromUsd: Number(o.rfqFromUsd) || 0 } : {}),
+          ...(t.mode === 'negotiated' ? { allowDeals: !!o.allowDeals, allowRfq: !!o.allowRfq, quoteValidMin: o.quoteValidMin } : {}) };
+        /* a bank-priced customer is not sent a rate at all, so it cannot work
+           out the INR amount before AD2 applies the rate (S45) */
         s.config.customerRates = {};
-        const now = new Date().toISOString(), price = (c, dir) => { try { return T.priceRate(db, live, c, dir, now).rate; } catch (e) { return 0; } };
-        (s.config.currencies || []).forEach(c => { s.config.customerRates[c] = { out: price(c, 'out'), in: price(c, 'in') }; });
-        delete s.config.margins; delete s.config.marginBasis;
+        if (t.mode !== 'bank') {
+          const now = new Date().toISOString(), price = (c, dir) => { try { return T.priceRate(db, live, c, dir, now).rate; } catch (e) { return 0; } };
+          (s.config.currencies || []).forEach(c => { s.config.customerRates[c] = { out: price(c, 'out'), in: price(c, 'in') }; });
+        }
+        delete s.config.margins; delete s.config.marginBasis; delete s.config.ratePreset;
       }
       return s;
     });
@@ -2311,7 +2474,7 @@
     checklist, purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
     actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C), refreshDemoDeals: T.refreshDemoDeals,
     /* read-only treasury views, shared by every screen so they agree */
-    treasury: { rfqStatus: T.rfqStatus, priceRate: T.priceRate, ibrQuote: T.ibrQuote, deskRate: T.deskRate, cardOf: T.cardOf, positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
+    treasury: { RATE_MODES: T.RATE_MODES, MAX_PRESETS: T.MAX_PRESETS, PRESET_OPTIONS: T.PRESET_OPTIONS, rateTerms: T.rateTerms, howTo: T.howTo, usdOf: T.usdOf, usdOfStrict: T.usdOfStrict, rfqStatus: T.rfqStatus, priceRate: T.priceRate, ibrQuote: T.ibrQuote, deskRate: T.deskRate, cardOf: T.cardOf, positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
       remaining: T.remaining, isTrade: T.isTrade, netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate,
       pnl: T.pnl, exceptions: T.exceptions, pastCutoff: T.pastCutoff, istDate: T.istDate },
     /* read-only Treasury Management Portal views */

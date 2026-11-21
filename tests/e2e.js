@@ -62,7 +62,7 @@ async function startServer() {
       await click('[data-act="reset-demo"]').catch(() => {});
     }
     /* the guided journey books directly; rate requests have their own QA journey */
-    await page.evaluate(async () => { await signIn('AD2', 'ADMIN', 'demo'); await send('settings.update', { rfqThresholdUsd: 1000000000 }); setSession(null); render(); });
+    await page.evaluate(async () => { await signIn('AD2', 'MAKER', 'demo'); for (const from of ['RP-2', 'RP-3']) await send('sme.setPreset', { fromPreset: from, presetId: 'RP-1' }).catch(() => {}); setSession(null); render(); });
     await page.waitForSelector('.login-panel');
     await click('.sim-bar [data-act="guide-open"]');
 

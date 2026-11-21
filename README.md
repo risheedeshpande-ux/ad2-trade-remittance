@@ -131,6 +131,18 @@ customers; a Checker or Operations approves money.
 | Branch counter | Branch quotes (10-minute validity; stepped review for overrides, large amounts and first quotes) → books → FX Plus bill links back on punch, or by knock-off → concluded; at cut-off the residual is cancelled and its cover returns to the pool, unless kept with a reason |
 | Queries and rejections | Maker or Checker queries; the SME answers with documents — or AD2 records the customer's answer and documents for it; rejections release reservations |
 
+## Rate modes demo
+
+Each SME prices one of three ways, set by a rate preset (Administration → Rate options). The AD2 maker picks the preset at onboarding and can change it in the SME directory; submitted requests keep the terms they were sent with.
+
+| Mode | Demo SME (login) | Steps | What you should see |
+|---|---|---|---|
+| Live lock | Meridian Textiles (`MERIDIANTEX` / `SMEUSER`) | New outward request → Book rate → submit; AD2 maker verifies, checker authorises | The rate box locks the live rate for the preset's lock validity (48 hours by default). |
+| Bank applies the rate | Nilgiri Spice (`NILGIRISPICE` / `SMEUSER`) | New outward request or disposal → submit with no rate; sign in as `AD2` / `MAKER` → Verify → apply the live rate or an FX deal | Before verification the customer sees the FX amount and fixed charges only, with no INR or total. After it, the final debit or credit appears. |
+| Assigned or requested | Arcadia Components (`ARCADIACOMP` / `SMEUSER`) | New outward request → Apply assigned deal, or Request rate; sign in as `AD2` / `DEALER` → Treasury portal → Rate requests → Quote; back as the SME → Confirm rate | There is no live-lock button. The quote is valid for the preset's minutes and confirming it books the rate. |
+
+Every customer sees a "How your rates work" line on its rate box and profile, never a margin or desk rate.
+
 ## Test data lab
 
 Seeded data runs out once it has been used. The lab (**Test data lab** for AD2, **Test data** for an SME) makes more:

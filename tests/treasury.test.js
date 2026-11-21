@@ -6,7 +6,8 @@ const assert = require('node:assert/strict');
 const Engine = require('../public/engine.js');
 const { SEED } = require('../public/data.js');
 /* prices pinned for exact assertions: no feed movement, no interbank spread, no desk margin */
-Object.assign(SEED.settings, { marketSim: false, ibrSpreadPct: 0, deskMarginPaise: 0, rfqThresholdUsd: 1e9 });  /* direct booking; the RFQ test lowers it */
+Object.assign(SEED.settings, { marketSim: false, ibrSpreadPct: 0, deskMarginPaise: 0 });
+SEED.smes.forEach(s => { if (s.config) s.config.ratePreset = 'RP-1'; });  /* every SME locks live; the rate-mode tests set their own preset */
 const T = Engine.treasury;
 
 const NOW = '2026-09-24T06:00:00.000Z';                 /* 11:30 IST, before cut-off */
@@ -486,10 +487,10 @@ test('demo deals: a customer always has an open deal to quote, however long the 
 
 test('rate request (RFQ): the dealer quotes, the customer confirms the exact rate — and every race is refused', () => {
   const db = fresh();
-  db.settings.rfqThresholdUsd = 0;
+  db.smes.find(s => s.id === 'SME-1001').config.ratePreset = 'RP-3';   /* negotiated: deals or rate requests */
   /* the customer cannot lock a rate itself, nor book inline at submit */
-  refuses(() => run(db, MER, 'rate.book', { dir: 'out', currency: 'EUR', amount: 45000 }), /quoted by the treasury dealer/);
-  refuses(() => run(db, MER, 'outward.submit', { draft: payment({ rate: { mode: 'booked' } }) }), /quoted by the treasury dealer/);
+  refuses(() => run(db, MER, 'rate.book', { dir: 'out', currency: 'EUR', amount: 45000 }), /request a rate from the treasury dealer/);
+  refuses(() => run(db, MER, 'outward.submit', { draft: payment({ rate: { mode: 'booked' } }) }), /request a rate from the treasury dealer/);
   refuses(() => run(db, MAKER, 'rate.request', { actingFor: 'SME-1001', dir: 'out', currency: 'EUR', amount: 1000 }), /book the rate directly/);
   const r = run(db, MER, 'rate.request', { dir: 'out', currency: 'EUR', amount: 45000, draftRef: 'draft-1' });
   const rq = () => db.rfqs.find(x => x.id === r.id);
