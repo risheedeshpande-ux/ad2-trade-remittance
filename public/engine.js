@@ -1934,10 +1934,15 @@
   const activeUsersOf = (db, roleId) => db.logins.filter(l => l.role === roleId && l.active !== false);
   /* the guards every role change passes (S7, S18, S50, S51) */
   function checkRoles(db, roles) {
+    /* acting for a customer adds the customer's permissions; the ones it ships
+       with only originate work, which per-record four-eyes already keeps from
+       the person who approves it, so only permissions added to it count */
     const sme = roles.find(r => r.id === 'SME User') || {};
+    const shipped = new Set((((db.seedDefaults || {}).roles || db.roles).find(r => r.id === 'SME User') || {}).can || []);
+    const inherited = (sme.can || []).filter(c => !shipped.has(c));
     roles.filter(r => r.portal !== 'SME').forEach(r => {
       const eff = new Set(r.can);
-      if (eff.has('assist.transact')) (sme.can || []).forEach(c => eff.add(c));
+      if (eff.has('assist.transact')) inherited.forEach(c => eff.add(c));
       SEGREGATION_PAIRS.forEach(([x, y]) => {
         if (eff.has(x) && eff.has(y)) refuse('segregation_conflict', `${r.id} would hold both ${x} and ${y}${!r.can.includes(x) || !r.can.includes(y) ? ' (one of them through acting for a customer)' : ''}. A maker and its checker must be different roles.`,
           { role: r.id, pair: [x, y] });

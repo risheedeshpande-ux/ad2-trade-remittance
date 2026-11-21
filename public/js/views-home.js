@@ -735,19 +735,28 @@ function viewIntegrations() {
 function rolesPane() {
   const roles = [...DB.roles].sort((a, b) => a.order - b.order);
   const groups = [...new Set(DB.capabilities.map(c => c.group))];
-  const cell = (r, capId) => r.can.includes(capId) ? '<span class="badge b-green">Yes</span>'
+  /* the Administrator edits AD2 and treasury roles here; the API refuses a
+     maker/checker pair in one role, an orphaned open request, or an admin lockout */
+  const edit = can('admin.users') && !acting();
+  const guards = Engine.capCommands ? Engine.capCommands() : {};
+  const cell = (r, capId) => edit && r.portal !== 'SME'
+    ? `<input type="checkbox" data-act="role-cap" data-role="${esc(r.id)}" data-cap="${esc(capId)}" ${r.can.includes(capId) ? 'checked' : ''} aria-label="${esc(r.id)}: ${esc(capId)}">`
+    : r.can.includes(capId) ? '<span class="badge b-green">Yes</span>'
     : (r.segregated || []).includes(capId) ? '<span class="badge b-amber">No — segregated</span>' : '<span style="color:var(--muted)">No</span>';
   const matrix = groups.map(g => `
     <tr><td colspan="${roles.length + 1}" style="background:var(--surface-alt);font-weight:600;
       font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--r4m-table-header)">${esc(g)}</td></tr>
     ${DB.capabilities.filter(c => c.group === g).map(c => `
-      <tr><td>${esc(c.label)}<br><span style="color:var(--muted);font-size:var(--fs-xs);font-family:ui-monospace,Menlo,monospace">${esc(c.id)}</span></td>
+      <tr><td>${esc(c.label)}<br><span style="color:var(--muted);font-size:var(--fs-xs);font-family:ui-monospace,Menlo,monospace">${esc(c.id)}</span>
+        ${(guards[c.id] || []).length ? `<br><span style="color:var(--muted);font-size:var(--fs-xs)">Guards: ${esc(guards[c.id].join(', '))}</span>` : ''}</td>
         ${roles.map(r => `<td>${cell(r, c.id)}</td>`).join('')}</tr>`).join('')}`).join('');
   const defs = roles.map(r => `
     <div class="card" style="box-shadow:none;margin-bottom:var(--s3)">
       <div class="card-head"><h2>${esc(r.id)}</h2>
         <div class="acts"><span class="badge ${r.portal === 'AD2' ? 'b-blue' : 'b-teal'}">${esc(r.portal)} portal</span>
-          <span style="color:var(--muted);font-size:var(--fs-sm)">${r.can.length} capabilities</span></div></div>
+          <span style="color:var(--muted);font-size:var(--fs-sm)">${r.can.length} capabilities</span>
+          ${r.disabled ? '<span class="badge b-amber">Disabled</span>' : ''}
+          ${edit && r.portal !== 'SME' && r.id !== 'AD2 Administrator' ? `<button class="btn btn-plain btn-sm" type="button" data-act="role-enable" data-role="${esc(r.id)}" data-on="${r.disabled ? 1 : 0}">${r.disabled ? 'Enable' : 'Disable'}</button>` : ''}</div></div>
       <div class="card-body">
         <p style="margin:0 0 var(--s3);font-size:var(--fs-md)">${esc(r.summary)}</p>
         ${(r.segregated || []).length ? `<div class="note note-warn" style="margin-bottom:var(--s3)"><span>
@@ -756,7 +765,9 @@ function rolesPane() {
       </div></div>`).join('');
   return `<div class="card-body">
       <div class="note note-ok" style="margin-bottom:var(--s5)"><span>These permissions are enforced by the API on every action, not only by hiding buttons.
-        Each transaction also needs a different person at each stage — submit, verify, authorise, release.</span></div>
+        Each transaction also needs a different person at each stage — submit, verify, authorise, release.
+        ${edit ? `<br>Tick a box to grant a permission. A role can never hold both sides of a maker/checker pair (${esc((Engine.SEGREGATION_PAIRS || []).map(x => x.join(' / ')).join('; '))}), and every change is in the audit log with before and after.` : ''}</span></div>
+      ${edit && can('admin.settings') ? `<div style="margin:-8px 0 var(--s5)"><button class="btn btn-plain btn-sm" type="button" data-act="roles-restore">Restore default permissions</button></div>` : ''}
       <h3 style="font-size:var(--fs-md);margin:0 0 var(--s3)">What each role is for</h3>${defs}
       <h3 style="font-size:var(--fs-md);margin:var(--s6) 0 var(--s3)">Permission matrix</h3>
       <div class="tablewrap"><table class="dt">

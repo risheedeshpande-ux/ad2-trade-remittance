@@ -796,6 +796,31 @@ async function startServer() {
       check(await state(() => DB.ratePresets.find(p => p.id === 'RP-1').options.lockValidityHours) === 24, 'the new lock validity is saved');
       await page.fill('#pr-RP-1-lockValidityHours', '48'); await click('[data-act="preset-save"][data-id="RP-1"]'); await toastSays(/saved/);
     });
+    await scenario('Admin controller', 'The Administrator edits roles (a maker/checker pair is refused), sets a user limit in USD, changes onboarding rules and a purpose override — each audited', 'Admin → Maker', async () => {
+      await signAs('AD2', 'ADMIN'); await go('#/ad2/admin/roles');
+      check(await tmpCount('[data-act="role-cap"]') > 50, 'the permission matrix is editable for the Administrator');
+      await page.locator('[data-act="role-cap"][data-role="AD2 Maker"][data-cap="outward.approve"]').check();
+      await toastSays(/maker and its checker must be different roles/);
+      check(!(await state(() => DB.roles.find(r => r.id === 'AD2 Maker').can.includes('outward.approve'))), 'granting the checker step to the maker is refused, and the box goes back');
+      await go('#/ad2/admin/users');
+      await page.fill('[data-act="user-limit"][data-l="MAKER"]', '5000'); await page.locator('[data-act="user-limit"][data-l="MAKER"]').dispatchEvent('change');
+      await toastSays(/USD 5,000/);
+      await signAs('AD2', 'MAKER');
+      const big = await state(() => DB.outward.find(o => o.status === 'Submitted' && o.amount * (currency(o.currency) || {}).refRate / currency('USD').refRate > 5000));
+      if (big) { const r = await api('outward.verify', { id: big.id, checks: { documents: true, sanctions: true, purpose: true, beneficiary: true } });
+        check(!r.ok && /above your limit of USD 5,000/.test(r.msg), 'a payment above the maker’s USD limit is refused with the limit named'); }
+      await signAs('AD2', 'ADMIN'); await api('user.setLimit', { domainId: 'AD2', loginId: 'MAKER', limitUsd: null });
+      await go('#/ad2/admin/onboarding');
+      await page.selectOption('[data-act="ob-rule"][data-id="coi"][data-c="Partnership"]', 'not-needed'); await toastSays(/Partnership is now not-needed/);
+      await go('#/ad2/admin/docs');
+      await page.fill('#po-code', 'S0102'); await page.selectOption('#po-product', 'DIR'); await page.selectOption('#po-doc', 'boe'); await page.selectOption('#po-rule', 'waive');
+      await click('[data-act="po-add"]'); await toastSays(/waived/);
+      check(await tmpCount('[data-act="po-remove"]') === 1, 'the purpose override is listed');
+      await go('#/ad2/admin/audit');
+      const log = await page.locator('body').textContent();
+      check(/before: required; after: not-needed/.test(log) && /before: product rule; after: waived/.test(log), 'the audit log shows each change before and after');
+      await api('policy.restore', {}); await api('onboarding.restoreRules', {});
+    });
     await scenario('Treasury', 'Branch counter: quote, stepped review, book; the FX Plus bill links back on punch; knock off the rest; concluded and stock moves', 'Branch (Delhi CP)', async () => {
       await signAs('AD2', 'BRANCH2'); await go('#/B-02');
       await select('#bq-product', 'CSH'); await select('#bq-currency', 'USD');

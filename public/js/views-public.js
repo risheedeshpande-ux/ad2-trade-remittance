@@ -234,8 +234,11 @@ function obBanks(d) {
       <tbody>${rows}</tbody></table></div></div>
     <button class="btn btn-ghost" style="margin-top:14px" type="button" data-act="ob-bank-add">Add bank account</button>`;
 }
+/* the documents this kind of business uploads, as the AD2 Administrator set them */
+const obChecklist = d => Engine.onboardChecklist ? Engine.onboardChecklist(DB, d.constitution) : DB.onboardDocs;
+const kycReq = f => ((DB.settings || {}).kycRequired || {})[f] !== false;
 function obDocs(d) {
-  return docRows(DB.onboardDocs.map(x => ({ ...x, note: x.required ? 'Required' : 'Optional' })), d.docs, 'ob') +
+  return docRows(obChecklist(d).map(x => ({ ...x, note: x.required ? 'Required' : 'Optional' })), d.docs, 'ob') +
     `<p style="color:var(--muted);font-size:var(--fs-sm);margin-top:14px">
       Only the file name and size are recorded in this demo — file contents never leave your device.</p>`;
 }
@@ -283,18 +286,18 @@ function onboardMissing(d) {
   }
   if (!d.pan) m.push('PAN');
   if (!d.gstin) m.push('GSTIN');
-  if (!d.iec) m.push('IEC (mandatory)');
+  if (!d.iec && kycReq('iec')) m.push('IEC (mandatory)');
   if (!d.contactName || !d.email || !d.mobile || !d.designation) m.push('contact details');
   if (!d.industry || !d.description) m.push('business profile');
-  if (d.service !== 'Export' && !d.importVolume) m.push('expected annual import volume');
-  if (d.service !== 'Import' && !d.exportVolume) m.push('expected annual export volume');
-  if (!d.countries.length) m.push('countries traded with');
-  if (!d.signatories.length) m.push('at least one authorised signatory');
+  if (kycReq('volumes') && d.service !== 'Export' && !d.importVolume) m.push('expected annual import volume');
+  if (kycReq('volumes') && d.service !== 'Import' && !d.exportVolume) m.push('expected annual export volume');
+  if (kycReq('countries') && !d.countries.length) m.push('countries traded with');
+  if (kycReq('signatories') && !d.signatories.length) m.push('at least one authorised signatory');
   else if (d.signatories.some(g => !g.name || !g.designation || !g.email || !g.mobile)) m.push('signatory name, designation, email and mobile');
   if (!d.requestedCurrencies.length) m.push('at least one requested currency');
   if (!d.service) m.push('requested service');
   if (!d.banks.length) m.push('at least one bank account');
-  const docs = DB.onboardDocs.filter(x => x.required && !d.docs[x.id]).map(x => x.name);
+  const docs = obChecklist(d).filter(x => x.required && !d.docs[x.id]).map(x => x.name);
   if (docs.length) m.push('documents: ' + docs.join(', '));
   return m;
 }
