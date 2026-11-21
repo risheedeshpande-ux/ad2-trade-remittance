@@ -6,7 +6,7 @@
 
 /* Bump this whenever the shape of SEED changes. A stored state with another
    version is discarded and reseeded. */
-const SEED_VERSION = 'ad2-trade-v15';
+const SEED_VERSION = 'ad2-trade-v16';
 
 /* --- currency master -------------------------------------------------------
    marginMultiplier derives the non-USD margin from the USD margin, per the
@@ -1000,7 +1000,7 @@ const SEED = {
     { id:'RP-2', name:'Bank-priced', mode:'bank', isDefault:false, options:{ lockValidityHours:48 } },
     { id:'RP-3', name:'Negotiated', mode:'negotiated', isDefault:false, options:{ lockValidityHours:48, allowDeals:true, allowRfq:true, quoteValidMin:15 } } ],
   settings:{ ibrSpreadPct:0.04, deskMarginPaise:10, rfqAutoQuoteSec:0, autoChecker:false, allowUnlinked:false, testLab:true, marginBand:5, cutoff:'16:00', marketSim:true, maxOpenBookings:5, rateBand:2, agedDays:3,
-             steppedThresholdInr:4000000, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
+             steppedThresholdUsd:45000, kycRequired:{ iec:true, volumes:true, countries:true, signatories:true }, reminderAfterMin:30, escalateAfterMin:120, approvalSlaMin:120, orgName:'AD2 Trade Services' },
   seq:{ utr:118, firc:119300, inw:779100, audit:100, note:1, notif:1, email:1, ufi:4100, lab:0, pos:100, cov:0, cal:0, fxd:77520, rrv:0, evt:0 },
 };
 

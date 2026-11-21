@@ -333,7 +333,8 @@
     function stepReasons(db, a, d, q, override) {
       const why = [];
       if (override) why.push('Rate override');
-      if (d.amount * q.rate >= Number(settings(db).steppedThresholdInr || 4000000)) why.push(`Above ${inr(Number(settings(db).steppedThresholdInr || 4000000))}`);
+      const thr = T.steppedInr(db);
+      if (d.amount * q.rate >= thr) why.push(`Above ${inr(thr)}`);
       if (!loginOf(db, a).quotedBefore) why.push('First quote by this user');
       return why;
     }
