@@ -193,10 +193,13 @@ function recentPanel() {
     { h: 'Position', v: q => q.positionId ? posRef({ id: q.positionId }) : '<span class=dim>—</span>', csv: q => q.positionId || '' },
   ], list, { title: 'Your recent quotes', noun: 'quote', name: 'Recent quotes' })}</div>` : '';
 }
+/* the stepped review threshold is set in USD; the branch works in INR */
+const steppedText = () => { const st = DB.settings || {}; let inrV; try { inrV = Engine.treasury.steppedInr(DB); } catch (e) { inrV = null; }
+  return st.steppedThresholdUsd != null ? `USD ${Number(st.steppedThresholdUsd).toLocaleString('en-IN')}${inrV ? ' (' + inr(inrV) + ' today)' : ''}` : inr(st.steppedThresholdInr || 4000000); };
 screen({ id: 'B-02', title: 'Take an FX rate', when: () => !isAgent(),
   sub: () => `Single screen &nbsp;·&nbsp; quote valid ${(V.productOf(DB, BQ.product) || {}).quoteMinutes || 10} minutes &nbsp;·&nbsp; stepped review only for overrides, large amounts and first-time users`,
   render: () => `<div class=filters><span class="chip on">Quick quote</span>${BQ.quoteId ? golink('Stepped review', 'B-03', { q: BQ.quoteId }, 'chip') : ''}<span class=sp></span>
-    <span class=src>Stepped review is required for margin overrides and amounts above ${inr((DB.settings || {}).steppedThresholdInr || 4000000)}</span></div>
+    <span class=src>Stepped review is required for margin overrides and amounts above ${steppedText()}</span></div>
     ${quoteForm(false)}${recentPanel()}` });
 screen({ id: 'B-02a', title: 'Take an FX rate — agent view', when: () => isAgent() || isMaster(),
   sub: () => `${esc(me().agentName || 'Agent')} &nbsp;·&nbsp; serviced by ${esc(myScopeName())} &nbsp;·&nbsp; the agent spread is added to the branch rate`,

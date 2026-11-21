@@ -118,9 +118,23 @@
 
   /* Document checklist for a product + purpose code. inrAmount drives the
      threshold rule (Form 146). */
+  /* A purpose code can add, require or waive a document over the product's
+     rule (S9). An override for this product beats one for every product. */
+  function purposeRule(db, productId, purposeCode, docId) {
+    const list = (db.purposeDocRules || []).filter(r => r.purposeCode === purposeCode && r.docId === docId);
+    return list.find(r => r.product === productId) || list.find(r => !r.product || r.product === '*') || null;
+  }
   function checklist(db, productId, purposeCode, inrAmount, opts) {
     const option = (opts && opts.option) || 'knockoff';
-    return (db.docPolicy || []).filter(d => d.product === productId).map(d => {
+    const base = (db.docPolicy || []).filter(d => d.product === productId);
+    /* documents a purpose adds that the product does not list */
+    const added = (db.purposeDocRules || []).filter(r => r.purposeCode === purposeCode && (r.product === productId || !r.product || r.product === '*')
+      && r.rule !== 'waive' && !base.some(d => d.id === r.docId))
+      .filter((r, i, arr) => arr.findIndex(x => x.docId === r.docId) === i)
+      .map(r => ({ product: productId, id: r.docId, name: r.name || r.docId, rule: 'required' }));
+    return [...base, ...added].map(d0 => {
+      const o = purposeRule(db, productId, purposeCode, d0.id);
+      const d = o ? { ...d0, rule: o.rule === 'waive' ? 'optional' : o.rule === 'threshold' ? 'threshold' : 'required', threshold: o.rule === 'threshold' ? o.threshold : d0.threshold } : d0;
       let required = d.rule === 'required', note = '';
       if (d.rule === 'optional') note = 'Optional';
       if (d.rule === 'knockoff') {
@@ -136,7 +150,8 @@
         note = required ? `Required — above ${inr(d.threshold)} INR equivalent`
                         : `Optional — up to ${inr(d.threshold)} INR equivalent`;
       }
-      return { id: d.id, name: d.name, required, rule: d.rule, note };
+      if (o && o.rule !== 'threshold') note = o.rule === 'waive' ? `Waived for purpose ${purposeCode}` : `Required for purpose ${purposeCode}`;
+      return { id: d.id, name: d.name, required, rule: d.rule, note, ...(o ? { purposeRule: o.rule } : {}) };
     });
   }
 
@@ -363,6 +378,9 @@
   function freshState(SEED, nowIso, opts) {
     const db = clone(SEED);
     const now = nowIso || new Date().toISOString();
+    /* what "Restore defaults" goes back to (S34/S41): never sent to a browser */
+    db.seedDefaults = clone({ roles: SEED.roles, docPolicy: SEED.docPolicy, purposeDocRules: SEED.purposeDocRules || [], onboardDocs: SEED.onboardDocs,
+      kycRequired: (SEED.settings || {}).kycRequired || {} });
     db.rev = Math.max(0, Number(opts && opts.rev) || 0);
     db.epoch = now + '~' + Math.random().toString(36).slice(2, 8);
     db.settings = { autoChecker: false, allowUnlinked: false, testLab: true, marginBand: 5,
@@ -440,6 +458,13 @@
   const X = installTmp(E, T, E.hooks);
 
   /* ---------- onboarding -------------------------------------------------- */
+  const kyc = db => (db.settings || {}).kycRequired || {};
+  /* the onboarding documents for a constitution: each document's own rule,
+     unless the admin set another for that constitution */
+  const onboardChecklist = (db, constitution) => (db.onboardDocs || []).map(d => {
+    const r = (d.byConstitution || {})[constitution] || (d.required ? 'required' : 'optional');
+    return { id: d.id, name: d.name, required: r === 'required', rule: r };
+  }).filter(d => d.rule !== 'not-needed');
   function readApplication(db, app) {
     app = app || {};
     const out = {
@@ -457,7 +482,7 @@
         patternMsg: 'PAN must look like AAAAA9999A.' }),
       gstin: txt(String(app.gstin || '').toUpperCase(), 'GSTIN', { max: 15, pattern: /^[0-9]{2}[A-Z0-9]{13}$/,
         patternMsg: 'GSTIN must be 15 characters starting with the two-digit state code.' }),
-      iec: txt(String(app.iec || '').toUpperCase(), 'IEC', { max: 10, pattern: /^[A-Z0-9]{10}$/,
+      iec: txt(String(app.iec || '').toUpperCase(), 'IEC', { max: 10, pattern: /^[A-Z0-9]{10}$/, required: kyc(db).iec !== false,
         patternMsg: 'IEC must be 10 letters or digits. It is mandatory for regular exporters and importers.' }),
       contactName: txt(app.contactName, 'Contact name', { max: 100 }),
       designation: txt(app.designation, 'Designation', { max: 80 }),
@@ -469,13 +494,16 @@
       exportVolume: txt(app.exportVolume, 'Expected annual export volume', { max: 60, required: false }),
       service: oneOf(app.service, ['Import', 'Export', 'Both'], 'Requested service'),
     };
-    need(out.service === 'Export' || out.importVolume, 'Expected annual import volume is required.');
-    need(out.service === 'Import' || out.exportVolume, 'Expected annual export volume is required.');
+    const k = kyc(db);
+    if (k.volumes !== false) {
+      need(out.service === 'Export' || out.importVolume, 'Expected annual import volume is required.');
+      need(out.service === 'Import' || out.exportVolume, 'Expected annual export volume is required.');
+    }
     out.countries = [...new Set((Array.isArray(app.countries) ? app.countries : []).map(c => txt(c, 'Country traded', { max: 60, required: false })).filter(Boolean))];
-    need(out.countries.length, 'List at least one country you trade with.');
+    if (k.countries !== false) need(out.countries.length, 'List at least one country you trade with.');
     need(out.countries.length <= 30, 'List up to 30 countries.');
     const sigs = Array.isArray(app.signatories) ? app.signatories.slice(0, 10) : [];
-    need(sigs.length, 'Add at least one authorised signatory.');
+    if (k.signatories !== false) need(sigs.length, 'Add at least one authorised signatory.');
     out.signatories = sigs.map((g, i) => {
       const L = `Signatory ${i + 1}`, lim = g.limit == null || g.limit === '' ? null : Number(g.limit);
       need(lim == null || (isFinite(lim) && lim > 0 && lim <= 1e12), `${L} limit must be a positive amount.`);
@@ -504,7 +532,7 @@
       verified: bool(b.verified),
     }));
     out.docs = docsIn(app.docs, (db.onboardDocs || []).map(d => d.id));
-    const miss = (db.onboardDocs || []).filter(d => d.required && !out.docs[d.id]).map(d => d.name);
+    const miss = onboardChecklist(db, out.constitution).filter(d => d.required && !out.docs[d.id]).map(d => d.name);
     need(!miss.length, 'Upload the required documents: ' + miss.join(', ') + '.', miss);
     return out;
   }
@@ -1880,6 +1908,248 @@
     },
   };
 
+  /* ---------- admin controller ---------------------------------------------
+     Roles, user limits, onboarding rules and purpose overrides. Every change
+     writes its before and after values to the audit log (X3). */
+  /* capabilities one role may never hold together: each is a maker/checker
+     pair (S18) */
+  const SEGREGATION_PAIRS = [['onboard.review', 'onboard.approve'], ['outward.verify', 'outward.approve'],
+    ['inward.verifyDisposal', 'inward.approveDisposal'], ['recon.propose', 'recon.confirm'], ['treasury.deal', 'treasury.approve']];
+  const ADMIN_KEEPS = ['admin.users', 'admin.settings', 'admin.masters'];
+  /* what a role can actually do: its own list, plus the customer's when it
+     may act for a customer (S51) */
+  const effectiveCaps = (db, list) => {
+    const own = new Set(list);
+    if (own.has('assist.transact')) ((roleDef(db, 'SME User') || {}).can || []).forEach(c => own.add(c));
+    return own;
+  };
+  /* the capability each open request is waiting on */
+  function openNeeds(db) {
+    const out = new Map(), add = (cap, id) => out.set(cap, [...(out.get(cap) || []), id]);
+    db.outward.forEach(o => { const c = { Submitted: 'outward.verify', Verified: 'outward.approve', Authorised: 'outward.complete' }[o.status]; if (c) add(c, o.id); });
+    db.disposals.forEach(d => { const c = { Submitted: 'inward.verifyDisposal', Verified: 'inward.approveDisposal', Authorised: 'inward.processDisposal' }[d.status]; if (c) add(c, d.id); });
+    db.smes.forEach(x => { const c = { Submitted: 'onboard.review', 'Under Review': 'onboard.review', 'Pending Approval': 'onboard.approve' }[x.status]; if (c) add(c, x.id); });
+    return out;
+  }
+  const activeUsersOf = (db, roleId) => db.logins.filter(l => l.role === roleId && l.active !== false);
+  /* the guards every role change passes (S7, S18, S50, S51) */
+  function checkRoles(db, roles) {
+    /* acting for a customer adds the customer's permissions; the ones it ships
+       with only originate work, which per-record four-eyes already keeps from
+       the person who approves it, so only permissions added to it count */
+    const sme = roles.find(r => r.id === 'SME User') || {};
+    const shipped = new Set((((db.seedDefaults || {}).roles || db.roles).find(r => r.id === 'SME User') || {}).can || []);
+    const inherited = (sme.can || []).filter(c => !shipped.has(c));
+    roles.filter(r => r.portal !== 'SME').forEach(r => {
+      const eff = new Set(r.can);
+      if (eff.has('assist.transact')) inherited.forEach(c => eff.add(c));
+      SEGREGATION_PAIRS.forEach(([x, y]) => {
+        if (eff.has(x) && eff.has(y)) refuse('segregation_conflict', `${r.id} would hold both ${x} and ${y}${!r.can.includes(x) || !r.can.includes(y) ? ' (one of them through acting for a customer)' : ''}. A maker and its checker must be different roles.`,
+          { role: r.id, pair: [x, y] });
+      });
+    });
+    const admin = roles.find(r => r.id === 'AD2 Administrator');
+    if (admin) ADMIN_KEEPS.forEach(c => { if (!admin.can.includes(c)) refuse('admin_lockout', `The AD2 Administrator always keeps ${c}, so the platform can still be managed.`, { cap: c }); });
+    /* no open request may be left with nobody to act on it (S50) */
+    openNeeds(db).forEach((ids, cap) => {
+      const holders = roles.filter(r => !r.disabled && r.portal !== 'SME' && r.can.includes(cap) && activeUsersOf(db, r.id).length);
+      if (!holders.length) refuse('cap_orphaned', `No active user would hold ${cap}, but ${ids.length} open request${ids.length === 1 ? ' waits' : 's wait'} on it (${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ', …' : ''}). Give it to another role first.`,
+        { cap, open: ids.length });
+    });
+  }
+  const capsText = list => [...list].sort().join(', ') || 'none';
+
+  C['roles.update'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const r = roleDef(db, p.role) || missing('Role');
+      const known = new Set((db.capabilities || []).map(c => c.id));
+      const list = [...new Set((Array.isArray(p.can) ? p.can : []).map(String))];
+      const bad = list.filter(c => !known.has(c));
+      if (bad.length) refuse('invalid_option', `Unknown permission: ${bad.join(', ')}.`, { unknown: bad });
+      checkRoles(db, db.roles.map(x => x.id === r.id ? { ...x, can: list } : x));
+      const before = capsText(r.can);
+      if (before === capsText(list)) return { message: 'No change.' };
+      r.can = list;
+      audit(db, a, ctx.now, 'ROLES', `${r.id} permissions changed — before: ${before}; after: ${capsText(list)}`);
+      return { message: `${r.id} saved. It takes effect on each user’s next action.` };
+    },
+  };
+  C['roles.setEnabled'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const r = roleDef(db, p.role) || missing('Role');
+      const on = bool(p.enabled);
+      need(r.id !== 'AD2 Administrator' && r.portal !== 'SME', `${r.id} cannot be disabled.`);
+      if (!on) {
+        const users = activeUsersOf(db, r.id);
+        if (users.length) refuse('role_in_use', `${r.id} has ${users.length} active user${users.length === 1 ? '' : 's'} (${users.map(l => l.domainId + '/' + l.loginId).join(', ')}). Move them to another role first.`,
+          { role: r.id, users: users.map(l => l.domainId + '/' + l.loginId) });
+      }
+      if (!!r.disabled === !on) return { message: 'No change.' };
+      r.disabled = !on;
+      audit(db, a, ctx.now, 'ROLES', `${r.id} — before: ${on ? 'disabled' : 'enabled'}; after: ${on ? 'enabled' : 'disabled'}`);
+      return { message: `${r.id} ${on ? 'enabled' : 'disabled — it can no longer be given to a user'}.` };
+    },
+  };
+  /* one click back to the shipped definitions, for a bad edit mid-demo (S34) */
+  C['roles.restore'] = {
+    cap: 'admin.settings',
+    run(db, a, p, ctx) {
+      const def = (db.seedDefaults || {}).roles;
+      need(def, 'No default roles are stored for this data. Reset the demo data instead.');
+      const before = db.roles.map(r => `${r.id}: ${capsText(r.can)}${r.disabled ? ' (disabled)' : ''}`).join(' | ');
+      db.roles = clone(def);
+      audit(db, a, ctx.now, 'ROLES', `Default permissions restored — before: ${before}`);
+      return { message: 'Default roles and permissions restored.' };
+    },
+  };
+
+  /* A user's transaction limit, in USD (S15). Checked when that user verifies,
+     authorises or releases an outward payment or disposal, at the USD
+     reference; a missing reference rate refuses rather than passes. */
+  C['user.setLimit'] = {
+    cap: 'admin.users',
+    run(db, a, p, ctx) {
+      const l = loginOf(db, p.domainId, p.loginId) || missing('User');
+      need(l.domainId === 'AD2', 'Limits apply to AD2 users.');
+      const v = p.limitUsd === null || p.limitUsd === '' || p.limitUsd === undefined ? null : Number(p.limitUsd);
+      if (v != null && !(isFinite(v) && v > 0 && v <= 1e10)) refuse('out_of_range', 'A user limit must be a positive USD amount, or empty for no limit.', { field: 'limitUsd' });
+      const was = l.limitUsd == null ? 'no limit' : 'USD ' + fmt(l.limitUsd);
+      const next = v == null ? null : round2(v);
+      const now_ = next == null ? 'no limit' : 'USD ' + fmt(next);
+      if (was === now_) return { message: 'No change.' };
+      l.limitUsd = next;
+      audit(db, a, ctx.now, 'USERS', `Transaction limit for ${l.domainId}/${l.loginId} — before: ${was}; after: ${now_}`);
+      return { message: `${l.domainId}/${l.loginId}: ${now_}.` };
+    },
+  };
+  const LIMITED = { 'outward.verify': 'outward', 'outward.authorise': 'outward', 'outward.execute': 'outward',
+    'disposal.verify': 'disposals', 'disposal.authorise': 'disposals', 'disposal.process': 'disposals' };
+  function checkLimit(db, a, cmd, p) {
+    const l = a && loginOf(db, a.domainId, a.loginId);
+    if (!l || l.limitUsd == null) return;
+    const rec = find(db[LIMITED[cmd]] || [], p.id);
+    if (!rec) return;
+    const usd = T.usdOfStrict(db, rec.currency, rec.amount);
+    if (usd > l.limitUsd) refuse('user_limit', `${rec.id} is USD ${fmt(usd)} at today’s reference, above your limit of USD ${fmt(l.limitUsd)}. A user with a higher limit must act on it.`,
+      { id: rec.id, amountUsd: usd, limitUsd: l.limitUsd, usdRefRate: (currencyOf(db, 'USD') || {}).refRate });
+  }
+
+  /* Onboarding rules: documents by constitution, mandatory KYC fields. The
+     high-risk country list is the compliance rule both onboarding and
+     payments are scored with. */
+  const OB_RULES = ['required', 'optional', 'not-needed'];
+  C['onboarding.setDocRule'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const d = (db.onboardDocs || []).find(x => x.id === p.id) || missing('Onboarding document');
+      const rule = oneOf(p.rule, OB_RULES, 'Rule');
+      const con = p.constitution && p.constitution !== '*' ? oneOf(p.constitution, db.constitutions, 'Constitution') : null;
+      if (!con) need(rule !== 'not-needed', 'Every document is at least optional by default; choose a constitution to drop it for that one.');
+      const dflt = d.required ? 'required' : 'optional';
+      const was = con ? ((d.byConstitution || {})[con] || dflt) : dflt;
+      if (was === rule) return { message: 'No change.' };
+      if (con) { d.byConstitution = { ...(d.byConstitution || {}), [con]: rule }; if (rule === dflt) delete d.byConstitution[con]; }
+      else d.required = rule === 'required';
+      audit(db, a, ctx.now, 'ONBOARDING', `${d.name}${con ? ' for ' + con : ''} — before: ${was}; after: ${rule}`);
+      return { message: `${d.name}${con ? ' for ' + con : ''} is now ${rule}. New applications use it.` };
+    },
+  };
+  C['onboarding.addDoc'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const name = txt(p.name, 'Document name', { max: 80 });
+      need(!(db.onboardDocs || []).some(d => d.name.toLowerCase() === name.toLowerCase()), `${name} is already on the onboarding checklist.`);
+      const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12) || 'doc';
+      let id = base, k = 1; while (db.onboardDocs.some(x => x.id === id)) id = base + (++k);
+      db.onboardDocs.push({ id, name, required: bool(p.required), added: true });
+      audit(db, a, ctx.now, 'ONBOARDING', `${name} — before: not on the checklist; after: ${bool(p.required) ? 'required' : 'optional'}`);
+      return { message: `${name} added to the onboarding checklist.` };
+    },
+  };
+  const KYC_FIELDS = { iec: 'IEC', volumes: 'Expected import / export volumes', countries: 'Countries traded', signatories: 'Authorised signatories' };
+  C['onboarding.setField'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const f = oneOf(p.field, Object.keys(KYC_FIELDS), 'Field');
+      const on = bool(p.required);
+      const was = kyc(db)[f] !== false;
+      if (was === on) return { message: 'No change.' };
+      db.settings.kycRequired = { ...kyc(db), [f]: on };
+      audit(db, a, ctx.now, 'ONBOARDING', `${KYC_FIELDS[f]} — before: ${was ? 'mandatory' : 'optional'}; after: ${on ? 'mandatory' : 'optional'}`);
+      return { message: `${KYC_FIELDS[f]} is now ${on ? 'mandatory' : 'optional'} on new applications.` };
+    },
+  };
+  C['onboarding.restoreRules'] = {
+    cap: 'admin.settings',
+    run(db, a, p, ctx) {
+      const def = db.seedDefaults || {};
+      need(def.onboardDocs, 'No default rules are stored for this data. Reset the demo data instead.');
+      const before = `${(db.onboardDocs || []).map(d => d.name + ': ' + (d.required ? 'required' : 'optional') + (d.byConstitution ? ' ' + JSON.stringify(d.byConstitution) : '')).join(', ')}; KYC ${JSON.stringify(kyc(db))}`;
+      db.onboardDocs = clone(def.onboardDocs); db.settings.kycRequired = clone(def.kycRequired);
+      audit(db, a, ctx.now, 'ONBOARDING', `Default onboarding rules restored — before: ${before}`);
+      return { message: 'Default onboarding rules restored.' };
+    },
+  };
+
+  /* Purpose overrides on the document policy (S9): a purpose code can require,
+     waive, or set an amount threshold on a document, for one product or all. */
+  const showOverride = r => r.rule === 'waive' ? 'waived' : r.rule === 'require' ? 'required' : `required above ${inr(r.threshold)}`;
+  /* Regulatory document thresholds stay INR (S8/S36): the admin may type USD,
+     converted once at today's USD reference and recorded. */
+  function readInrThreshold(db, p) {
+    if (p.thresholdUsd != null && p.thresholdUsd !== '') {
+      const u = Number(p.thresholdUsd);
+      if (!(isFinite(u) && u > 0)) refuse('out_of_range', 'The threshold must be a positive USD amount.', { field: 'thresholdUsd' });
+      T.usdOfStrict(db, 'USD', 1);
+      const ref = currencyOf(db, 'USD').refRate;
+      return { threshold: round2(u * ref), enteredUsd: round2(u), convertedAt: `₹ ${Number(ref).toFixed(4)} per USD` };
+    }
+    const t = Number(p.threshold);
+    if (!(isFinite(t) && t > 0)) refuse('out_of_range', 'The threshold must be a positive INR amount.', { field: 'threshold' });
+    return { threshold: round2(t) };
+  }
+  C['policy.setPurposeRule'] = {
+    cap: 'admin.masters',
+    run(db, a, p, ctx) {
+      const code = String(p.purposeCode || '').toUpperCase();
+      need([...(db.purposeCodes || []), ...(db.inwardPurposes || [])].some(x => x.code === code), `Purpose code ${code || '(none)'} is not in the master.`);
+      const product = p.product && p.product !== '*' ? (productOf(db, p.product) || missing('Product')).id : '*';
+      const known = (db.docPolicy || []).find(d => d.id === p.docId && (product === '*' || d.product === product));
+      const name = known ? known.name : txt(p.name, 'Document name', { max: 80 });
+      const docId = known ? known.id : (p.docId || name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12));
+      const list = db.purposeDocRules = db.purposeDocRules || [];
+      const at = list.findIndex(r => r.purposeCode === code && r.docId === docId && (r.product || '*') === product);
+      const was = at >= 0 ? showOverride(list[at]) : 'product rule';
+      const where = product === '*' ? 'all products' : product;
+      if (p.rule == null || p.rule === '' || p.rule === 'product') {
+        if (at < 0) return { message: 'No change.' };
+        list.splice(at, 1);
+        audit(db, a, ctx.now, 'POLICY', `${code} · ${name} (${where}) — before: ${was}; after: product rule`);
+        return { message: `${name} under ${code} follows the product rule again.` };
+      }
+      const rule = oneOf(p.rule, ['require', 'waive', 'threshold'], 'Override');
+      const row = { purposeCode: code, product, docId, name, rule };
+      if (rule === 'threshold') Object.assign(row, readInrThreshold(db, p));
+      if (at >= 0) list[at] = row; else list.push(row);
+      audit(db, a, ctx.now, 'POLICY', `${code} · ${name} (${where}) — before: ${was}; after: ${showOverride(row)}${row.convertedAt ? ` (entered USD ${fmt(row.enteredUsd)}, converted at ${row.convertedAt})` : ''}`);
+      return { message: `${name} under ${code}: ${showOverride(row)}.` };
+    },
+  };
+  C['policy.restore'] = {
+    cap: 'admin.settings',
+    run(db, a, p, ctx) {
+      const def = db.seedDefaults || {};
+      need(def.docPolicy, 'No default policy is stored for this data. Reset the demo data instead.');
+      const before = `${db.docPolicy.length} product rules, ${(db.purposeDocRules || []).length} purpose overrides: ` +
+        db.docPolicy.map(d => `${d.product}·${d.id}:${d.rule}${d.rule === 'threshold' ? '>' + d.threshold : ''}`).join(', ');
+      db.docPolicy = clone(def.docPolicy); db.purposeDocRules = clone(def.purposeDocRules || []);
+      audit(db, a, ctx.now, 'POLICY', `Default document policy restored — before: ${before}`);
+      return { message: 'Default document policy restored, purpose overrides cleared.' };
+    },
+  };
+
   C['settings.update'] = {
     cap: 'admin.settings',
     run(db, a, p, ctx) {
@@ -1888,18 +2158,21 @@
         need(/^([01]\d|2[0-3]):[0-5]\d$/.test(String(p.cutoff)), 'The treasury cut-off must be a time like 16:00.');
         db.settings.cutoff = String(p.cutoff); changes.push(`cut-off ${db.settings.cutoff} IST`);
       }
-      [['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged'],
+      [['steppedThresholdUsd', 1000, 1e8, 'stepped review threshold (USD)'], ['maxOpenBookings', 1, 20, 'open rate bookings per customer'], ['rateBand', 0.5, 5, 'rate revision band (%)'], ['agedDays', 1, 30, 'days before an attached position is aged'],
        ['rfqAutoQuoteSec', 0, 3600, 'auto-quote delay (seconds, 0 = off)'], ['ibrSpreadPct', 0, 1, 'interbank spread (%)']]
         .forEach(([k, lo, hi, label]) => {
           if (p[k] === undefined) return;
           const v = Number(p[k]);
           need(isFinite(v) && v >= lo && v <= hi, `The ${label} must be between ${lo} and ${hi}.`);
-          db.settings[k] = v; changes.push(`${k} ${v}`);
+          if (db.settings[k] === v) return;
+          changes.push(`${k} ${db.settings[k] ?? '—'} → ${v}`); db.settings[k] = v;
+          if (k === 'steppedThresholdUsd') delete db.settings.steppedThresholdInr;
         });
       ['autoChecker', 'allowUnlinked', 'testLab', 'marketSim'].forEach(k => {
         if (p[k] === undefined) return;
+        const was = !!db.settings[k];
         db.settings[k] = bool(p[k]);
-        changes.push(`${k} ${db.settings[k] ? 'on' : 'off'}`);
+        if (was !== db.settings[k]) changes.push(`${k} ${was ? 'on' : 'off'} → ${db.settings[k] ? 'on' : 'off'}`);
       });
       if (p.marginBand !== undefined) {
         const v = Number(p.marginBand);
@@ -1907,8 +2180,8 @@
         db.settings.marginBand = Math.round(v);
         changes.push(`marginBand ${db.settings.marginBand}p`);
       }
-      need(changes.length, 'Nothing to change.');
-      audit(db, a, ctx.now, 'SETTINGS', 'Settings changed: ' + changes.join(', '));
+      if (!changes.length) return { message: 'No change.' };
+      audit(db, a, ctx.now, 'SETTINGS', 'Settings changed (before → after): ' + changes.join(', '));
       return { message: 'Settings saved.' };
     },
   };
@@ -1919,13 +2192,15 @@
       const d = (db.docPolicy || []).find(x => x.product === p.product && x.id === p.docId) || missing('Document rule');
       const rule = oneOf(p.rule, RULES, 'Rule');
       if (rule === 'knockoff') need(d.product === 'TRADE', 'The knock-off rule applies to disposal (TRADE) documents only.');
+      const was = d.rule + (d.rule === 'threshold' ? ' above ' + inr(d.threshold) : '');
+      let conv = '';
       if (rule === 'threshold') {
-        const t = p.threshold != null && p.threshold !== '' ? Number(p.threshold) : (d.threshold || 500000);
-        need(isFinite(t) && t > 0, 'The threshold must be a positive INR amount.');
-        d.threshold = round2(t);
+        const t = (p.threshold != null && p.threshold !== '') || (p.thresholdUsd != null && p.thresholdUsd !== '') ? readInrThreshold(db, p) : { threshold: d.threshold || 500000 };
+        d.threshold = t.threshold;
+        if (t.convertedAt) conv = ` (entered USD ${fmt(t.enteredUsd)}, converted at ${t.convertedAt})`;
       }
-      const was = d.rule; d.rule = rule;
-      audit(db, a, ctx.now, 'POLICY', `${d.product} · ${d.name}: ${was} → ${rule}${rule === 'threshold' ? ' above ' + inr(d.threshold) : ''}`);
+      d.rule = rule;
+      audit(db, a, ctx.now, 'POLICY', `${d.product} · ${d.name} — before: ${was}; after: ${rule}${rule === 'threshold' ? ' above ' + inr(d.threshold) : ''}${conv}`);
       return { message: `${d.name} under ${d.product} is now ${rule}.` };
     },
   };
@@ -2034,7 +2309,7 @@
       need(!loginOf(db, domainId, loginId), `${domainId}/${loginId} already exists.`);
       const name = txt(u.name, 'Name', { max: 100 });
       let role, smeId = null;
-      if (domainId === 'AD2') role = oneOf(u.role, db.roles.filter(r => r.portal === 'AD2').map(r => r.id), 'Role');
+      if (domainId === 'AD2') role = oneOf(u.role, db.roles.filter(r => r.portal === 'AD2' && !r.disabled).map(r => r.id), 'Role');
       else {
         const s = db.smes.find(x => x.domainId === domainId);
         need(s, `No SME uses Domain ID ${domainId}.`);
@@ -2066,7 +2341,7 @@
       const l = loginOf(db, p.domainId, p.loginId) || missing('User');
       need(l.domainId === 'AD2', 'Only AD2 users change role here. SME roles follow the application status.');
       need(!(l.domainId === a.domainId && l.loginId === a.loginId), 'You cannot change your own role.');
-      const role = oneOf(p.role, db.roles.filter(r => r.portal === 'AD2').map(r => r.id), 'Role');
+      const role = oneOf(p.role, db.roles.filter(r => r.portal === 'AD2' && !r.disabled).map(r => r.id), 'Role');
       if (l.role === 'AD2 Administrator' && role !== l.role)
         need(db.logins.some(x => x !== l && x.role === 'AD2 Administrator' && x.active !== false), 'Keep at least one active Administrator.');
       const was = l.role; l.role = role;
@@ -2354,6 +2629,7 @@
       if (own && own.status === 'Rejected') forbid('This application was rejected. Access is not available.');
     }
     if (def.cap) requireCap(db, a, def.cap);
+    if (LIMITED[cmd]) checkLimit(db, a, cmd, payload);
     T.sweep(db, ctx.now);
     const result = def.run(db, a, payload, ctx) || {};
     db.rev = (db.rev || 0) + 1;
@@ -2363,15 +2639,15 @@
   /* ---------- what each user may see -------------------------------------- */
   const publicLogin = db => l => ({ domainId: l.domainId, loginId: l.loginId, role: l.role, smeId: l.smeId, name: l.name,
     branchScope: l.branchScope || null, agentName: l.agentName || null,
-    demo: !!l.demo, active: l.active !== false, test: !!l.test, addedAt: l.addedAt || null,
+    demo: !!l.demo, active: l.active !== false, test: !!l.test, addedAt: l.addedAt || null, limitUsd: l.limitUsd ?? null,
     tradingName: (smeOf(db, l.smeId) || {}).tradingName || '' });
   const MASTER_KEYS = ['version', 'rev', 'currencies', 'constitutions', 'purposeCodes', 'products', 'docPolicy', 'goodsCodes',
-    'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings', 'ratePresets'];
+    'inwardPurposes', 'disposalOptions', 'testSmes', 'capabilities', 'roles', 'chargeCategories', 'onboardDocs', 'settings', 'ratePresets', 'purposeDocRules'];
   const BUSINESS_KEYS = ['smes', 'accounts', 'beneficiaries', 'bills', 'outward', 'inward', 'disposals', 'allocations', 'jobs', 'audit', 'notifications', 'emails'];
 
   function scopeState(db, who) {
     const out = {};
-    MASTER_KEYS.forEach(k => { out[k] = clone(db[k]); });
+    MASTER_KEYS.forEach(k => { if (db[k] !== undefined) out[k] = clone(db[k]); });
     let a = null;
     try { a = resolveActor(db, who, null); } catch (e) { a = null; }
     /* Sign-in shortcuts list the shared demo accounts; a password account is
@@ -2471,10 +2747,11 @@
 
   return {
     EngineError, freshState, execute, scopeState, publicStatus, resolveActor,
-    checklist, purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
+    checklist, onboardChecklist, SEGREGATION_PAIRS, capCommands: () => Object.entries(C).filter(([, d]) => d.cap).reduce((m, [k, d]) => ((m[d.cap] = m[d.cap] || []).push(k), m), {}),
+    purposesFor, marginFor, customerRate, chargesFor, billAvailable, perm, can,
     actorKey, actorLabel, smePendingWith, OPEN, COMMANDS: Object.keys(C), refreshDemoDeals: T.refreshDemoDeals,
     /* read-only treasury views, shared by every screen so they agree */
-    treasury: { RATE_MODES: T.RATE_MODES, MAX_PRESETS: T.MAX_PRESETS, PRESET_OPTIONS: T.PRESET_OPTIONS, rateTerms: T.rateTerms, howTo: T.howTo, usdOf: T.usdOf, usdOfStrict: T.usdOfStrict, rfqStatus: T.rfqStatus, priceRate: T.priceRate, ibrQuote: T.ibrQuote, deskRate: T.deskRate, cardOf: T.cardOf, positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
+    treasury: { steppedInr: T.steppedInr, RATE_MODES: T.RATE_MODES, MAX_PRESETS: T.MAX_PRESETS, PRESET_OPTIONS: T.PRESET_OPTIONS, rateTerms: T.rateTerms, howTo: T.howTo, usdOf: T.usdOf, usdOfStrict: T.usdOfStrict, rfqStatus: T.rfqStatus, priceRate: T.priceRate, ibrQuote: T.ibrQuote, deskRate: T.deskRate, cardOf: T.cardOf, positionStatus: T.positionStatus, coverState: T.coverState, linkState: T.linkState, uncovered: T.uncovered, live: T.live,
       remaining: T.remaining, isTrade: T.isTrade, netByCurrency: T.netByCurrency, suggestions: T.suggestions, marketRate: T.marketRate,
       pnl: T.pnl, exceptions: T.exceptions, pastCutoff: T.pastCutoff, istDate: T.istDate },
     /* read-only Treasury Management Portal views */

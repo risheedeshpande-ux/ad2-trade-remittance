@@ -1211,7 +1211,7 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
   }
   if (act === 'set-band-save') { run('settings.update', { marginBand: val('#set-band') }); return; }
   if (act === 'set-treasury-save') { run('settings.update', { cutoff: val('#set-cutoff'), maxOpenBookings: val('#set-maxbk'), agedDays: val('#set-aged'),
-    rfqAutoQuoteSec: val('#set-rfqauto') }); return; }
+    steppedThresholdUsd: val('#set-stepped') || undefined, rfqAutoQuoteSec: val('#set-rfqauto') }); return; }
   if (act === 'preset-save') {
     const id = t.dataset.id, p = DB.ratePresets.find(x => x.id === id), mode = val(`#pr-${id}-mode`) || p.mode;
     /* a changed mode starts from that mode's defaults; the options shown belong to the old one */
@@ -1224,6 +1224,29 @@ BAD/${n},2026-09-18,Missing Currency Ltd,France,,15000.00,2026-12-20,PO-X,`;
     const from = val('#pm-from'), to = val('#pm-to');
     if (from === to) { toast('Choose two different presets.', 'err'); return; }
     run('sme.setPreset', { fromPreset: from, presetId: to }); return;
+  }
+  if (act === 'po-add') {
+    run('policy.setPurposeRule', { purposeCode: val('#po-code'), product: val('#po-product'), docId: val('#po-doc'), rule: val('#po-rule'),
+      threshold: val('#po-inr') || undefined, thresholdUsd: val('#po-usd') || undefined });
+    return;
+  }
+  if (act === 'po-remove') { run('policy.setPurposeRule', { purposeCode: t.dataset.code, product: t.dataset.product, docId: t.dataset.doc, rule: 'product' }); return; }
+  if (act === 'policy-restore') {
+    commandModal({ title: 'Restore default document policy', okLabel: 'Restore', cmd: 'policy.restore', read: () => ({}),
+      body: '<p style="font-size:var(--fs-md)">Put every product checklist back to the shipped rules and clear purpose overrides? The current set is kept in the audit log.</p>' });
+    return;
+  }
+  if (act === 'ob-add') { run('onboarding.addDoc', { name: val('#ob-new'), required: !!($('#ob-new-req') || {}).checked }); return; }
+  if (act === 'ob-restore') {
+    commandModal({ title: 'Restore default onboarding rules', okLabel: 'Restore', cmd: 'onboarding.restoreRules', read: () => ({}),
+      body: '<p style="font-size:var(--fs-md)">Put the onboarding documents and KYC fields back to the shipped rules? The current set is kept in the audit log.</p>' });
+    return;
+  }
+  if (act === 'role-enable') { run('roles.setEnabled', { role: t.dataset.role, enabled: t.dataset.on === '1' }); return; }
+  if (act === 'roles-restore') {
+    commandModal({ title: 'Restore default permissions', okLabel: 'Restore', cmd: 'roles.restore', read: () => ({}),
+      body: '<p style="font-size:var(--fs-md)">Put every role back to its shipped permissions? The current set is kept in the audit log.</p>' });
+    return;
   }
   if (act === 'preset-default') { run('presets.update', { id: t.dataset.id, isDefault: true }); return; }
   if (act === 'user-add') {
@@ -1462,6 +1485,16 @@ document.addEventListener('change', e => {
   if (t.dataset.act === 'rv-perm')    { REVIEW.permission = t.value; return; }
   if (t.dataset.act === 'rv-eff')     { REVIEW.effectiveDate = t.value; return; }
   if (t.dataset.act === 'rv-preset')  { REVIEW.ratePreset = t.value; render(); return; }
+  if (t.dataset.act === 'role-cap') {
+    const r = DB.roles.find(x => x.id === t.dataset.role), cap = t.dataset.cap;
+    const list = t.checked ? [...new Set([...r.can, cap])] : r.can.filter(c => c !== cap);
+    /* a refused change puts the box back as it was */
+    run('roles.update', { role: r.id, can: list }).then(res => { if (!res) render({ keepScroll: true }); });
+    return;
+  }
+  if (t.dataset.act === 'ob-rule') { run('onboarding.setDocRule', { id: t.dataset.id, constitution: t.dataset.c, rule: t.value }).then(r => { if (!r) render({ keepScroll: true }); }); return; }
+  if (t.dataset.act === 'ob-field') { run('onboarding.setField', { field: t.dataset.f, required: t.checked }); return; }
+  if (t.dataset.act === 'user-limit') { run('user.setLimit', { domainId: t.dataset.d, loginId: t.dataset.l, limitUsd: t.value === '' ? null : t.value }); return; }
   if (t.dataset.act === 'dir-preset') { run('sme.setPreset', { smeId: t.dataset.id, presetId: t.value }); return; }
   if (t.dataset.act === 'rv-remarks') { REVIEW.remarks = t.value; return; }
 
@@ -1480,6 +1513,7 @@ document.addEventListener('change', e => {
   if (t.dataset.act === 'set-testlab')     { run('settings.update', { testLab:t.checked }); return; }
   if (t.dataset.act === 'set-marketsim')   { run('settings.update', { marketSim:t.checked }); return; }
   if (t.dataset.act === 'inpurpose-toggle'){ run('purpose.setInwardEnabled', { code:t.dataset.code, enabled:t.checked }); return; }
+  if (t.dataset.act === 'policy-threshold-usd') { if (t.value) run('policy.setRule', { product:t.dataset.product, docId:t.dataset.doc, rule:'threshold', thresholdUsd:t.value }); return; }
   if (t.dataset.act === 'policy-threshold'){ run('policy.setRule', { product:t.dataset.product, docId:t.dataset.doc, rule:'threshold', threshold:t.value }); return; }
   if (t.dataset.act === 'rule-toggle')     { run('compliance.setRule', { id:t.dataset.id, enabled:t.checked }); return; }
   if (t.dataset.act === 'user-role')       { run('user.setRole', { domainId:t.dataset.d, loginId:t.dataset.l, role:t.value }); return; }

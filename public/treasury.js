@@ -156,6 +156,14 @@
       return round2(amt * r / u);
     }
 
+    /* Stepped review threshold: set in USD by the admin (S19), compared in INR
+       at today's USD reference. Data from before then kept an INR figure. */
+    function steppedInr(db) {
+      const st = db.settings || {};
+      if (st.steppedThresholdUsd != null) return round2(Number(st.steppedThresholdUsd) * usdOfStrict(db, 'USD', 1) * ((currencyOf(db, 'USD') || {}).refRate || 0));
+      return Number(st.steppedThresholdInr || 4000000);
+    }
+
     /* ---------- rate modes ------------------------------------------------------
        Each SME prices one of three ways, set by the preset the AD2 maker picks:
          live        — the customer locks its live all-in rate itself
@@ -1121,7 +1129,7 @@
       db.positions.sort((x, y) => String(y.bookedAt).localeCompare(String(x.bookedAt)));
     }
 
-    return { RATE_MODES, MAX_PRESETS, PRESET_OPTIONS, defaultsFor, presetOf, rateTerms, recTerms, pricing, howTo, usdOfStrict, lockHoursOf,
+    return { RATE_MODES, MAX_PRESETS, PRESET_OPTIONS, steppedInr, defaultsFor, presetOf, rateTerms, recTerms, pricing, howTo, usdOfStrict, lockHoursOf,
       rfqStatus, usdOf, priceFor, priceRate, ibrQuote, deskRate, cardOf, deskRow, validMargin, book, resolveRate, replaceRate, applyRate, clearRate, attach, link, release, sweep, scope, seed, refreshDemoDeals,
       newPosition, issueDeal, addLink, cancelResidual, unwind, cancel, remaining, isTrade,
       positionStatus, coverState, linkState, uncovered, live, netByCurrency, suggestions, marketRate, pnl, exceptions, istDate, pastCutoff };

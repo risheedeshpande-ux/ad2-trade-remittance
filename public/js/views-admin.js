@@ -10,6 +10,7 @@ const ADMIN_PAGES = {
   docs:       ['Document policy', 'The documents each product asks for, and when each one is required.'],
   compliance: ['Compliance rules', 'How outward requests and disposal instructions are scored when they are submitted.'],
   masters:    ['Currencies and checklists', 'Reference rates, margin multipliers, onboarding documents and charge categories.'],
+  onboarding: ['Onboarding rules', 'The documents each kind of business uploads, the KYC fields an application must fill, and the high-risk country list.'],
   rates:      ['Rate options', 'How customers price: three presets, each a rate mode with its options. The AD2 maker picks one per SME.'],
   settings:   ['Platform settings', 'Switches that change how the workflow behaves for everyone.'],
   users:      ['Users', 'Who can sign in, with which role. Changes take effect on the user’s next action.'],
@@ -21,7 +22,7 @@ function viewAdmin(tab) {
   tab = ADMIN_PAGES[tab] ? tab : 'purpose';
   const [title, sub] = ADMIN_PAGES[tab];
   const body = { purpose: adminPurpose, docs: adminDocs, compliance: adminCompliance, masters: adminMasters,
-                 rates: adminRates, settings: adminSettings, users: adminUsers, roles: () => `<div class="card">${rolesPane()}</div>`, audit: adminAudit }[tab]();
+                 onboarding: adminOnboarding, rates: adminRates, settings: adminSettings, users: adminUsers, roles: () => `<div class="card">${rolesPane()}</div>`, audit: adminAudit }[tab]();
   const ro = !can('admin.masters') && ['purpose','docs','compliance'].includes(tab);
   return shell(crumb('Administration', title), `
     <div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(sub)}</p></div>
@@ -77,20 +78,43 @@ function adminPurpose() {
 }
 
 const RULE_LABELS = [['required','Required'],['optional','Optional'],['goods','Required for goods imports'],['threshold','Required above a threshold'],['knockoff','Required when knocking off bills']];
+/* INR stays the stored figure for regulatory thresholds; USD shown beside it */
+const usdNear = n => { const u = (currency('USD') || {}).refRate; return u ? '≈ USD ' + Math.round(n / u).toLocaleString('en-IN') : ''; };
 function adminDocs() {
   const edit = can('admin.masters');
+  const overrides = DB.purposeDocRules || [];
+  const allDocs = [...new Map(DB.docPolicy.map(d => [d.id, d])).values()];
   return `<div class="note note-info" style="margin-bottom:18px"><span>From the workbook's Document Policy sheet. Form 145 and Form 146 replace Form 15CA and 15CB under the Income-tax Act 2025.
       ${edit ? 'A change applies to the next request; requests already submitted keep the documents they were checked against.' : ''}</span></div>
     ${DB.products.map(p => `<div class="card" style="margin-bottom:18px">
       <div class="card-head"><h2>${esc(p.id)} — ${esc(p.label)}</h2>
         <div class="acts"><span style="color:var(--muted);font-size:var(--fs-sm)">${p.direction === 'inward' ? 'Disposal instructions' : 'Outward remittance'}</span>
           ${edit ? `<button class="btn btn-ghost btn-sm" type="button" data-act="doc-add" data-product="${p.id}">Add document</button>` : ''}</div></div>
-      <div class="card-body tight"><div class="tablewrap"><table class="dt"><thead><tr><th>Document</th><th style="width:300px">Rule</th><th style="width:170px">Threshold (INR)</th><th></th></tr></thead>
+      <div class="card-body tight"><div class="tablewrap"><table class="dt"><thead><tr><th>Document</th><th style="width:300px">Rule</th><th style="width:300px">Threshold (INR, or type USD)</th><th></th></tr></thead>
         <tbody>${DB.docPolicy.filter(d => d.product === p.id).map(d => `<tr><td>${esc(d.name)}${d.added ? ' <span class="badge b-purple">Added</span>' : ''}</td>
           <td><select data-act="policy-rule" data-product="${p.id}" data-doc="${d.id}" ${edit ? '' : 'disabled'} aria-label="Rule for ${esc(d.name)}">
             ${RULE_LABELS.filter(([k]) => k !== 'knockoff' || p.id === 'TRADE').map(([k, l]) => `<option value="${k}" ${d.rule === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-          <td>${d.rule === 'threshold' ? `<input type="number" min="1" step="1000" value="${d.threshold}" data-act="policy-threshold" data-product="${p.id}" data-doc="${d.id}" ${edit ? '' : 'disabled'} style="width:140px" aria-label="Threshold">` : '<span style="color:var(--muted)">—</span>'}</td>
+          <td>${d.rule === 'threshold' ? `<div class="row" style="gap:6px;align-items:center">₹ <input type="number" min="1" step="1000" value="${d.threshold}" data-act="policy-threshold" data-product="${p.id}" data-doc="${d.id}" ${edit ? '' : 'disabled'} style="width:120px" aria-label="Threshold in INR">
+            ${edit ? `or USD <input type="number" min="1" step="100" placeholder="${esc(usdNear(d.threshold).replace('≈ USD ', ''))}" data-act="policy-threshold-usd" data-product="${p.id}" data-doc="${d.id}" style="width:90px" aria-label="Threshold in USD">` : ''}</div>
+            <small style="color:var(--muted)">${esc(usdNear(d.threshold))} at today’s reference · INR by regulation</small>` : '<span style="color:var(--muted)">—</span>'}</td>
           <td>${edit ? `<button class="btn btn-link" type="button" data-act="doc-remove" data-product="${p.id}" data-doc="${d.id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div></div>`).join('')}
+    <div class="card" style="margin-bottom:18px"><div class="card-head"><h2>Purpose overrides</h2>
+      ${edit && can('admin.settings') ? '<div class="acts"><button class="btn btn-plain btn-sm" type="button" data-act="policy-restore">Restore default policy</button></div>' : ''}</div>
+      <div class="card-body"><p class="tick" style="margin:0 0 12px">A purpose code can require, waive or set an amount threshold on a document, over the product rule. An override for one product beats one for all products.</p>
+      ${overrides.length ? `<div class="tablewrap"><table class="dt"><thead><tr><th>Purpose</th><th>Product</th><th>Document</th><th>Override</th><th></th></tr></thead>
+        <tbody>${overrides.map(r => `<tr><td><b>${esc(r.purposeCode)}</b></td><td>${esc(r.product === '*' || !r.product ? 'All products' : r.product)}</td><td>${esc(r.name)}</td>
+          <td>${r.rule === 'waive' ? 'Waived' : r.rule === 'require' ? 'Required' : `Required above ${inr(r.threshold)} <small style="color:var(--muted)">${esc(usdNear(r.threshold))}</small>`}</td>
+          <td>${edit ? `<button class="btn btn-link" type="button" data-act="po-remove" data-code="${esc(r.purposeCode)}" data-product="${esc(r.product || '*')}" data-doc="${esc(r.docId)}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p style="color:var(--muted);margin:0">No purpose overrides — every request follows its product rule.</p>'}
+      ${edit ? `<div class="grid g4 fields" style="gap:10px;margin-top:14px;align-items:end">
+        <div class="f"><label for="po-code">Purpose code</label><input id="po-code" placeholder="e.g. S0102" maxlength="8"></div>
+        <div class="f"><label for="po-product">Product</label><select id="po-product"><option value="*">All products</option>${DB.products.map(p => `<option value="${p.id}">${esc(p.id)}</option>`).join('')}</select></div>
+        <div class="f"><label for="po-doc">Document</label><select id="po-doc">${allDocs.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></div>
+        <div class="f"><label for="po-rule">Override</label><select id="po-rule"><option value="require">Require</option><option value="waive">Waive</option><option value="threshold">Require above an amount</option></select></div>
+        <div class="f"><label for="po-inr">Amount (INR)</label><input id="po-inr" type="number" min="1" step="1000"></div>
+        <div class="f"><label for="po-usd">or amount (USD)</label><input id="po-usd" type="number" min="1" step="100"><div class="hint">Converted once at today’s USD reference; stored in INR.</div></div>
+        <div><button class="btn btn-primary btn-sm" type="button" data-act="po-add">Add override</button></div></div>` : ''}
+      </div></div>
     <p style="color:var(--muted);font-size:var(--fs-xs)">Goods-import purpose codes: ${DB.goodsCodes.join(', ')}.</p>`;
 }
 
@@ -120,7 +144,7 @@ function adminMasters() {
         <td class="num">${c.marginMultiplier.toFixed(2)}</td><td class="num">₹ ${c.refRate.toFixed(4)}</td></tr>`).join('')}</tbody>
     </table></div></div></div>
     <div class="grid" style="gap:20px">
-      <div class="card"><div class="card-head"><h2>Onboarding documents</h2></div><div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <div class="card"><div class="card-head"><h2>Onboarding documents</h2><div class="acts"><button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/admin/onboarding">Edit rules</button></div></div><div class="card-body tight"><div class="tablewrap"><table class="dt">
         <thead><tr><th>Document</th><th>Requirement</th></tr></thead>
         <tbody>${DB.onboardDocs.map(d => `<tr><td>${esc(d.name)}</td>
           <td>${d.required ? '<span class="badge b-red">Mandatory</span>' : '<span class="badge b-grey">Optional</span>'}</td></tr>`).join('')}</tbody>
@@ -159,6 +183,8 @@ function adminSettings() {
         <div class="hint">After it, uncovered currencies are flagged. Nothing is cancelled.</div></div>
       <div class="f"><label for="set-maxbk">Open rate bookings per customer</label><input id="set-maxbk" type="number" min="1" max="20" value="${st.maxOpenBookings ?? 5}" ${ed}></div>
       <div class="f"><label for="set-aged">Aged after (days)</label><input id="set-aged" type="number" min="1" max="30" value="${st.agedDays ?? 3}" ${ed}></div>
+      <div class="f"><label for="set-stepped">Branch stepped review above <small>(USD)</small></label><input id="set-stepped" type="number" min="1000" step="1000" value="${st.steppedThresholdUsd ?? ''}" ${ed}>
+        <div class="hint">${(() => { try { return '≈ ' + inr(Engine.treasury.steppedInr(DB)) + ' at today’s USD reference.'; } catch (e) { return 'No USD reference rate published.'; } })()}</div></div>
     </div>
     <div class="grid g4 fields" style="margin-top:14px;align-items:end">
       <div class="f"><label>Rate requests and quote validity</label><div class="hint">Set per customer group under <a href="#/ad2/admin/rates">Rate options</a>.</div></div>
@@ -167,6 +193,35 @@ function adminSettings() {
     </div>
     ${ed ? '' : `<div style="margin-top:12px"><button class="btn btn-ghost" type="button" data-act="set-treasury-save">Save treasury settings</button></div>`}
     </div></div>`;
+}
+
+/* ---------- onboarding rules ----------------------------------------------
+   Each document has a default rule; a constitution can override it (required,
+   optional, or not needed). Every change is audited with before and after. */
+function adminOnboarding() {
+  const edit = can('admin.masters'), cons = DB.constitutions || [], k = DB.settings.kycRequired || {};
+  const ruleOf = (d, c) => (d.byConstitution || {})[c] || (d.required ? 'required' : 'optional');
+  const sel = (d, c) => `<select data-act="ob-rule" data-id="${esc(d.id)}" data-c="${esc(c || '*')}" ${edit ? '' : 'disabled'} aria-label="${esc(d.name)} ${esc(c || 'default')}">
+    ${(c ? ['required', 'optional', 'not-needed'] : ['required', 'optional']).map(r => `<option value="${r}" ${(c ? ruleOf(d, c) : d.required ? 'required' : 'optional') === r ? 'selected' : ''}>${r === 'not-needed' ? 'Not needed' : r[0].toUpperCase() + r.slice(1)}</option>`).join('')}</select>`;
+  const hr = (DB.complianceRules || []).find(r => Array.isArray(r.param) && /country|jurisdiction/i.test(r.label + ' ' + r.id));
+  const FIELDS = { iec: 'IEC', volumes: 'Expected import / export volumes', countries: 'Countries traded', signatories: 'Authorised signatories' };
+  return `<div class="card" style="margin-bottom:20px"><div class="card-head"><h2>Documents by constitution</h2>
+      ${edit && can('admin.settings') ? '<div class="acts"><button class="btn btn-plain btn-sm" type="button" data-act="ob-restore">Restore defaults</button></div>' : ''}</div>
+    <div class="card-body tight"><div class="tablewrap"><table class="dt">
+      <thead><tr><th>Document</th><th>Default</th>${cons.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${(DB.onboardDocs || []).map(d => `<tr><td>${esc(d.name)}</td><td>${sel(d, null)}</td>${cons.map(c => `<td>${sel(d, c)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+    ${edit ? `<div class="row" style="gap:8px;padding:12px 16px;align-items:end"><div class="f"><label for="ob-new">Add a document</label><input id="ob-new" maxlength="80" placeholder="e.g. Partnership deed"></div>
+      <label class="chk"><input type="checkbox" id="ob-new-req"><span>Required</span></label>
+      <button class="btn btn-plain btn-sm" type="button" data-act="ob-add">Add</button></div>` : ''}</div></div>
+    <div class="grid g2" style="gap:20px;align-items:start">
+      <div class="card"><div class="card-head"><h2>Mandatory KYC fields</h2></div><div class="card-body"><div class="checks">
+        ${Object.entries(FIELDS).map(([f, l]) => `<label class="chk"><input type="checkbox" data-act="ob-field" data-f="${f}" ${k[f] !== false ? 'checked' : ''} ${edit ? '' : 'disabled'}><span>${esc(l)}<small>${k[f] !== false ? 'Mandatory on every new application' : 'Optional'}</small></span></label>`).join('')}
+      </div></div></div>
+      <div class="card"><div class="card-head"><h2>High-risk countries</h2><div class="acts"><button class="btn btn-link" type="button" data-act="go" data-href="#/ad2/admin/compliance">Edit</button></div></div>
+        <div class="card-body"><p class="tick" style="margin:0 0 8px">Applications and payments are scored against the same list (compliance rules).</p>
+        ${hr ? esc(hr.param.join(', ')) : '<span style="color:var(--muted)">No country rule is set.</span>'}</div></div>
+    </div>`;
 }
 
 /* ---------- rate presets ----------------------------------------------------
@@ -227,13 +282,16 @@ function adminUsers() {
       <input type="search" data-act="table-filter" data-target="#users-t" placeholder="Filter users" aria-label="Filter users">
       <div class="spacer"></div><span style="color:var(--muted);font-size:var(--fs-sm)">${plural(list.length, 'user')} · ${list.filter(l => !l.active).length} inactive</span></div>
     <div class="card-body tight"><div class="tablewrap"><table class="dt" id="users-t">
-    <thead><tr><th data-sort>Domain ID</th><th data-sort>Login ID</th><th data-sort>Name</th><th data-sort>Role</th><th data-sort>Business</th><th>Sign-in</th><th data-sort>Status</th><th></th></tr></thead>
+    <thead><tr><th data-sort>Domain ID</th><th data-sort>Login ID</th><th data-sort>Name</th><th data-sort>Role</th><th data-sort>Business</th><th>Transaction limit <small>(USD)</small></th><th>Sign-in</th><th data-sort>Status</th><th></th></tr></thead>
     <tbody>${list.map(l => `<tr>
       <td>${esc(l.domainId)}</td><td>${esc(l.loginId)}</td><td>${esc(l.name || '')}${self(l) ? ' <span class="badge b-teal">You</span>' : ''}</td>
       <td>${edit && l.domainId === 'AD2' && !self(l)
         ? `<select data-act="user-role" data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" aria-label="Role">${ad2Roles.map(r => `<option ${r === l.role ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select>`
         : `<b>${esc(l.role)}</b>`}</td>
       <td>${esc(l.tradingName || '—')}${l.test ? ' <span class="badge b-grey">test</span>' : ''}</td>
+      <td>${l.domainId !== 'AD2' ? '—' : edit
+        ? `<input type="number" min="1" step="1000" style="max-width:130px" placeholder="No limit" value="${l.limitUsd ?? ''}" data-act="user-limit" data-d="${esc(l.domainId)}" data-l="${esc(l.loginId)}" aria-label="Limit in USD for ${esc(l.loginId)}">`
+        : l.limitUsd != null ? 'USD ' + Number(l.limitUsd).toLocaleString('en-IN') : 'No limit'}</td>
       <td>${l.demo ? '<span class="badge b-grey">Demo passcode</span>' : '<span class="badge b-teal">Own password</span>'}</td>
       <td>${l.active ? '<span class="badge b-green">Active</span>' : '<span class="badge b-red">Deactivated</span>'}</td>
       <td style="white-space:nowrap">${edit && !self(l) ? `
